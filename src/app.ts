@@ -1,0 +1,769 @@
+import { Readable, Transform } from "node:stream"
+import { resolve } from "node:path"
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify"
+import { z } from "zod"
+import { authenticateFacadeApiKey, authenticateManagementKey } from "./auth.js"
+import {
+  ByokStoreError,
+  FileByokStore,
+  byokCredentialCreateSchema,
+  byokCredentialListQuerySchema,
+  byokCredentialUpdateSchema,
+  type ByokStore,
+} from "./byok/index.js"
+import { loadConfig, mergeConfig, parseConfig, type AppConfig } from "./config.js"
+import { ApiError, invalidRequest, toOpenRouterError } from "./errors.js"
+import { createJobId, parseJobId, type JobTokenPayload } from "./jobs/job-token.js"
+import {
+  createReferenceLoader,
+  createPublicHttpFetcher,
+  ReferenceLoadError,
+  type ReferenceLookup,
+  type ReferenceLoader,
+  type ReferenceTransport,
+} from "./media/reference-loader.js"
+import {
+  createReferenceWorkGate,
+  prepareReferences,
+  readPippitProviderOptions,
+} from "./media/prepare-references.js"
+import {
+  type VideoGenerationJob,
+  type VideoGenerationStatus,
+  videoGenerationRequestSchema,
+} from "./openrouter/contracts.js"
+import { publicVideoModel, resolveVideoModel, VIDEO_MODELS } from "./openrouter/models.js"
+import { pippitStateToOpenRouterStatus, resolveOutputGeometry } from "./openrouter/video-mapping.js"
+import { OPENAPI_DOCUMENT } from "./openapi.js"
+import {
+  PippitApiError,
+  PippitClient,
+  type PippitApi,
+  type PippitFailReason,
+  type PippitVideoResult,
+} from "./pippit/index.js"
+import { createRequestSignal } from "./request-signal.js"
+
+export interface BuildAppOptions {
+  readonly byokStore?: ByokStore
+  readonly config?: Partial<AppConfig>
+  readonly contentLookup?: ReferenceLookup
+  readonly contentTransport?: ReferenceTransport
+  readonly logger?: boolean
+  readonly pippit?: PippitApi
+  readonly referenceLoader?: ReferenceLoader
+}
+
+function routeUrl(config: AppConfig, path: string): string {
+  return config.PUBLIC_BASE_URL ? new URL(path, config.PUBLIC_BASE_URL).toString() : path
+}
+
+function sanitizeMessage(message: string, accessKey: string): string {
+  return message.split(accessKey).join("[REDACTED]")
+}
+
+function failureMessage(reason: PippitFailReason | undefined, status: VideoGenerationStatus): string | undefined {
+  if (status !== "failed" && status !== "cancelled" && status !== "expired") return undefined
+  if (typeof reason === "string" && reason) return reason
+  if (typeof reason === "object" && reason) {
+    return reason.message || reason.fallback_message || reason.detail || `Pippit video generation ${status}.`
+  }
+  return `Pippit video generation ${status}.`
+}
+
+function jobResponse(input: {
+  readonly accessKey: string
+  readonly config: AppConfig
+  readonly jobId: string
+  readonly payload: JobTokenPayload
+  readonly result: PippitVideoResult
+}): VideoGenerationJob {
+  const status = pippitStateToOpenRouterStatus(input.result.runState)
+  const contentUrls = input.result.videoUrls.map((_url, index) =>
+    routeUrl(input.config, `/api/v1/videos/${encodeURIComponent(input.jobId)}/content?index=${index}`),
+  )
+  const error = failureMessage(input.result.failReason, status)
+
+  if (status === "completed" && input.result.videoUrls.length === 0) {
+    throw new ApiError("Pippit marked the run completed without returning a video URL.", {
+      code: "invalid_upstream_response",
+      statusCode: 502,
+      type: "upstream_error",
+    })
+  }
+
+  return {
+    ...(error === undefined ? {} : { error: sanitizeMessage(error, input.accessKey) }),
+    generation_id: input.payload.run_id,
+    id: input.jobId,
+    model: input.payload.model,
+    polling_url: routeUrl(input.config, `/api/v1/videos/${encodeURIComponent(input.jobId)}`),
+    status,
+    ...(status === "completed" ? { unsigned_urls: contentUrls, usage: { is_byok: true } } : {}),
+  }
+}
+
+function normalizePippitError(error: PippitApiError): ApiError {
+  const metadata = {
+    operation: error.operation,
+    ...(error.upstreamCode === undefined ? {} : { upstream_code: error.upstreamCode }),
+  }
+
+  if (error.code === "HTTP_ERROR" && (error.status === 401 || error.status === 403)) {
+    return new ApiError("The selected Pippit BYOK credential was rejected by the upstream service.", {
+      code: "byok_credential_rejected",
+      metadata,
+      statusCode: 502,
+      type: "upstream_error",
+    })
+  }
+  if (error.code === "HTTP_ERROR" && error.status === 429) {
+    return new ApiError("Pippit rate limited the request.", {
+      code: "rate_limit_exceeded",
+      metadata,
+      statusCode: 429,
+      type: "upstream_error",
+    })
+  }
+  if (error.code === "TIMEOUT") {
+    return new ApiError("The Pippit upstream request timed out.", {
+      code: "upstream_timeout",
+      metadata,
+      statusCode: 504,
+      type: "upstream_error",
+    })
+  }
+  if (error.code === "ABORTED") {
+    return new ApiError("The request was cancelled.", {
+      code: "request_cancelled",
+      metadata,
+      statusCode: 408,
+      type: "api_error",
+    })
+  }
+  return new ApiError("Pippit could not complete the upstream operation.", {
+    code: "pippit_upstream_error",
+    metadata,
+    statusCode: 502,
+    type: "upstream_error",
+  })
+}
+
+function normalizeReferenceError(error: ReferenceLoadError): ApiError {
+  const metadata = {
+    reference_error: error.code,
+    ...(error.status === undefined ? {} : { upstream_status: error.status }),
+  }
+  if (error.code === "INVALID_CONFIGURATION" || error.code === "INVALID_KIND") {
+    return new ApiError("The reference loader is not configured correctly.", {
+      code: "reference_loader_error",
+      metadata,
+      statusCode: 500,
+      type: "api_error",
+    })
+  }
+  if (error.code === "ABORTED") {
+    return new ApiError("The request was cancelled while loading a reference.", {
+      code: "request_cancelled",
+      metadata,
+      statusCode: 408,
+      type: "api_error",
+    })
+  }
+  if (error.code === "TOO_LARGE" || error.code === "TOTAL_TOO_LARGE") {
+    return new ApiError(error.message, {
+      code: "reference_too_large",
+      metadata,
+      param: "input_references",
+      statusCode: 413,
+      type: "invalid_request_error",
+    })
+  }
+  return new ApiError(error.message, {
+    code: error.code === "TIMEOUT" ? "reference_timeout" : "invalid_reference",
+    metadata,
+    param: "input_references",
+    statusCode: 400,
+    type: "invalid_request_error",
+  })
+}
+
+function normalizeByokStoreError(error: ByokStoreError): ApiError {
+  if (error.code === "CREDENTIAL_LIMIT_EXCEEDED") {
+    return new ApiError("The BYOK credential store has reached its configured limit.", {
+      code: "byok_credential_limit_exceeded",
+      statusCode: 409,
+      type: "invalid_request_error",
+    })
+  }
+  if (error.code === "INVALID_CONFIGURATION") {
+    return new ApiError("The BYOK request is not valid for this provider workspace.", {
+      code: "invalid_byok_request",
+      statusCode: 400,
+      type: "invalid_request_error",
+    })
+  }
+  if (error.code === "STORE_CLOSED") {
+    return new ApiError("The BYOK credential store is unavailable.", {
+      code: "byok_store_unavailable",
+      statusCode: 503,
+      type: "api_error",
+    })
+  }
+  return new ApiError("The encrypted BYOK credential store could not complete the operation.", {
+    code: "byok_store_error",
+    statusCode: 500,
+    type: "api_error",
+  })
+}
+
+function normalizeFrameworkError(error: unknown): unknown {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "FST_ERR_CTP_BODY_TOO_LARGE"
+  ) {
+    return new ApiError("The request body is too large.", {
+      code: "request_too_large",
+      statusCode: 413,
+      type: "invalid_request_error",
+    })
+  }
+  return error
+}
+
+function unsupportedStandardParameters(request: {
+  readonly callback_url?: string | undefined
+  readonly generate_audio?: boolean | undefined
+}): void {
+  if (request.callback_url !== undefined) {
+    throw invalidRequest("callback_url is not supported by this Pippit facade.", "callback_url", "unsupported_parameter")
+  }
+  if (request.generate_audio !== undefined) {
+    throw invalidRequest(
+      "generate_audio is not controllable through the documented Pippit immersive-video API.",
+      "generate_audio",
+      "unsupported_parameter",
+    )
+  }
+}
+
+const jobParamsSchema = z.object({ jobId: z.string().min(1) })
+const byokParamsSchema = z.object({ id: z.uuid() })
+const contentQuerySchema = z.object({ index: z.coerce.number().int().min(0).default(0) })
+
+function withIdleTimeout(input: {
+  readonly onCleanup: () => void
+  readonly onIdle: () => void
+  readonly source: Readable
+  readonly timeoutMs: number
+}): Readable {
+  let cleaned = false
+  let idleTimer: NodeJS.Timeout | undefined
+  const clearIdleTimer = (): void => {
+    if (idleTimer !== undefined) clearTimeout(idleTimer)
+    idleTimer = undefined
+  }
+  let output: Transform
+  const resetIdleTimer = (): void => {
+    clearIdleTimer()
+    idleTimer = setTimeout(() => {
+      const error = new Error("The generated video stream exceeded its idle timeout.")
+      input.onIdle()
+      input.source.destroy(error)
+      output.destroy(error)
+    }, input.timeoutMs)
+    idleTimer.unref()
+  }
+  const onSourceError = (error: Error): void => {
+    output.destroy(error)
+  }
+  const cleanup = (): void => {
+    if (cleaned) return
+    cleaned = true
+    clearIdleTimer()
+    if (!input.source.destroyed) input.source.destroy()
+    input.onCleanup()
+  }
+
+  output = new Transform({
+    transform(chunk, _encoding, callback) {
+      resetIdleTimer()
+      callback(null, chunk)
+    },
+  })
+  input.source.once("error", onSourceError)
+  input.source.once("close", () => input.source.removeListener("error", onSourceError))
+  output.once("close", cleanup)
+  output.once("end", cleanup)
+  output.once("error", cleanup)
+  resetIdleTimer()
+  input.source.pipe(output)
+  return output
+}
+
+async function queryJob(
+  request: FastifyRequest,
+  jobId: string,
+  pippit: PippitApi,
+  byokStore: ByokStore,
+  config: AppConfig,
+): Promise<{ readonly accessKey: string; readonly payload: JobTokenPayload; readonly result: PippitVideoResult }> {
+  const caller = authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
+  const payload = parseJobId(jobId, caller.apiKey, config.JOB_SIGNING_KEY_HEX)
+  const credential = await byokStore.getVersion(payload.credential_id, payload.credential_version_id)
+  if (credential === undefined || credential.credential.workspace_id !== payload.workspace_id) {
+    throw new ApiError("The BYOK credential version required by this video job is unavailable.", {
+      code: "byok_credential_unavailable",
+      param: "job_id",
+      statusCode: 409,
+      type: "api_error",
+    })
+  }
+  const requestSignal = createRequestSignal(request)
+  try {
+    const result = await pippit.queryVideoResult({
+      accessKey: credential.accessKey,
+      runId: payload.run_id,
+      signal: requestSignal.signal,
+      threadId: payload.thread_id,
+    })
+    return { accessKey: credential.accessKey, payload, result }
+  } finally {
+    requestSignal.dispose()
+  }
+}
+
+function canTryNextByokCredential(error: unknown): boolean {
+  return (
+    error instanceof PippitApiError &&
+    error.code === "HTTP_ERROR" &&
+    (error.status === 401 || error.status === 403 || error.status === 429)
+  )
+}
+
+function byokCredentialNotFound(): ApiError {
+  return new ApiError("The requested BYOK credential does not exist.", {
+    code: "byok_credential_not_found",
+    param: "id",
+    statusCode: 404,
+    type: "not_found_error",
+  })
+}
+
+function noEligibleByokCredential(): ApiError {
+  return new ApiError("No enabled Pippit BYOK credential is eligible for this request.", {
+    code: "byok_credential_unavailable",
+    statusCode: 503,
+    type: "api_error",
+  })
+}
+
+function generalModel(model: (typeof VIDEO_MODELS)[number]): Record<string, unknown> {
+  return {
+    architecture: {
+      input_modalities: ["text", "image", "video", "audio"],
+      instruct_type: null,
+      modality: "text+image+video+audio->video",
+      output_modalities: ["video"],
+      tokenizer: "Other",
+    },
+    canonical_slug: model.canonical_slug,
+    context_length: 0,
+    created: model.created,
+    default_parameters: null,
+    description: model.description,
+    expiration_date: null,
+    id: model.id,
+    knowledge_cutoff: null,
+    links: { details: "/api/v1/videos/models" },
+    name: model.name,
+    per_request_limits: null,
+    pricing: { completion: "0", image: "0", prompt: "0", request: "0" },
+    supported_parameters: [
+      "prompt",
+      "duration",
+      "resolution",
+      "aspect_ratio",
+      "frame_images",
+      "input_references",
+      "seed",
+      "provider",
+    ],
+    supported_voices: null,
+    top_provider: { context_length: 0, is_moderated: true, max_completion_tokens: 0 },
+  }
+}
+
+export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
+  const config =
+    options.config === undefined
+      ? loadConfig()
+      : mergeConfig(parseConfig({}), options.config)
+  const byokStore =
+    options.byokStore ??
+    new FileByokStore({
+      filePath: resolve(config.BYOK_STORE_PATH),
+      masterKey: Buffer.from(config.BYOK_ENCRYPTION_KEY_HEX, "hex"),
+    })
+  const contentFetcher = createPublicHttpFetcher({
+    ...(options.contentLookup === undefined ? {} : { lookup: options.contentLookup }),
+    maxRedirects: config.REFERENCE_MAX_REDIRECTS,
+    ...(options.contentTransport === undefined ? {} : { transport: options.contentTransport }),
+  })
+  const pippit =
+    options.pippit ??
+    new PippitClient({
+      baseUrl: config.PIPPIT_BASE_URL,
+      timeoutMs: config.PIPPIT_REQUEST_TIMEOUT_MS,
+    })
+  const referenceLoader =
+    options.referenceLoader ??
+    createReferenceLoader({
+      allowPrivateUrls: config.ALLOW_PRIVATE_REFERENCE_URLS,
+      maxBytesByKind: {
+        audio: config.REFERENCE_MAX_AUDIO_BYTES,
+        image: config.REFERENCE_MAX_IMAGE_BYTES,
+        video: config.REFERENCE_MAX_VIDEO_BYTES,
+      },
+      maxRedirects: config.REFERENCE_MAX_REDIRECTS,
+      timeoutMs: config.REFERENCE_FETCH_TIMEOUT_MS,
+    })
+  const referenceGate = createReferenceWorkGate(config.REFERENCE_GLOBAL_CONCURRENCY)
+  const app = Fastify({
+    logger: options.logger
+      ? {
+          redact: ["req.headers.authorization", "req.body.key"],
+        }
+      : false,
+    routerOptions: {
+      maxParamLength: 16 * 1024,
+    },
+  })
+
+  app.addHook("onReady", async () => {
+    await byokStore.getWorkspaceId()
+  })
+  app.addHook("onRequest", async (request, reply) => {
+    const path = request.url.split("?", 1)[0]
+    if (path === "/api/v1/byok" || path?.startsWith("/api/v1/byok/")) {
+      reply.header("cache-control", "no-store")
+    }
+  })
+  app.addHook("onClose", async () => {
+    await byokStore.close()
+  })
+
+  app.setErrorHandler((error, _request, reply) => {
+    const normalized =
+      error instanceof PippitApiError
+        ? normalizePippitError(error)
+        : error instanceof ReferenceLoadError
+          ? normalizeReferenceError(error)
+          : error instanceof ByokStoreError
+            ? normalizeByokStoreError(error)
+            : normalizeFrameworkError(error)
+    const response = toOpenRouterError(normalized)
+    if (response.statusCode === 401) reply.header("www-authenticate", "Bearer")
+    void reply.status(response.statusCode).send(response.body)
+  })
+
+  app.get("/health", async () => {
+    await byokStore.getWorkspaceId()
+    return { status: "ok" }
+  })
+  app.get("/openapi.json", async () => OPENAPI_DOCUMENT)
+
+  app.get("/api/v1/videos/models", async (request) => {
+    authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
+    return { data: VIDEO_MODELS.map(publicVideoModel) }
+  })
+
+  app.get("/api/v1/models", async (request) => {
+    authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
+    return { data: VIDEO_MODELS.map(generalModel) }
+  })
+
+  app.post("/api/v1/byok", async (request, reply) => {
+    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
+    const input = byokCredentialCreateSchema.parse(request.body)
+    const credential = await byokStore.create(input)
+    reply.header("cache-control", "no-store")
+    return reply.status(201).send({ data: credential })
+  })
+
+  app.get("/api/v1/byok", async (request, reply) => {
+    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
+    const query = byokCredentialListQuerySchema.parse(request.query)
+    const credentials = await byokStore.list(query)
+    reply.header("cache-control", "no-store")
+    return credentials
+  })
+
+  app.get("/api/v1/byok/:id", async (request, reply) => {
+    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
+    const { id } = byokParamsSchema.parse(request.params)
+    const credential = await byokStore.get(id)
+    if (credential === undefined) throw byokCredentialNotFound()
+    reply.header("cache-control", "no-store")
+    return { data: credential }
+  })
+
+  app.patch("/api/v1/byok/:id", async (request, reply) => {
+    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
+    const { id } = byokParamsSchema.parse(request.params)
+    const input = byokCredentialUpdateSchema.parse(request.body)
+    const credential = await byokStore.update(id, input)
+    if (credential === undefined) throw byokCredentialNotFound()
+    reply.header("cache-control", "no-store")
+    return { data: credential }
+  })
+
+  app.delete("/api/v1/byok/:id", async (request, reply) => {
+    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
+    const { id } = byokParamsSchema.parse(request.params)
+    const deleted = await byokStore.delete(id)
+    if (!deleted) throw byokCredentialNotFound()
+    reply.header("cache-control", "no-store")
+    return { deleted: true }
+  })
+
+  app.post("/api/v1/videos", async (request, reply) => {
+    const caller = authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
+    const body = videoGenerationRequestSchema.parse(request.body)
+    const model = resolveVideoModel(body.model)
+    unsupportedStandardParameters(body)
+    const geometry = resolveOutputGeometry(body, model)
+    const providerOptions = readPippitProviderOptions(body)
+    const workspaceId = await byokStore.getWorkspaceId()
+    const candidates = await byokStore.resolveCandidates({
+      apiKeyHash: caller.apiKeyHash,
+      ...(providerOptions.byok_id === undefined ? {} : { credentialId: providerOptions.byok_id }),
+      model: model.id,
+      provider: "pippit",
+      workspaceId,
+    })
+    if (candidates.length === 0) throw noEligibleByokCredential()
+    if (
+      providerOptions.thread_id !== undefined &&
+      providerOptions.byok_id === undefined &&
+      candidates.length > 1
+    ) {
+      throw invalidRequest(
+        "provider.options.pippit.byok_id is required when continuing a thread with multiple eligible BYOK credentials.",
+        "provider.options.pippit.byok_id",
+        "byok_credential_required",
+      )
+    }
+    const requestSignal = createRequestSignal(request)
+
+    try {
+      for (const [index, candidate] of candidates.entries()) {
+        try {
+          const references = await prepareReferences({
+            accessKey: candidate.accessKey,
+            concurrency: config.REFERENCE_UPLOAD_CONCURRENCY,
+            gate: referenceGate,
+            loader: referenceLoader,
+            maxTotalBytes: config.REFERENCE_MAX_TOTAL_BYTES,
+            maxTotalBytesByKind: { audio: config.REFERENCE_MAX_AUDIO_BYTES },
+            pippit,
+            request: body,
+            signal: requestSignal.signal,
+          })
+          const submitted = await pippit.submitRun({
+            accessKey: candidate.accessKey,
+            request: {
+              asset_ids: [...references.assetIds],
+              message: body.prompt,
+              ...(providerOptions.thread_id === undefined ? {} : { thread_id: providerOptions.thread_id }),
+              video_part_tool_param: {
+                ...(references.audios.length === 0 ? {} : { audios: [...references.audios] }),
+                duration_sec: body.duration ?? 5,
+                ...(references.generateType === undefined ? {} : { generate_type: references.generateType }),
+                ...(references.images.length === 0 ? {} : { images: [...references.images] }),
+                model: model.upstreamModel,
+                prompt: body.prompt,
+                ...(geometry.aspectRatio === undefined ? {} : { ratio: geometry.aspectRatio }),
+                ...(geometry.resolution === undefined ? {} : { resolution: geometry.resolution }),
+                ...(body.seed === undefined ? {} : { seed: body.seed }),
+                ...(references.videos.length === 0 ? {} : { videos: [...references.videos] }),
+              },
+            },
+            signal: requestSignal.signal,
+          })
+          const jobId = createJobId(
+            {
+              created_at: Date.now(),
+              credential_id: candidate.credential.id,
+              credential_version_id: candidate.keyVersion.id,
+              model: model.id,
+              run_id: submitted.run.runId,
+              thread_id: submitted.run.threadId,
+              workspace_id: workspaceId,
+            },
+            caller.apiKey,
+            config.JOB_SIGNING_KEY_HEX,
+          )
+          const response: VideoGenerationJob = {
+            generation_id: submitted.run.runId,
+            id: jobId,
+            model: model.id,
+            polling_url: routeUrl(config, `/api/v1/videos/${encodeURIComponent(jobId)}`),
+            status: pippitStateToOpenRouterStatus(submitted.run.state),
+            usage: { is_byok: true },
+          }
+          return reply.status(202).send(response)
+        } catch (error) {
+          const hasNextCandidate = index + 1 < candidates.length
+          if (!hasNextCandidate || !canTryNextByokCredential(error)) throw error
+        }
+      }
+      throw noEligibleByokCredential()
+    } finally {
+      requestSignal.dispose()
+    }
+  })
+
+  app.get("/api/v1/videos/:jobId", async (request) => {
+    const { jobId } = jobParamsSchema.parse(request.params)
+    const queried = await queryJob(request, jobId, pippit, byokStore, config)
+    return jobResponse({ config, jobId, ...queried })
+  })
+
+  app.get("/api/v1/videos/:jobId/content", async (request, reply) => {
+    const { jobId } = jobParamsSchema.parse(request.params)
+    const { index } = contentQuerySchema.parse(request.query)
+    const queried = await queryJob(request, jobId, pippit, byokStore, config)
+    const status = pippitStateToOpenRouterStatus(queried.result.runState)
+
+    if (status !== "completed") {
+      throw new ApiError(`Video content is not available while the job is ${status}.`, {
+        code: "video_not_ready",
+        param: "job_id",
+        statusCode: 400,
+        type: "invalid_request_error",
+      })
+    }
+    const videoUrl = queried.result.videoUrls[index]
+    if (!videoUrl) {
+      throw new ApiError(`Video output index ${index} does not exist.`, {
+        code: "video_output_not_found",
+        param: "index",
+        statusCode: 404,
+        type: "not_found_error",
+      })
+    }
+
+    let parsedVideoUrl: URL
+    try {
+      parsedVideoUrl = new URL(videoUrl)
+    } catch {
+      throw new ApiError("Pippit returned an invalid video content URL.", {
+        code: "invalid_upstream_response",
+        statusCode: 502,
+        type: "upstream_error",
+      })
+    }
+    if (!new Set(["http:", "https:"]).has(parsedVideoUrl.protocol) || parsedVideoUrl.username || parsedVideoUrl.password) {
+      throw new ApiError("Pippit returned an unsupported video content URL.", {
+        code: "invalid_upstream_response",
+        statusCode: 502,
+        type: "upstream_error",
+      })
+    }
+
+    const downloadHeaders = new Headers()
+    if (request.headers.range) downloadHeaders.set("range", request.headers.range)
+    const downstreamController = new AbortController()
+    const headerTimeoutController = new AbortController()
+    const abortDownstream = (): void => downstreamController.abort()
+    request.raw.socket.once("close", abortDownstream)
+    reply.raw.once("close", abortDownstream)
+    const headerTimer = setTimeout(() => headerTimeoutController.abort(), config.PIPPIT_REQUEST_TIMEOUT_MS)
+    const downloadSignal = AbortSignal.any([downstreamController.signal, headerTimeoutController.signal])
+    const cleanupDownload = (): void => {
+      clearTimeout(headerTimer)
+      request.raw.socket.removeListener("close", abortDownstream)
+      reply.raw.removeListener("close", abortDownstream)
+    }
+    let response: Response
+    try {
+      const fetched = await contentFetcher.fetch(parsedVideoUrl, {
+        headers: downloadHeaders,
+        signal: downloadSignal,
+      })
+      response = fetched.response
+      clearTimeout(headerTimer)
+    } catch {
+      cleanupDownload()
+      if (headerTimeoutController.signal.aborted) {
+        throw new ApiError("Downloading the generated video from Pippit timed out.", {
+          code: "upstream_download_timeout",
+          statusCode: 504,
+          type: "upstream_error",
+        })
+      }
+      if (downstreamController.signal.aborted) {
+        throw new ApiError("The downstream request was cancelled.", {
+          code: "request_cancelled",
+          statusCode: 408,
+          type: "api_error",
+        })
+      }
+      throw new ApiError("The generated video could not be downloaded from Pippit.", {
+        code: "upstream_download_failed",
+        statusCode: 502,
+        type: "upstream_error",
+      })
+    }
+    if (!response.ok || !response.body) {
+      await response.body?.cancel().catch(() => undefined)
+      cleanupDownload()
+      throw new ApiError("The generated video could not be downloaded from Pippit.", {
+        code: "upstream_download_failed",
+        metadata: { upstream_status: response.status },
+        statusCode: 502,
+        type: "upstream_error",
+      })
+    }
+
+    const upstreamContentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase()
+    if (
+      upstreamContentType !== undefined &&
+      upstreamContentType !== "application/octet-stream" &&
+      !upstreamContentType.startsWith("video/")
+    ) {
+      await response.body.cancel().catch(() => undefined)
+      cleanupDownload()
+      throw new ApiError("Pippit returned a non-video content type for the generated result.", {
+        code: "invalid_upstream_response",
+        statusCode: 502,
+        type: "upstream_error",
+      })
+    }
+    const contentType = upstreamContentType?.startsWith("video/") ? upstreamContentType : "video/mp4"
+    const contentLength = response.headers.get("content-length")
+    const contentRange = response.headers.get("content-range")
+    const acceptRanges = response.headers.get("accept-ranges")
+    reply.status(response.status)
+    reply.header("content-type", contentType)
+    reply.header("x-content-type-options", "nosniff")
+    if (contentLength) reply.header("content-length", contentLength)
+    if (contentRange) reply.header("content-range", contentRange)
+    if (acceptRanges) reply.header("accept-ranges", acceptRanges)
+    const contentStream = Readable.fromWeb(
+      response.body as import("node:stream/web").ReadableStream<Uint8Array>,
+    )
+    const timedContentStream = withIdleTimeout({
+      onCleanup: cleanupDownload,
+      onIdle: () => downstreamController.abort(),
+      source: contentStream,
+      timeoutMs: config.CONTENT_STREAM_IDLE_TIMEOUT_MS,
+    })
+    return reply.send(timedContentStream)
+  })
+
+  return app
+}

@@ -1,0 +1,337 @@
+# Pippit Bridge
+
+一个 OpenRouter 风格的视频生成 facade，底层调用小云雀（Pippit）的“生成沉浸式短片视频”API，并提供服务器持久化 BYOK（Bring Your Own Key）。
+
+调用方不会把 Pippit AK 直接用作 facade 的 Bearer token。部署管理员先用 Management API Key 将小云雀官方签发的 Pippit AK 写入 `/api/v1/byok`；运行时调用方再使用独立的 Facade API Key 访问模型、生成、轮询和下载接口。
+
+```text
+Management API Key -> /api/v1/byok -> encrypted Pippit AK store
+
+Facade API Key -> POST /api/v1/videos
+               -> GET /api/v1/videos/{jobId}
+               -> GET /api/v1/videos/{jobId}/content?index=0
+```
+
+对图片、视频和音频参考素材，服务会先下载每个 URL，逐个调用小云雀上传接口取得 `data.pippit_asset_id`，全部成功后才提交视频任务：
+
+```text
+image_url / video_url / audio_url
+  -> POST /api/biz/v1/skill/upload_file
+  -> data.pippit_asset_id
+  -> POST /api/biz/v1/skill/submit_run
+  -> thread_id + run_id
+  -> POST /api/biz/v1/agent/query_generate_video_result
+```
+
+## 认证边界
+
+| 凭证 | 来源与保存方式 | 允许访问的接口 |
+| --- | --- | --- |
+| Management API Key | 部署方生成；服务配置中只保存 SHA-256 | 仅 `/api/v1/byok` CRUD |
+| Facade API Key | 部署方生成并发给调用方；服务配置中只保存 SHA-256 allowlist | `/api/v1/models`、`/api/v1/videos/**` |
+| Pippit AK | 从小云雀官方页面签发；通过 BYOK API 写入并加密落盘 | 仅由服务调用 Pippit 上游，不作为 facade Bearer token |
+| BYOK encryption key | 32 个随机字节；仅部署环境持有 | AES-256-GCM 加密 BYOK store |
+| Job signing key | 另一把独立的 32 字节随机密钥 | 签名并校验异步 `jobId` |
+
+Management API Key 不能调用模型或视频接口，Facade API Key 不能管理 BYOK；若 Management digest 同时出现在 Facade allowlist，服务会拒绝启动。`BYOK_ENCRYPTION_KEY_HEX` 与 `JOB_SIGNING_KEY_HEX` 必须不同。
+
+本项目参考 OpenRouter 的 BYOK 管理资源和 Management API Key 认证方式，但有两个明确扩展：
+
+- BYOK 请求中的 `provider: "pippit"` 是本 facade 扩展；OpenRouter 官方 provider 枚举不应被理解为已经包含 Pippit。
+- 在 BYOK create/update 中写入 `allowed_api_key_hashes` 是本 facade 扩展，用于把一条 Pippit AK 限定给指定 Facade API Key 的 SHA-256；传 `null` 表示不做该项限制。
+
+当前 facade 只解析静态 Facade API Key，没有 per-user identity。`allowed_user_ids` 只有为 `null` 时才能用于当前运行时路由；一旦写成非空列表，任何视频请求都不会匹配该 credential。保留这个字段是为了契约兼容和未来扩展，不代表已经支持 user routing。
+
+当前 file store 是单 workspace 实现，workspace 固定为 `00000000-0000-0000-0000-000000000000`。创建 credential 时建议省略 `workspace_id`；传入其他 workspace id 会被拒绝，不会被静默合并。
+
+原始 Pippit AK 不会由 list/get/update 响应回显，响应只返回掩码 `label` 和路由元数据。
+
+### Pippit AK 的签发边界
+
+Pippit AK 必须由用户在小云雀官方页面中签发。本 provider 不导入 Pippit Cookie，也不代替官方页面管理 AK；它只接收已经由官方签发的 AK，并通过自己的 Management-Key-protected BYOK API 加密保存。
+
+## 快速开始
+
+要求 Node.js 22 或更高版本。
+
+先生成四个彼此独立的高熵值：
+
+```bash
+export MANAGEMENT_API_KEY="$(openssl rand -hex 32)"
+export FACADE_API_KEY="$(openssl rand -hex 32)"
+
+printf '%s' "$MANAGEMENT_API_KEY" | shasum -a 256
+printf '%s' "$FACADE_API_KEY" | shasum -a 256
+
+openssl rand -hex 32 # BYOK_ENCRYPTION_KEY_HEX
+openssl rand -hex 32 # JOB_SIGNING_KEY_HEX，必须与上一行不同
+```
+
+复制配置，并把上面两个摘要和两把 64 位十六进制密钥填入 `.env`：
+
+```bash
+npm install
+cp .env.example .env
+npm run dev
+```
+
+默认监听 `http://127.0.0.1:3000`。所有必需密钥或摘要缺失时，服务会拒绝启动。
+
+### 1. 写入 Pippit BYOK
+
+先从小云雀官方页面创建并复制 AK，再用 Management API Key 写入。以下示例将该 AK 限定给一个 Facade API Key；`FACADE_API_KEY_SHA256` 是该 Facade API Key 的小写 SHA-256：
+
+```bash
+export PIPPIT_AK='ak-...'
+export FACADE_API_KEY_SHA256='<sha256-of-facade-api-key>'
+
+curl -X POST http://localhost:3000/api/v1/byok \
+  -H "Authorization: Bearer $MANAGEMENT_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"provider\": \"pippit\",
+    \"key\": \"${PIPPIT_AK}\",
+    \"name\": \"production-pippit\",
+    \"allowed_models\": [\"pippit/seedance-2.0\"],
+    \"allowed_api_key_hashes\": [\"${FACADE_API_KEY_SHA256}\"]
+  }"
+```
+
+成功返回 HTTP `201`，其中 `data.id` 是 BYOK credential id；`key` 不会返回：
+
+```json
+{
+  "data": {
+    "id": "30a504af-e33b-46a3-a689-b40fae68bd25",
+    "provider": "pippit",
+    "label": "ak-****bc12",
+    "name": "production-pippit",
+    "disabled": false,
+    "is_fallback": false
+  }
+}
+```
+
+管理接口均只接受 Management API Key，并返回 `Cache-Control: no-store`：
+
+```text
+POST   /api/v1/byok
+GET    /api/v1/byok
+GET    /api/v1/byok/{id}
+PATCH  /api/v1/byok/{id}
+DELETE /api/v1/byok/{id}
+```
+
+用 `PATCH` 传入新的 `key` 会创建新的内部 key version。已经生成的 `jobId` 仍绑定旧 version，因此轮询不会因为正常轮换而漂移到新 AK。删除 credential 会同时删除其版本，依赖它的未完成任务将无法再查询；若需要立即吊销，应同时在小云雀官方侧撤销 AK。
+
+### 2. 发现模型
+
+模型和视频接口使用 Facade API Key：
+
+```bash
+curl http://localhost:3000/api/v1/videos/models \
+  -H "Authorization: Bearer $FACADE_API_KEY"
+```
+
+### 3. 提交视频
+
+```bash
+curl -X POST http://localhost:3000/api/v1/videos \
+  -H "Authorization: Bearer $FACADE_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "pippit/seedance-2.0",
+    "prompt": "以产品特写开场，镜头缓慢推进，最后出现品牌标语",
+    "duration": 10,
+    "resolution": "720p",
+    "aspect_ratio": "9:16",
+    "provider": {
+      "options": {
+        "pippit": {
+          "byok_id": "30a504af-e33b-46a3-a689-b40fae68bd25"
+        }
+      }
+    },
+    "input_references": [
+      {
+        "type": "image_url",
+        "image_url": { "url": "https://example.com/product.png" }
+      },
+      {
+        "type": "video_url",
+        "video_url": { "url": "https://example.com/motion.mp4" }
+      },
+      {
+        "type": "audio_url",
+        "audio_url": { "url": "https://example.com/music.mp3" }
+      }
+    ]
+  }'
+```
+
+`provider.options.pippit.byok_id` 也是 facade 扩展；省略时服务会按 credential 的限制条件和排序自动选择。继续已有 `thread_id` 且存在多个可用 credential 时，必须显式提供 `byok_id`，避免把 Pippit 会话切换到另一条 AK。
+
+成功返回 HTTP `202`：
+
+```json
+{
+  "id": "pippit_job_v2....",
+  "polling_url": "/api/v1/videos/pippit_job_v2....",
+  "status": "pending",
+  "generation_id": "marketing_...",
+  "model": "pippit/seedance-2.0",
+  "usage": { "is_byok": true }
+}
+```
+
+用提交任务时的同一个 Facade API Key 查询和下载：
+
+```bash
+curl http://localhost:3000/api/v1/videos/$JOB_ID \
+  -H "Authorization: Bearer $FACADE_API_KEY"
+
+curl "http://localhost:3000/api/v1/videos/$JOB_ID/content?index=0" \
+  -H "Authorization: Bearer $FACADE_API_KEY" \
+  --output result.mp4
+```
+
+`jobId` 是带 HMAC 的无状态句柄，绑定 Facade API Key、workspace、BYOK credential/key version、`thread_id`、`run_id` 和 facade model id。只要相同的 job signing key 和所需 credential version 仍存在，服务重启后即可继续查询。
+
+## BYOK 选择与 fallback
+
+运行时只考虑满足以下条件的 credential：未禁用、`provider`/workspace 匹配、允许当前 model，并且 `allowed_api_key_hashes` 允许当前 Facade API Key。主 credential 按 `sort_order` 优先，`is_fallback: true` 的 credential 排在其后。
+
+服务只在 Pippit 明确返回 HTTP `401`、`403` 或 `429` 时尝试下一条 credential。网络错误、超时或 `submit_run` 结果不确定时不会 fallback，避免同一请求在上游产生重复任务。每次切换 credential，参考图片、视频和音频都会使用该 credential 重新上传并取得新的 `data.pippit_asset_id`，随后才调用 `submit_run`。
+
+## 首尾帧
+
+OpenRouter 的 `frame_images` 会映射为小云雀 `generate_type: 1`。上传顺序固定为首帧、尾帧，不依赖调用方数组顺序。
+
+```json
+{
+  "model": "pippit/seedance-2.0",
+  "prompt": "从白天平滑过渡到夜景",
+  "frame_images": [
+    {
+      "type": "image_url",
+      "image_url": { "url": "https://example.com/first.png" },
+      "frame_type": "first_frame"
+    },
+    {
+      "type": "image_url",
+      "image_url": { "url": "https://example.com/last.png" },
+      "frame_type": "last_frame"
+    }
+  ]
+}
+```
+
+与 OpenRouter 当前语义一致，同时传 `frame_images` 和 `input_references` 时，`frame_images` 优先，后者不会上传或提交。
+
+## 模型
+
+| Facade model | Pippit model | 分辨率 |
+| --- | --- | --- |
+| `pippit/seedance-2.0-fast` | `seedance2.0_fast_vision` | `480p`, `720p` |
+| `pippit/seedance-2.0` | `seedance2.0_vision` | `480p`, `720p`, `1080p` |
+| `pippit/seedance-2.0-mini` | `Seedance_2.0_mini` | `480p`, `720p` |
+| `pippit/seedance-2.0-mini-lite` | `Seedance_2.0_mini_lite` | `480p`, `720p` |
+
+为迁移已有调用，`model` 也接受表格中的原始 Pippit model 字符串；模型发现接口只返回稳定的 facade id。
+
+接口同时提供：
+
+- `GET /api/v1/videos/models`：OpenRouter 视频模型能力结构，需要 Facade API Key。
+- `GET /api/v1/models`：带 `architecture.input_modalities/output_modalities` 的通用模型列表，需要 Facade API Key。
+- `GET /openapi.json`：OpenAPI 3.1 描述。
+- `GET /health`：不鉴权的健康检查；加密 BYOK store 不可用时不会返回健康状态。
+
+## 参数映射
+
+| OpenRouter 字段 | Pippit 字段/行为 |
+| --- | --- |
+| `prompt` | 同时写入 `message` 与 `video_part_tool_param.prompt` |
+| `duration` | `duration_sec`；省略时默认 5 秒 |
+| `aspect_ratio` | `ratio` |
+| `resolution` | `resolution` |
+| `size` | 显式拒绝；Pippit 只承诺 `resolution + ratio`，不能保证精确像素尺寸 |
+| `seed` | `video_part_tool_param.seed` |
+| `frame_images` | 先上传并取得 `data.pippit_asset_id`，写入 `images`，设置 `generate_type: 1` |
+| `input_references` | 图片/视频/音频先上传并取得 `data.pippit_asset_id`，再写入 `images` / `videos` / `audios` |
+| `provider.options.pippit.byok_id` | facade 扩展；固定使用指定 BYOK credential |
+| `provider.options.pippit.thread_id` | facade 扩展；复用已有 Pippit 会话 |
+
+小云雀文档没有暴露 `callback_url` 和可控的 `generate_audio`，因此显式传入这两个字段会返回 `unsupported_parameter`，不会静默忽略。
+
+## 参考素材安全
+
+- 只接受 `http:` / `https:` URL；不接受 `data:`、`file:` 或携带 URL credentials 的地址。
+- 默认拒绝 localhost、私网、链路本地和其他非公网目标；每次重定向都会重新校验，生产传输会把已校验 DNS 地址固定到实际 socket，避免 DNS rebinding。
+- 根据文件特征和 MIME/扩展名校验格式：图片支持 JPEG/PNG/GIF/BMP/WebP，视频支持 MP4/MOV，音频支持 MP3/WAV。
+- 默认单文件上限为图片 30 MiB、视频 200 MiB、音频 15 MiB；单请求总计 300 MiB，音频合计 15 MiB。
+- 默认单请求上传并发和全局素材工作并发均为 1；同一请求内相同类型、相同 URL 只上传一次。
+- 任一下载或上传失败会中止当前 credential 的提交；没有成功上传全部参考素材时不会调用该 credential 的 `submit_run`。
+- 生成结果也通过本服务代理；结果 URL 使用同一套公网目标与重定向校验，并支持 `Range` 下载。
+
+如确实需要访问内网素材，可设置 `ALLOW_PRIVATE_REFERENCE_URLS=true`；只应在受信网络和受控调用方场景启用。
+
+## File store 部署边界
+
+默认 `BYOK_STORE_PATH=./data/byok-credentials.json` 使用本地 file store。它适用于单进程、单实例的本地 POSIX 部署，不支持多副本或 NFS/共享文件系统，也不是分布式凭证库。
+
+- 父目录必须由服务用户拥有且权限为 `0700` 或更严格；store 和 `${BYOK_STORE_PATH}.lock` 使用 `0600`。
+- 进程以排他方式创建 `.lock`。若启动提示锁不可用，应先确认没有其他 provider 进程使用该 store；只有确认是崩溃遗留的 stale lock 后才能人工删除。
+- 每次变更会以临时文件、`fsync`、原子 rename、目录 `fsync` 的方式写入完整 AES-256-GCM envelope。
+- AES-GCM 能校验机密性和完整性，但不能判断一个旧的、仍然有效的完整 store snapshot 是否被回滚。备份/快照的访问控制与版本新鲜度必须由部署系统负责。
+- update/delete 只保证当前逻辑 store 不再使用旧 AK。APFS/文件系统快照、备份、SSD wear leveling 可能仍保留旧 ciphertext；本服务不声称实现物理擦除。需要立即吊销时，以小云雀官方侧撤销 AK 为准。
+
+容器部署必须把 `/app/data` 挂载到持久卷；同一卷同一时间只运行一个 provider 实例。`BYOK_ENCRYPTION_KEY_HEX`、`JOB_SIGNING_KEY_HEX`、Management/Facade 原始 Key 应由 secret manager 注入，不要写入镜像或提交到仓库。
+
+## 配置
+
+见 [.env.example](./.env.example)。常用项：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `BYOK_ENCRYPTION_KEY_HEX` | 无 | 必填；32 个随机字节的 64 位小写 hex，用于加密 Pippit AK |
+| `JOB_SIGNING_KEY_HEX` | 无 | 必填；另一把 32 字节随机密钥，用于 job token HMAC |
+| `BYOK_MANAGEMENT_KEY_SHA256` | 无 | 必填；Management API Key 的小写 SHA-256 |
+| `FACADE_API_KEY_SHA256_ALLOWLIST` | 无 | 必填；逗号分隔的 Facade API Key 小写 SHA-256 |
+| `BYOK_STORE_PATH` | `./data/byok-credentials.json` | 加密 file store 路径；相对路径按服务工作目录解析 |
+| `HOST` | `127.0.0.1` | 监听地址；容器端口映射时设置为 `0.0.0.0` |
+| `PIPPIT_BASE_URL` | `https://xyq.jianying.com` | 文档中的小云雀 API origin，可按部署环境覆盖 |
+| `PIPPIT_REQUEST_TIMEOUT_MS` | `120000` | 上传、提交、查询超时 |
+| `CONTENT_STREAM_IDLE_TIMEOUT_MS` | `120000` | 生成结果流连续无数据的最大等待时间 |
+| `REFERENCE_FETCH_TIMEOUT_MS` | `120000` | 单个参考素材下载超时 |
+| `REFERENCE_MAX_IMAGE_BYTES` | `31457280` | 单张图片最大 30 MiB |
+| `REFERENCE_MAX_VIDEO_BYTES` | `209715200` | 单个视频最大 200 MiB |
+| `REFERENCE_MAX_AUDIO_BYTES` | `15728640` | 单个音频与单请求音频合计最大 15 MiB |
+| `REFERENCE_MAX_TOTAL_BYTES` | `314572800` | 单请求参考素材合计最大 300 MiB |
+| `REFERENCE_MAX_REDIRECTS` | `3` | 参考 URL 最大重定向次数 |
+| `REFERENCE_UPLOAD_CONCURRENCY` | `1` | 单请求素材上传并发数 |
+| `REFERENCE_GLOBAL_CONCURRENCY` | `1` | 整个进程同时执行的素材下载+上传工作数 |
+| `ALLOW_PRIVATE_REFERENCE_URLS` | `false` | 是否允许私网参考 URL |
+| `PUBLIC_BASE_URL` | 空 | 设置后返回绝对 `polling_url` / `unsigned_urls` |
+
+## 验证
+
+```bash
+npm run check
+```
+
+默认测试使用内存 BYOK store 和注入的 Pippit fake，覆盖管理/运行时认证隔离、加密持久化、credential 选择与轮换、素材上传先于生成、图片/视频/音频映射、状态映射、job token 隔离、内容代理、超时、大小限制与私网 URL 拒绝。真实 Pippit AK 的上游验收需要单独执行，可能产生生成费用，不会混入默认测试。
+
+## 协议依据
+
+- [OpenRouter BYOK overview](https://openrouter.ai/docs/guides/overview/auth/byok)
+- [OpenRouter Management API Keys](https://openrouter.ai/docs/guides/overview/auth/management-api-keys)
+- OpenRouter BYOK CRUD：[create](https://openrouter.ai/docs/api/api-reference/byok/create-byok-key)、[list](https://openrouter.ai/docs/api/api-reference/byok/list-byok-keys)、[get](https://openrouter.ai/docs/api/api-reference/byok/get-byok-key)、[update](https://openrouter.ai/docs/api/api-reference/byok/update-byok-key)、[delete](https://openrouter.ai/docs/api/api-reference/byok/delete-byok-key)
+- [OpenRouter Video Generation](https://openrouter.ai/docs/guides/overview/multimodal/video-generation)
+- [OpenRouter Video API Reference](https://openrouter.ai/docs/api/api-reference/video-generation/create-videos)
+- [小云雀（Pippit）](https://xyq.jianying.com/)
+
+更细的边界和状态映射见 [docs/architecture.md](./docs/architecture.md)。
+
+## License
+
+[MIT](./LICENSE) © 2026 superche
