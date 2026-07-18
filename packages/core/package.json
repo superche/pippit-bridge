@@ -1,0 +1,30 @@
+{
+  "name": "@pippit-bridge/core",
+  "version": "0.1.0",
+  "description": "Shared Pippit model catalog and safe media primitives",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json --force",
+    "prepack": "npm run build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --configLoader native"
+  }
+}

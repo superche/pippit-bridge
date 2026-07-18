@@ -1,0 +1,24 @@
+{
+  "name": "@pippit-bridge/openrouter-facade",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenRouter-compatible BYOK video gateway for Pippit",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json --force",
+    "pretest": "npm run build -w @pippit-bridge/core && npm run build -w @pippit-bridge/sdk",
+    "pretypecheck": "npm run build -w @pippit-bridge/core && npm run build -w @pippit-bridge/sdk",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --configLoader native"
+  },
+  "dependencies": {
+    "@pippit-bridge/core": "0.1.0",
+    "@pippit-bridge/sdk": "0.1.0",
+    "fastify": "^5.6.2",
+    "zod": "^4.1.12"
+  }
+}

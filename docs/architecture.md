@@ -1,5 +1,49 @@
 # Architecture and contract boundaries
 
+## Monorepo dependency direction
+
+```text
+packages/core
+  |-- stable video model catalog
+  `-- public-network and media-signature primitives
+
+packages/sdk
+  `-- Pippit upload / submit / query client
+
+apps/openrouter-facade ------------------+
+  |-- auth, BYOK, job token, HTTP routes |
+  `--------------------------------------+- depends on core + sdk
+
+packages/opencode-provider-pippit -------+
+  |-- OpenCode AuthHook
+  |-- pippit_generate_video
+  `-- pippit_get_video
+```
+
+`core` and `sdk` do not depend on an adapter. An adapter never imports another adapter. This keeps the stable model ids and upstream request types reusable when CLI, MCP, ChatGPT App, Codex, ComfyUI, n8n, or OpenMontage packages are added.
+
+The root scripts intentionally start the facade from the repository root. This preserves the existing meaning of `.env` and relative `BYOK_STORE_PATH=./data/byok-credentials.json` after the workspace move.
+
+## OpenCode direct-provider boundary
+
+OpenCode currently loads model providers as AI SDK `LanguageModelV3`. Pippit's asynchronous video endpoint does not implement that contract. The OpenCode adapter therefore uses documented plugin surfaces instead of advertising a fake language model:
+
+```text
+OpenCode /connect
+  -> plugin auth.provider = pippit
+  -> OpenCode-owned API credential
+
+agent
+  -> pippit_generate_video (permission ask)
+  -> SDK upload_file / submit_run
+  -> pippit_get_video / query_generate_video_result
+  -> checked download inside current worktree
+```
+
+Direct mode does not use the facade's Management API Key, Facade API Key, BYOK store, or signed job id. It retains upstream `thread_id` and `run_id` so a later tool call can resume polling. Local inputs are realpath-confined to the worktree; remote inputs and generated outputs use the shared public-network checks.
+
+Pippit AK binding has two states: the always-available OpenCode masked API prompt, and an RFC 8628 device flow that is only exposed when official same-origin website endpoints are configured. See [opencode-ak-binding.md](./opencode-ak-binding.md).
+
 ## Control plane and runtime flow
 
 ```text

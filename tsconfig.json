@@ -1,23 +1,9 @@
 {
-  "compilerOptions": {
-    "allowImportingTsExtensions": false,
-    "exactOptionalPropertyTypes": true,
-    "forceConsistentCasingInFileNames": true,
-    "isolatedModules": true,
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "noEmit": true,
-    "noFallthroughCasesInSwitch": true,
-    "noImplicitOverride": true,
-    "noUncheckedIndexedAccess": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "resolveJsonModule": true,
-    "skipLibCheck": true,
-    "strict": true,
-    "target": "ES2023",
-    "types": ["node"]
-  },
-  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/sdk" },
+    { "path": "./apps/openrouter-facade" },
+    { "path": "./packages/opencode-provider-pippit" }
+  ]
 }

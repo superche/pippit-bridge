@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
-  "description": "OpenRouter-compatible BYOK video bridge for Pippit (Xiaoyunque)",
+  "description": "Pippit API gateway and adapter monorepo",
   "author": "superche",
   "repository": {
     "type": "git",
@@ -14,22 +14,28 @@
     "url": "https://github.com/superche/pippit-bridge/issues"
   },
   "type": "module",
+  "packageManager": "npm@12.0.1",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "engines": {
-    "node": ">=22.0.0"
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
-    "dev": "node --env-file=.env --watch --import tsx src/server.ts",
-    "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit",
+    "build:libs": "npm run build -w @pippit-bridge/core && npm run build -w @pippit-bridge/sdk",
+    "predev": "npm run build:libs",
+    "dev": "node --env-file=.env --watch --import tsx apps/openrouter-facade/src/server.ts",
+    "build": "npm run build:libs && npm run build -w @pippit-bridge/openrouter-facade && npm run build -w opencode-provider-pippit",
+    "start": "node apps/openrouter-facade/dist/server.js",
+    "pretypecheck": "npm run build:libs",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "oxlint .",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "pretest": "npm run build:libs",
+    "test": "vitest run --configLoader native",
+    "pretest:watch": "npm run build:libs",
+    "test:watch": "vitest --configLoader native",
     "check": "npm run lint && npm run typecheck && npm test && npm run build"
-  },
-  "dependencies": {
-    "fastify": "^5.6.2",
-    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

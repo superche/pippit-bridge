@@ -1,6 +1,51 @@
 # Pippit Bridge
 
-一个 OpenRouter 风格的视频生成 facade，底层调用小云雀（Pippit）的“生成沉浸式短片视频”API，并提供服务器持久化 BYOK（Bring Your Own Key）。
+Pippit Bridge 是小云雀（Pippit）的 API gateway 与 adapter monorepo。当前同时提供：
+
+- OpenRouter 风格的视频生成 facade 与服务器持久化 BYOK。
+- 可发布的 Pippit TypeScript SDK、共享模型目录与安全素材能力。
+- `opencode-provider-pippit`：使用 OpenCode 标准 auth/plugin/tool 接口的本地视频 provider。
+
+```text
+pippit-bridge
+├── apps
+│   └── openrouter-facade
+├── packages
+│   ├── core
+│   ├── sdk
+│   └── opencode-provider-pippit
+└── docs
+```
+
+`core` 是模型版本与安全素材真源；`sdk` 只封装小云雀官方 AK API；facade 和 OpenCode provider 只能向下依赖它们。后续的 CLI、MCP、ChatGPT App、Codex plugin、ComfyUI、n8n 和 OpenMontage adapter 可作为新的 workspace 增加，不需要再复制上游协议实现。
+
+## OpenCode provider
+
+OpenCode 1.18.3 的 model provider contract 是 AI SDK `LanguageModelV3`。小云雀当前公开的是异步视频任务 API，不是聊天/流式语言模型；本项目不会把视频模型伪装成聊天模型。功能性接入使用 OpenCode 官方支持的组合：
+
+- `auth` hook：让 `/connect` 保存官网签发的 Pippit AK。
+- `pippit_generate_video`：上传参考素材并提交视频生成；每次付费提交前显式请求权限。
+- `pippit_get_video`：查询任务；写入 worktree 前单独请求下载权限。
+- 共享模型目录：新增 Pippit 模型版本时只增加 catalog entry，两个 adapter 同步可见。
+
+发布后在 OpenCode 配置中加入：
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["opencode-provider-pippit"]
+}
+```
+
+重启 OpenCode，运行 `/connect`，选择 `Pippit`，再选择“粘贴官网已签发的 AK”。这个输入由 OpenCode 自己的 secret/password prompt 接收；plugin 不读取 Cookie、不监听剪贴板、不把 AK 写入项目配置，也不启动 gateway/sidecar。Direct provider 的 API 与 Device Flow issuer 都固定为小云雀官方 origin，项目配置不能把已保存 AK 改发到其他站点。CI 可显式使用 `PIPPIT_ACCESS_KEY`。
+
+官网尚未提供机器可消费的授权协议时，最短安全路径仍需要用户在官网复制并隐藏粘贴一次 AK。真正无粘贴的一键绑定已经按 RFC 8628 Device Authorization 预留实现：官网提供授权与 token endpoint 后，`/connect` 会打开官网，用户确认一次，plugin 自动把新签发 AK 交回 OpenCode。AK 不经过浏览器 URL。完整协议、威胁模型与验收标准见 [OpenCode AK 绑定设计](./docs/opencode-ak-binding.md)。
+
+OpenCode 包的安装与 options 见 [packages/opencode-provider-pippit/README.md](./packages/opencode-provider-pippit/README.md)。
+
+## OpenRouter facade
+
+facade 底层调用小云雀的“生成沉浸式短片视频”API，并提供服务器持久化 BYOK（Bring Your Own Key）。
 
 调用方不会把 Pippit AK 直接用作 facade 的 Bearer token。部署管理员先用 Management API Key 将小云雀官方签发的 Pippit AK 写入 `/api/v1/byok`；运行时调用方再使用独立的 Facade API Key 访问模型、生成、轮询和下载接口。
 
@@ -52,7 +97,7 @@ Pippit AK 必须由用户在小云雀官方页面中签发。本 provider 不导
 
 ## 快速开始
 
-要求 Node.js 22 或更高版本。
+完整 monorepo 要求 Node.js 22.22.2+、24.15.0+ 或 26+；单独运行 facade/core/sdk 的最低版本仍为 Node.js 22。
 
 先生成四个彼此独立的高熵值：
 

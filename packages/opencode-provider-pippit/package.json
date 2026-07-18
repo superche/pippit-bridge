@@ -1,0 +1,41 @@
+{
+  "name": "opencode-provider-pippit",
+  "version": "0.1.0",
+  "description": "OpenCode auth and native video tools for Pippit (小云雀)",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "keywords": [
+    "opencode",
+    "pippit",
+    "xiaoyunque",
+    "video-generation"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json --force",
+    "prepack": "npm run build -w @pippit-bridge/core && npm run build -w @pippit-bridge/sdk && npm run build",
+    "pretest": "npm run build -w @pippit-bridge/core && npm run build -w @pippit-bridge/sdk",
+    "pretypecheck": "npm run build -w @pippit-bridge/core && npm run build -w @pippit-bridge/sdk",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --configLoader native"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.18.3",
+    "@pippit-bridge/core": "0.1.0",
+    "@pippit-bridge/sdk": "0.1.0"
+  }
+}
