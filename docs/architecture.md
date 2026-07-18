@@ -16,6 +16,8 @@ apps/openrouter-facade ------------------+
 
 packages/opencode-provider-pippit -------+
   |-- OpenCode AuthHook
+  |-- global multi-account AK keyring
+  |-- pippit_manage_access_keys
   |-- pippit_generate_video
   `-- pippit_get_video
 ```
@@ -31,7 +33,13 @@ OpenCode currently loads model providers as AI SDK `LanguageModelV3`. Pippit's a
 ```text
 OpenCode /connect
   -> plugin auth.provider = pippit
-  -> OpenCode-owned API credential
+  -> OpenCode hidden password prompt
+  -> plugin global keyring (multiple named accounts + active pointer)
+
+agent
+  -> pippit_manage_access_keys
+  -> configure: official website link + top-of-page issuance instructions
+  -> list / switch / delete (never returns or accepts a raw AK)
 
 agent
   -> pippit_generate_video (permission ask)
@@ -40,7 +48,9 @@ agent
   -> checked download inside current worktree
 ```
 
-Direct mode does not use the facade's Management API Key, Facade API Key, BYOK store, or signed job id. It retains upstream `thread_id` and `run_id` so a later tool call can resume polling. Local inputs are realpath-confined to the worktree; remote inputs and generated outputs use the shared public-network checks.
+Direct mode does not use the facade's Management API Key, Facade API Key, BYOK store, or signed job id. OpenCode 1.18.3 exposes one credential slot per provider, so `/connect` remains the secret-input/import channel while the plugin owns a global, non-project keyring for multiple named accounts. The keyring uses a `0700` directory, a `0600` atomically replaced plaintext file, masked public summaries, and an explicit active pointer. It shares OpenCode `auth.json`'s same-UID plaintext threat boundary; it is not the encrypted server BYOK store.
+
+Each managed-account submission persists upstream `thread_id + run_id` with the `account_id` used at submission. A later switch or environment override only changes new work; a saved binding wins when polling. If binding persistence fails after a successful upstream submission, the tool returns the run instead of turning it into a retryable failure, marks `account_binding_persisted: false`, and returns the explicit `account_id` recovery selector. Polling fails closed if its bound account was deleted instead of silently crossing account scope. Local inputs are realpath-confined to the worktree; remote inputs and generated outputs use the shared public-network checks.
 
 Pippit AK binding has two states: the always-available OpenCode masked API prompt, and an RFC 8628 device flow that is only exposed when official same-origin website endpoints are configured. See [opencode-ak-binding.md](./opencode-ak-binding.md).
 

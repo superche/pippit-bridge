@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { MemoryPippitAccountStore, PippitAccountManager } from "../src/account-store.js"
 import {
   createDeviceAuthorizationMethod,
   createPippitAuthHook,
@@ -38,6 +39,64 @@ describe("PippitCredentialSource", () => {
     credentials.setStoredAuthGetter(async () => ({ type: "api", key: "future.key_format-1" }))
 
     await expect(credentials.read()).resolves.toBe("future.key_format-1")
+  })
+
+  it("reads the selected managed account while preserving the CI environment override", async () => {
+    const accounts = new PippitAccountManager(new MemoryPippitAccountStore())
+    const firstAuth = { key: "ak-managed-work-secret", type: "api" }
+    await accounts.beginConfiguration("工作", undefined)
+    const first = await accounts.reconcile(firstAuth)
+    const secondAuth = { key: "ak-managed-personal-secret", type: "api" }
+    await accounts.beginConfiguration("个人", firstAuth)
+    const second = await accounts.reconcile(secondAuth)
+    if (first === undefined || second === undefined) throw new Error("Expected managed accounts")
+    const credentials = new PippitCredentialSource(accounts)
+
+    await accounts.switchAccount({ accountId: first.id })
+    await expect(credentials.readRuntimeCredential()).resolves.toMatchObject({
+      accessKey: "ak-managed-work-secret",
+      accountId: first.id,
+      source: "managed_account",
+    })
+
+    vi.stubEnv("PIPPIT_ACCESS_KEY", "ak-ci-override")
+    await expect(credentials.readRuntimeCredential()).resolves.toEqual({
+      accessKey: "ak-ci-override",
+      source: "environment",
+    })
+    expect(credentials.hasEnvironmentOverride()).toBe(true)
+  })
+
+  it("keeps an existing run on its bound account when an environment override is present", async () => {
+    const accounts = new PippitAccountManager(new MemoryPippitAccountStore())
+    const firstAuth = { key: "ak-managed-work-secret", type: "api" }
+    await accounts.beginConfiguration("工作", undefined)
+    const first = await accounts.reconcile(firstAuth)
+    if (first === undefined) throw new Error("Expected the first managed account")
+    await accounts.bindRun("run-existing", "thread-existing", first.id)
+
+    const secondAuth = { key: "ak-managed-personal-secret", type: "api" }
+    await accounts.beginConfiguration("个人", firstAuth)
+    const second = await accounts.reconcile(secondAuth)
+    if (second === undefined) throw new Error("Expected the second managed account")
+
+    vi.stubEnv("PIPPIT_ACCESS_KEY", "ak-ci-override")
+    const credentials = new PippitCredentialSource(accounts)
+    await expect(credentials.readForRun("run-existing", "thread-existing")).resolves.toMatchObject({
+      accessKey: "ak-managed-work-secret",
+      accountId: first.id,
+      source: "managed_account",
+    })
+    await expect(
+      credentials.readForRun("run-unbound", "thread-unbound", second.id),
+    ).resolves.toMatchObject({
+      accessKey: "ak-managed-personal-secret",
+      accountId: second.id,
+      source: "managed_account",
+    })
+    await expect(
+      credentials.readForRun("run-existing", "thread-existing", second.id),
+    ).rejects.toThrow("does not match this run's saved Pippit account binding")
   })
 })
 
