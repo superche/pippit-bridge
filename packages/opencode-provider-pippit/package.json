@@ -1,6 +1,6 @@
 {
   "name": "opencode-provider-pippit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenCode auth and native video tools for Pippit (小云雀)",
   "type": "module",
   "license": "MIT",
