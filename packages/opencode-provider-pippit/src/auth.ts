@@ -1,10 +1,22 @@
 import type { AuthHook } from "@opencode-ai/plugin"
+import {
+  PippitAccountManager,
+  type PippitCredentialSelection,
+  type StoredOpenCodeAuth,
+} from "./account-store.js"
+import { isManagedAuthSentinel, normalizeAccessKey } from "./access-key.js"
 import type { DeviceAuthorizationOptions } from "./options.js"
 import { PIPPIT_ACCESS_KEY_ENV, PIPPIT_PROVIDER_ID } from "./options.js"
 
 type AuthMethod = AuthHook["methods"][number]
-type StoredAuth = { readonly type: string; readonly key?: string }
-type StoredAuthGetter = () => Promise<StoredAuth | undefined>
+type StoredAuthGetter = () => Promise<StoredOpenCodeAuth | undefined>
+
+export interface PippitRuntimeCredential {
+  readonly accessKey: string
+  readonly accountId?: string
+  readonly accountName?: string
+  readonly source: "environment" | "managed_account" | "opencode"
+}
 
 export interface DeviceAuthorizationDependencies {
   readonly fetchImpl?: typeof fetch
@@ -43,35 +55,99 @@ async function withRequestDeadline<T>(
 }
 
 export class PippitCredentialSource {
+  private readonly accounts: PippitAccountManager | undefined
   private storedAuthGetter: StoredAuthGetter | undefined
+
+  constructor(accounts?: PippitAccountManager) {
+    this.accounts = accounts
+  }
 
   setStoredAuthGetter(getter: StoredAuthGetter): void {
     this.storedAuthGetter = getter
   }
 
-  async read(): Promise<string> {
+  async currentStoredAuth(): Promise<StoredOpenCodeAuth | undefined> {
+    return this.storedAuthGetter?.()
+  }
+
+  async reconcileStoredAuth(): Promise<void> {
+    if (this.accounts === undefined) return
+    await this.accounts.reconcile(await this.currentStoredAuth())
+  }
+
+  hasEnvironmentOverride(): boolean {
+    const value = process.env[PIPPIT_ACCESS_KEY_ENV]
+    return value !== undefined && value.trim() !== ""
+  }
+
+  async readRuntimeCredential(): Promise<PippitRuntimeCredential> {
     const environmentKey = process.env[PIPPIT_ACCESS_KEY_ENV]
     if (environmentKey !== undefined && environmentKey.trim() !== "") {
-      return normalizeAccessKey(environmentKey)
+      return { accessKey: normalizeAccessKey(environmentKey), source: "environment" }
     }
 
-    const auth = await this.storedAuthGetter?.()
-    if (auth?.type === "api" && typeof auth.key === "string") {
-      return normalizeAccessKey(auth.key)
+    const managed = await this.accounts?.resolveActive()
+    if (managed !== undefined) return runtimeCredential(managed)
+    if (await this.accounts?.hasManagedState()) throw notConnectedError()
+
+    const auth = await this.currentStoredAuth()
+    if (
+      auth?.type === "api" &&
+      typeof auth.key === "string" &&
+      !isManagedAuthSentinel(auth.key)
+    ) {
+      return { accessKey: normalizeAccessKey(auth.key), source: "opencode" }
     }
-    throw new Error(
-      `Pippit is not connected. Run /connect, select Pippit (小云雀), and bind an Access Key issued by the official website.`,
-    )
+    throw notConnectedError()
+  }
+
+  async readForRun(
+    runId: string,
+    threadId: string,
+    explicitAccountId?: string,
+  ): Promise<PippitRuntimeCredential> {
+    const managed = await this.accounts?.resolveForRun(runId, threadId)
+    if (managed !== undefined) {
+      if (explicitAccountId !== undefined && managed.accountId !== explicitAccountId) {
+        throw new Error("The requested account_id does not match this run's saved Pippit account binding.")
+      }
+      return runtimeCredential(managed)
+    }
+    if (explicitAccountId !== undefined) {
+      if (this.accounts === undefined) {
+        throw new Error("An explicit Pippit account_id requires the managed account store.")
+      }
+      return runtimeCredential(await this.accounts.resolveAccount({ accountId: explicitAccountId }))
+    }
+    return this.readRuntimeCredential()
+  }
+
+  async bindRun(runId: string, threadId: string, credential: PippitRuntimeCredential): Promise<void> {
+    if (credential.accountId === undefined || this.accounts === undefined) return
+    await this.accounts.bindRun(runId, threadId, credential.accountId)
+  }
+
+  async read(): Promise<string> {
+    return (await this.readRuntimeCredential()).accessKey
   }
 }
 
-export function normalizeAccessKey(value: string): string {
-  const key = value.trim()
-  if (key.length < 1 || key.length > 4_096 || !/^[\x21-\x7e]+$/u.test(key)) {
-    throw new Error("The Pippit Access Key is not in a supported format.")
+function runtimeCredential(credential: PippitCredentialSelection): PippitRuntimeCredential {
+  return {
+    accessKey: credential.accessKey,
+    accountId: credential.accountId,
+    accountName: credential.accountName,
+    source: "managed_account",
   }
-  return key
 }
+
+function notConnectedError(): Error {
+  return new Error(
+    "Pippit has no active account. Use pippit_manage_access_keys to configure or switch an account, or run /connect and bind an Access Key issued by the official website.",
+  )
+}
+
+export { normalizeAccessKey } from "./access-key.js"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -249,6 +325,7 @@ export function createPippitAuthHook(
     provider: PIPPIT_PROVIDER_ID,
     async loader(getAuth) {
       credentials.setStoredAuthGetter(getAuth as StoredAuthGetter)
+      await credentials.reconcileStoredAuth()
       return { apiKey: "opencode-managed-pippit-access-key" }
     },
     methods,

@@ -1,6 +1,6 @@
 # OpenCode 绑定小云雀 AK 设计
 
-状态：已实现客户端与 OpenCode plugin 侧；等待小云雀官网提供授权协议后启用无粘贴流程。
+状态：已实现多账号手工绑定、切换与删除；等待小云雀官网提供授权协议后启用无粘贴流程。
 
 ## 目标与非目标
 
@@ -9,7 +9,8 @@
 - Pippit AK 必须由小云雀官网签发。
 - plugin 不抓取 Cookie、不读取网页 DOM、不模拟用户登录。
 - AK 不进入浏览器 URL、shell argv、项目文件、日志或 telemetry。
-- OpenCode 继续拥有 credential 生命周期；`/connect`、`auth list`、`auth logout` 行为一致。
+- `/connect` 继续作为唯一的手工 secret/password 输入通道；普通 tool 参数不接收 AK。
+- 支持多个用户命名的本地账号、显式 active 切换与本地删除。
 - 桌面、SSH、容器和 WSL 都有可用路径。
 
 当前小云雀视频接口不是语言模型接口。OpenCode 1.18.3 的 `provider.npm` 只加载 AI SDK `LanguageModelV3`，因此视频能力必须走标准 plugin custom tool，不能通过一个伪 chat provider 混入 `/models`。
@@ -19,13 +20,14 @@
 ### Direct OpenCode
 
 ```text
-OpenCode auth store
-  -> opencode-provider-pippit
+OpenCode /connect hidden prompt
+  -> opencode-provider-pippit global account keyring
+  -> selected account
   -> Pippit SDK
   -> https://xyq.jianying.com
 ```
 
-本机 OpenCode 是受信调用方。Pippit AK 由 OpenCode 保存，plugin 每次调用时读取当前 credential，只把它发送给代码中固定的 `https://xyq.jianying.com` 官方 origin；项目配置不能覆盖该地址。此模式不需要 Management API Key、Facade API Key、BYOK store 或常驻 gateway。
+本机 OpenCode 是受信调用方。OpenCode 1.18.3 对一个 provider 只有一个 credential slot，因此它负责隐藏输入与导入，plugin 的全局、非项目 keyring 负责保存多个账号和 active pointer。plugin 每次调用只读取选中账号，并只把 AK 发送给代码中固定的 `https://xyq.jianying.com` 官方 origin；项目配置不能覆盖该地址。此模式不需要 Management API Key、Facade API Key、服务器 BYOK store 或常驻 gateway。
 
 ### Gateway / OpenRouter facade
 
@@ -41,19 +43,21 @@ Facade API Key
 
 ## 阶段 1：官网尚无授权 API
 
-安全体验的下限是“一次官网签发 + 一次隐藏粘贴”：
+安全体验的下限是“一次官网签发 + 一次隐藏粘贴”，多账号流程为：
 
 1. OpenCode 配置加载 `opencode-provider-pippit`。
-2. 用户运行 `/connect`，选择 `Pippit`。
-3. 用户在小云雀官网为当前设备创建专用 AK。
-4. 用户选择 `粘贴官网已签发的 AK / Paste an Access Key issued by Pippit`。
-5. OpenCode 使用内置 password prompt 接收 AK，并保存为 `pippit` 的 API credential。
-6. plugin 的 `auth.loader` 只保留 OpenCode 提供的 credential getter；不会复制到第二个 secret store。
+2. agent 调用 `pippit_manage_access_keys({ operation: "configure", account_name: "..." })`。
+3. 工具返回 `https://xyq.jianying.com`，并提示用户登录目标账号、去页面顶部签发 AK；工具不接收 AK。
+4. 用户运行 `/connect`，选择 `Pippit` 和 `粘贴官网已签发的 AK / Paste an Access Key issued by Pippit`。
+5. OpenCode 内置 password prompt 隐藏接收 AK；本地账号名已经由第 2 步的 pending configure 保存，不在 `/connect` 中重复输入。
+6. plugin 的 `auth.loader` 把这次 import 合并进全局 keyring、去重或轮换同名账号，并设为 active；旧账号不会被覆盖。
+7. `list` 只返回脱敏摘要；`switch` 显式改变新任务账号；`delete` 删除本地 keyring 条目并尽可能清理 OpenCode import slot。
 
 手工 fallback 必须是没有自定义 `authorize()` 的 `type: "api"`。不能用以下替代方案：
 
 - OAuth `method: "code"` 直接接收 AK：OpenCode 当前把 code 当普通文本输入。
 - AuthHook 普通 text prompt：同样不是 secret prompt。
+- `pippit_manage_access_keys` 的普通 tool 参数：会进入会话与 tool trace，因此只允许账号名/ID/操作，禁止 raw AK。
 - `--ak <value>`：会进入 argv 和 shell history。
 - 项目 `.env` 或 `opencode.json`：会扩大泄漏面并污染项目配置。
 - 后台监听 clipboard：超出用户授权，且无法保证其他进程没有读取。
@@ -178,7 +182,7 @@ callback 成功返回：
 }
 ```
 
-OpenCode 随后以标准 API credential 保存它。官方 `/connect` 成功后会执行 `global.dispose()` 并重建 provider instance，因此新 AK 可立即被 `auth.loader` 读取；若绕过 `/connect` 直接调用底层 auth API，则需要显式 dispose 或重启 OpenCode。官网接口未上线时不展示 OAuth method，避免出现“能打开网页但永远无法完成”的假一键流程；masked paste 始终保留为 fallback。
+OpenCode 随后以标准 API credential 保存它。官方 `/connect` 成功后会执行 `global.dispose()` 并重建 provider instance，因此新 AK 可立即被 `auth.loader` 读取并合并进 plugin 的全局多账号 keyring；若绕过 `/connect` 直接调用底层 auth API，则需要显式 dispose 或重启 OpenCode。官网接口未上线时不展示 OAuth method，避免出现“能打开网页但永远无法完成”的假一键流程；masked paste 始终保留为 fallback。
 
 启用方式：
 
@@ -224,15 +228,18 @@ Device Flow 仍是 SSH/容器默认路径。自定义 deep link 不是 MVP：Ope
 
 ## 凭证保存与撤销
 
-OpenCode 标准路径为 `~/.local/share/opencode/auth.json`，文件权限为 `0600`，内容仍是明文 JSON，不是系统 keychain。MVP 接受这个标准边界，以换取 `/connect`、`auth list/logout` 和跨平台一致性：
+OpenCode 标准 auth store 的文件权限为 `0600`，内容仍是明文 JSON，不是系统 keychain；一个 provider ID 只能保存一条 credential。本实现把它作为 `/connect` 的隐藏导入槽，而不是多账号真源。导入后，plugin 使用 `<OpenCode state>/pippit/access-keys.json` 保存账号集合、active pointer 与 run binding：
 
-- 不再生成 plugin 私有 secret 文件。
-- `auth list` 不回显 AK。
-- `auth logout` 只删除本地 credential，不等于官网撤销。
-- 官网必须提供按 `key_id` 查看、最近使用、到期和撤销的页面。
-- 同 UID 恶意进程仍可能读取 AK；这不是 `0600` 能解决的威胁。
+- keyring 位于 OpenCode 全局 state，不在项目或 worktree；父目录为 `0700`，文件为 `0600`。
+- 写入使用同进程 mutex、跨实例独占 lock、临时文件 `fsync` 与原子 rename；schema、权限、owner 或文件类型异常时 fail closed。
+- keyring 与 OpenCode `auth.json` 一样处于“同一 UID 可读的本机明文”边界，不冒充系统 keychain 或服务器端加密 BYOK。
+- `list` 只返回账号 ID、用户命名、脱敏 AK 与 active 状态；普通 tool schema 不存在 raw AK 字段。
+- `switch` 只改变新任务使用的 active 账号。已保存的 managed-account run binding 优先于后来设置的环境变量或 active 切换。
+- `delete` 在删除匹配的 keyring 条目前，先尽可能把 OpenCode import slot 改写为非 AK sentinel；清理失败时保留 keyring 条目，使用户可以安全重试。删除本地账号不等于官网撤销。
+- OpenCode 当前没有 plugin cleanup hook，`opencode auth logout pippit` 只清理它自己的单一 import slot，不能代表删除多账号 keyring。用户必须用 `pippit_manage_access_keys delete` 删除本地账号，并在需要立即失效时去官网顶部撤销 AK。
+- 官网应提供按 `key_id` 查看、最近使用、到期和撤销的页面。同 UID 恶意进程仍可能读取 AK；这不是 `0600` 能解决的威胁。
 
-以后可评估 macOS Keychain、Windows Credential Manager 与 Secret Service，但必须先解决 OpenCode logout 没有 plugin cleanup hook 时的孤儿凭证问题。
+以后可评估 macOS Keychain、Windows Credential Manager 与 Secret Service，但需要同时设计跨平台迁移、OpenCode logout 同步和崩溃恢复，不能只把一部分 secret 搬走。
 
 ## 威胁模型
 
@@ -243,7 +250,7 @@ OpenCode 标准路径为 `~/.local/share/opencode/auth.json`，文件权限为 `
 | device flow phishing | consent 页展示 client、账号、设备、scope、有效期；user code 短期且限速 |
 | loopback 劫持 | PKCE、state、随机 path/port、仅 loopback、短超时 |
 | 重定向带走 AK | token 请求 `redirect: error`；带 AK 的 API 请求不得跨 origin redirect |
-| terminal/clipboard 泄漏 | OpenCode masked API prompt；无 argv、无自定义 text prompt、无后台 clipboard 监听 |
+| terminal/clipboard/tool trace 泄漏 | AK 只进入 OpenCode masked API prompt；无 raw-AK tool 参数、无 argv、无自定义 text prompt、无后台 clipboard 监听 |
 | 日志泄漏 | SDK 错误不保留 Authorization、response body 或 fetch cause；失败信息再次替换 AK |
 | npm 供应链 | 官方 package、provenance、公开 registry lockfile、最低/最新 OpenCode 双版本 CI |
 | 生成计费误触 | `pippit_generate_video` 每次提交前调用 OpenCode permission ask |
@@ -251,17 +258,24 @@ OpenCode 标准路径为 `~/.local/share/opencode/auth.json`，文件权限为 `
 | 网络请求永久挂起 | Device Flow、Pippit API 查询和视频下载均设置请求/剩余 TTL 截止；瞬时 token 错误退避重试 |
 | 重复下载覆盖文件 | 使用 `wx` 原子创建和 collision-safe 后缀；永不覆盖或删除已有文件 |
 | 本地文件外带 | local reference 必须 realpath 后仍位于当前 worktree；远端 URL 默认拒绝私网 |
+| keyring 并发覆盖或损坏 | schema 校验、同进程 mutex、跨实例独占 lock、`0600` 临时文件、`fsync` 与原子 rename；异常时 fail closed |
+| 切换账号后跨账号查询 | 提交时保存 `run_id + thread_id -> account_id`；已有 binding 优先于 active 与环境变量，账号缺失时 fail closed |
 | 孤儿 AK | exchange 时最终创建或自动回收 pending key；exchange 幂等 |
-| logout 与 revoke 混淆 | CLI/文档明确区分；提供官网撤销入口 |
+| delete/logout/revoke 混淆 | 管理工具明确区分 plugin keyring 删除、OpenCode 单槽 logout 与官网撤销，并返回官网入口 |
 
 ## 验收标准
 
 ### 当前 fallback
 
 - 新环境无需手工写 provider credential JSON。
+- `configure` 返回精确的 `https://xyq.jianying.com`，并用文字提示用户登录目标账号、去页面顶部签发 AK。
+- 配置工具 schema 不接受 raw AK；AK 只通过 `/connect` 的隐藏 password prompt 导入。
 - AK 输入在终端不可见，不出现在 scrollback、argv、项目文件、错误或日志。
 - plugin 不读取 Pippit Cookie，也不启动 browser automation。
-- `opencode auth list` 能看到 `pippit` API credential。
+- 连续导入两把 AK 后旧账号仍存在；`list` 只回脱敏摘要，`switch` 只影响新任务。
+- `delete` 在仍有其他账号时拒绝直接删除 active 账号；返回受影响的历史 run 数量，并区分本地删除与官网撤销。
+- `PIPPIT_ACCESS_KEY` 对新任务的 override 在四种管理操作中都可见，不会把本地 active 错报为实际凭证。
+- managed-account 历史 run 绑定优先于后来设置的 `PIPPIT_ACCESS_KEY`；账号缺失时不回退到另一个 AK。
 - Direct 调用期间没有 gateway/sidecar。
 - 无效/撤销 AK 返回脱敏的重新绑定指引，不自动提交“测试视频”。
 - local references 与输出均不能越过 worktree；HTTP references 默认不能访问私网。
@@ -282,7 +296,7 @@ OpenCode 标准路径为 `~/.local/share/opencode/auth.json`，文件权限为 `
 
 - OpenCode 最低支持版本：`1.18.0`；实现按 `@opencode-ai/plugin` `1.18.3` 编译验证。
 - 当前外部 plugin 在 OpenCode `--pure` 模式下不会加载。
-- 一个 OpenCode provider ID 当前只有一个 active credential；多账号切换不属于 MVP。
+- OpenCode 原生 auth slot 对一个 provider ID 仍只有一条 credential；本 plugin 的全局 keyring 在这个导入槽之上提供多账号保存、active 切换、删除与 run binding。
 - auth 生命周期与视频模型目录分离。新增 Seedance/Pippit 版本只修改 `packages/core/src/models.ts`，不改变 credential。
 - 如果未来小云雀公开真正的聊天/流式/tool-call API，再单独发布 AI SDK `LanguageModelV3` provider；不能复用当前视频 tool 冒充。
 
