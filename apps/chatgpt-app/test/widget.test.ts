@@ -12,7 +12,7 @@ import {
 
 describe("Pippit MCP App widget", () => {
   it("uses the stable MCP App resource contract", () => {
-    expect(PIPPIT_WIDGET_URI).toBe("ui://widget/pippit-video-job-v9.html")
+    expect(PIPPIT_WIDGET_URI).toBe("ui://widget/pippit-video-job-v10.html")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/initialize")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/notifications/initialized")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/notifications/tool-result")
@@ -21,15 +21,25 @@ describe("Pippit MCP App widget", () => {
     expect(PIPPIT_WIDGET_HTML).toContain('request("tools/call"')
     expect(PIPPIT_WIDGET_HTML).toContain("Boolean(capabilities.serverTools)")
     expect(PIPPIT_WIDGET_HTML).toContain("Boolean(capabilities.serverResources)")
-    expect(PIPPIT_WIDGET_HTML).toContain('modes.includes("fullscreen")')
+    expect(PIPPIT_WIDGET_HTML).toContain("modes.includes(mode)")
     expect(PIPPIT_WIDGET_HTML).toContain('request("ui/request-display-mode"')
+    expect(PIPPIT_WIDGET_HTML).toContain('requestDisplayMode("inline")')
+    expect(PIPPIT_WIDGET_HTML).toContain("window.openai.requestDisplayMode")
   })
 
   it("gates standard tool calls and keeps window.openai as a compatibility fallback", () => {
     expect(PIPPIT_WIDGET_HTML).toContain("if (serverToolsAvailable)")
     expect(PIPPIT_WIDGET_HTML).toContain("DEFAULT_REQUEST_TIMEOUT_MS = 15000")
-    expect(PIPPIT_WIDGET_HTML).toContain("REGENERATION_REQUEST_TIMEOUT_MS = 180000")
-    expect(PIPPIT_WIDGET_HTML).toContain('name === "pippit_edit_video_segment"')
+    expect(PIPPIT_WIDGET_HTML).toContain("VIDEO_TOOL_REQUEST_TIMEOUT_MS = 43200000")
+    for (const name of [
+      "pippit_generate_video",
+      "pippit_get_video",
+      "pippit_download_video",
+      "pippit_edit_video_segment",
+    ]) {
+      expect(PIPPIT_WIDGET_HTML).toContain(`"${name}"`)
+    }
+    expect(PIPPIT_WIDGET_HTML).toContain("VIDEO_TOOL_NAMES.has(name)")
     expect(PIPPIT_WIDGET_HTML).toContain('request("tools/call", { name: name, arguments: args }, timeoutMs)')
     expect(PIPPIT_WIDGET_HTML).toContain("window.openai.toolOutput")
     expect(PIPPIT_WIDGET_HTML).toContain("window.openai.callTool")
@@ -122,7 +132,7 @@ describe("Pippit MCP App widget", () => {
     expect(PIPPIT_WIDGET_HTML).toContain('id="infinity-loader" class="infinity-loader"')
     expect(PIPPIT_WIDGET_HTML).toContain("loaderIndex < 25")
     expect(PIPPIT_WIDGET_HTML).toContain("jobIsRunning(activeStatus) || awaitingPreview")
-    expect(PIPPIT_WIDGET_HTML).toContain('callTool("pippit_get_video", { job_id: activeJobId })')
+    expect(PIPPIT_WIDGET_HTML).toContain('callTool("pippit_get_video", { job_id: requestedJobId })')
     expect(PIPPIT_WIDGET_HTML).toContain("schedulePoll(pollDelayMs)")
     expect(PIPPIT_WIDGET_HTML).toContain("clearPollTimer();")
     expect(PIPPIT_WIDGET_HTML).not.toContain('<dt>Job</dt>')
@@ -301,7 +311,7 @@ describe("Pippit MCP App widget", () => {
 
   it("submits edit instructions through the shared MCP tool without preview URLs", () => {
     const start = PIPPIT_WIDGET_HTML.indexOf("async function submitEdit()")
-    const end = PIPPIT_WIDGET_HTML.indexOf("async function requestFullscreen()")
+    const end = PIPPIT_WIDGET_HTML.indexOf("async function requestDisplayMode(mode)")
     const submitSource = PIPPIT_WIDGET_HTML.slice(start, end)
     expect(start).toBeGreaterThan(-1)
     expect(end).toBeGreaterThan(start)
@@ -315,11 +325,27 @@ describe("Pippit MCP App widget", () => {
     expect(submitSource).toContain("if (submitting")
     expect(submitSource).toContain("if (!editIdempotencyKey)")
     expect(submitSource).toContain("setEditError(toolErrorText(result))")
+    expect(submitSource).toContain('showLoading("pending")')
+    expect(submitSource).toContain('requestDisplayMode("inline")')
+    expect(submitSource).toContain("showEditor()")
+    expect(submitSource).toContain("generationEpoch += 1")
+    expect(submitSource).toContain("clearPollTimer()")
+    expect(submitSource.indexOf('showLoading("pending")')).toBeLessThan(
+      submitSource.indexOf('callTool("pippit_edit_video_segment", args)'),
+    )
+    expect(submitSource.indexOf('requestDisplayMode("inline")')).toBeLessThan(
+      submitSource.indexOf('callTool("pippit_edit_video_segment", args)'),
+    )
+    expect(submitSource.indexOf("render(result)")).toBeGreaterThan(
+      submitSource.indexOf('callTool("pippit_edit_video_segment", args)'),
+    )
   })
 
   it("cleans up pending requests and media on teardown", () => {
     expect(PIPPIT_WIDGET_HTML).toContain("pending.forEach")
     expect(PIPPIT_WIDGET_HTML).toContain("pending.clear()")
+    expect(PIPPIT_WIDGET_HTML).toContain("clientRequests.clear()")
+    expect(PIPPIT_WIDGET_HTML).toContain('state.cancel(new Error("Widget was closed."))')
     expect(PIPPIT_WIDGET_HTML).toContain("resizeObserver.disconnect()")
     expect(PIPPIT_WIDGET_HTML).toContain('videoElement.removeAttribute("src")')
     expect(PIPPIT_WIDGET_HTML).toContain("URL.revokeObjectURL(previewObjectUrl)")

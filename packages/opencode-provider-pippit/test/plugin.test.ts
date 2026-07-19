@@ -228,7 +228,7 @@ describe("Pippit OpenCode plugin", () => {
 
     const result = await execute(
       {
-        max_wait_seconds: 900,
+        max_wait_seconds: 43_200,
         model: "pippit/seedance-2.0",
         prompt: "只提交一次",
         wait_for_completion: false,
@@ -263,7 +263,7 @@ describe("Pippit OpenCode plugin", () => {
       execute(
         {
           download: true,
-          max_wait_seconds: 900,
+          max_wait_seconds: 43_200,
           run_id: "run-1",
           thread_id: "thread-1",
           wait_for_completion: false,

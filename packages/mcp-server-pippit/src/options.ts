@@ -4,7 +4,7 @@ import { join, resolve } from "node:path"
 import type { PippitFacadeClientOptions, PippitFacadeManagementClientOptions } from "./contracts.ts"
 
 export const PIPPIT_DEFAULT_FACADE_BASE_URL = "http://127.0.0.1:3000"
-export const PIPPIT_DEFAULT_FACADE_TIMEOUT_MS = 120_000
+export const PIPPIT_DEFAULT_FACADE_TIMEOUT_MS = 12 * 60 * 60 * 1_000
 export const PIPPIT_DEFAULT_ENROLLMENT_TTL_MS = 5 * 60_000
 export const PIPPIT_DEFAULT_ENROLLMENT_PORT = 0
 
@@ -77,8 +77,8 @@ function normalizeOptionalManagementApiKey(value: string | undefined): string | 
 function normalizeTimeout(value: string | number | undefined): number {
   const candidate = value ?? PIPPIT_DEFAULT_FACADE_TIMEOUT_MS
   const timeout = typeof candidate === "number" ? candidate : Number(candidate)
-  if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 600_000) {
-    throw new Error("PIPPIT_FACADE_TIMEOUT_MS must be an integer from 1 to 600000.")
+  if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > PIPPIT_DEFAULT_FACADE_TIMEOUT_MS) {
+    throw new Error("PIPPIT_FACADE_TIMEOUT_MS must be an integer from 1 to 43200000.")
   }
   return timeout
 }

@@ -14,7 +14,7 @@ describe("parseChatGptAppConfig", () => {
     expect(config).toMatchObject({
       facadeApiKey: "server-secret",
       facadeBaseUrl: "http://127.0.0.1:3000",
-      facadeTimeoutMs: 120_000,
+      facadeTimeoutMs: 43_200_000,
       host: "127.0.0.1",
       mediaTtlSeconds: 300,
       port: 8787,

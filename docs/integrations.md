@@ -205,11 +205,13 @@ plugin 包内的 stdio server 与 Facade daemon bundle 是自包含的，安装 
 
 生成、查询和参考视频重新生成工具共享同一个 MCP App widget resource。widget 会自动轮询 pending/in-progress job；`pippit_get_video` 到达 `completed` 后，stdio/plugin 进程先把完整 MP4 原子保存为普通本地文件，再通过 MCP Apps `resources/read` 分块传给 widget 并创建 `blob:` 播放地址。Codex 不要求模型另行生成 `file://` 可视化；本地绝对路径、facade content URL、API key 与 `unsigned_urls` 不进入 Widget 或 model-visible 结果。stdin 重启不改变本地 artifact identity，文件继续保留；用户需要自定文件名或额外路径时再调用下载工具。
 
-上面的 repo-local marketplace 是开发入口：从干净 checkout 测试前先运行 `npm run build -w @pippit-bridge/mcp-server`，因为 Codex 会复制 source 目录且不会替它执行 npm lifecycle。正式分发应先发布由 `prepack` 生成自包含 artifact 的 `@pippit-bridge/mcp-server@0.2.8`，再使用 [npm marketplace example](../.agents/plugins/marketplace.npm.example.json) 的 `source: "npm"` 形式；Codex 下载该 tarball 时同样不会运行 lifecycle scripts。
+上面的 repo-local marketplace 是开发入口：从干净 checkout 测试前先运行 `npm run build -w @pippit-bridge/mcp-server`，因为 Codex 会复制 source 目录且不会替它执行 npm lifecycle。正式分发应先发布由 `prepack` 生成自包含 artifact 的 `@pippit-bridge/mcp-server@0.2.9`，再使用 [npm marketplace example](../.agents/plugins/marketplace.npm.example.json) 的 `source: "npm"` 形式；Codex 下载该 tarball 时同样不会运行 lifecycle scripts。
 
 进入 Codex 后可用 `/plugins` 检查/enable plugin。安装或更新后开始一个新 session，再请求 `pippit-video` 列出模型、生成或查询视频；完成结果会自动保存本地 MP4 并展示 widget，只有需要额外自定义文件名或路径副本时才请求下载。
 
 plugin 的 `.mcp.json` 只声明本地 stdio server，不内嵌 Pippit AK 或 Facade API Key。Codex 的 sandbox/工具批准策略仍在 host 侧生效；plugin 不会绕过这些边界。
+
+`.mcp.json` 将 Codex 的 MCP tool timeout 设置为 `43200` 秒；Facade、MCP client、Widget 视频工具与 ChatGPT App 的内部生成链路默认均为 `43200000` 毫秒。其他 MCP/ChatGPT 宿主、connector 或反向代理如果有更短的外层 deadline，仍需单独配置。点击 widget 的 `Regenerate video` 后会先展示 loading，再通过 `ui/request-display-mode` 请求 `inline`，不额外发送会触发模型轮次的对话消息。
 
 Codex plugin 安装是声明式复制/注册流程，没有受信任的任意 postinstall 或 secret 表单。因此“安装自动处理”实现为首次能力调用时的惰性 bootstrap，而不是安装时执行脚本。ChatGPT App 的 `.app.json` 也只能绑定已经注册的真实 app ID，不能在本地 plugin install 中自动部署或注册一个生产 App。
 
@@ -224,7 +226,7 @@ marketplace 的认证策略使用 `ON_USE`，与惰性 runtime 一致：安装/e
 | `PIPPIT_FACADE_BASE_URL` | MCP / ChatGPT App / Codex plugin | 外部 facade origin；必须与 API key 成对设置 |
 | `PIPPIT_FACADE_API_KEY` | MCP / ChatGPT App / Codex plugin | 外部 Facade Bearer key；本地模式自动生成 |
 | `PIPPIT_FACADE_MANAGEMENT_API_KEY` | stdio MCP / Codex plugin | 外部 AK 管理 key；本地模式自动生成，ChatGPT App 显式丢弃 |
-| `PIPPIT_FACADE_TIMEOUT_MS` | MCP / ChatGPT App / Codex plugin | wrapper 到 facade 的请求超时 |
+| `PIPPIT_FACADE_TIMEOUT_MS` | MCP / ChatGPT App / Codex plugin | wrapper 到 facade 的请求超时；默认 `43200000`（12 小时） |
 | `PIPPIT_MCP_OUTPUT_ROOT` | stdio MCP / Codex plugin | completed MP4 自动落盘及 `pippit_download_video` 额外副本的 root |
 | `PIPPIT_MCP_ENROLLMENT_PORT` | stdio MCP / Codex plugin | loopback AK 设置页监听端口；默认 `0`，即随机空闲端口 |
 | `PIPPIT_MCP_ENROLLMENT_TTL_MS` | stdio MCP / Codex plugin | 单次 AK 设置链接有效期；默认 `300000`，最大 15 分钟 |

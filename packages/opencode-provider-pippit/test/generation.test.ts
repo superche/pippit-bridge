@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import type { PublicHttpFetcher, ReferenceLoader } from "@pippit-bridge/core"
 import type { PippitApi } from "@pippit-bridge/sdk"
-import { PippitVideoService } from "../src/generation.js"
+import { PIPPIT_MAX_WAIT_SECONDS, PippitVideoService } from "../src/generation.js"
 
 function createHarness() {
   let nextAsset = 0
@@ -49,6 +49,7 @@ describe("PippitVideoService", () => {
       aspectRatio: "9:16",
       duration: 10,
       model: "pippit/seedance-2.0-fast",
+      maxWaitSeconds: PIPPIT_MAX_WAIT_SECONDS,
       prompt: "A product reveal",
       references: [
         { kind: "image", source: "https://example.com/product.png" },
@@ -171,6 +172,19 @@ describe("PippitVideoService", () => {
         rootDirectory: process.cwd(),
       }),
     ).rejects.toThrow("does not support resolution 1080p")
+    expect(pippit.submitRun).not.toHaveBeenCalled()
+  })
+
+  it("caps synchronous generation waiting at 12 hours", async () => {
+    const { pippit, service } = createHarness()
+    expect(PIPPIT_MAX_WAIT_SECONDS).toBe(43_200)
+    await expect(service.generate({
+      accessKey: "ak-secret",
+      maxWaitSeconds: PIPPIT_MAX_WAIT_SECONDS + 1,
+      prompt: "Too long",
+      rootDirectory: process.cwd(),
+      waitForCompletion: false,
+    })).rejects.toThrow(/43200/u)
     expect(pippit.submitRun).not.toHaveBeenCalled()
   })
 

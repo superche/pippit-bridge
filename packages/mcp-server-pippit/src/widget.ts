@@ -1,3 +1,5 @@
+import { PIPPIT_DEFAULT_FACADE_TIMEOUT_MS } from "./options.ts"
+
 export type PreviewUpdateKind = "new-source" | "renewed-url" | "unchanged"
 
 export interface WidgetRegion {
@@ -143,7 +145,7 @@ export function adjustWidgetRegionFromKey(
   return { handled: true, region: next }
 }
 
-export const PIPPIT_WIDGET_URI = "ui://widget/pippit-video-job-v9.html"
+export const PIPPIT_WIDGET_URI = "ui://widget/pippit-video-job-v10.html"
 
 /**
  * A dependency-free MCP App. Business actions always call the shared MCP
@@ -693,10 +695,17 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       var LOCAL_PREVIEW_CHUNK_BYTES = 1024 * 1024;
       var MAX_SEGMENT_MS = 30000;
       var DEFAULT_REQUEST_TIMEOUT_MS = 15000;
-      var REGENERATION_REQUEST_TIMEOUT_MS = 180000;
+      var VIDEO_TOOL_REQUEST_TIMEOUT_MS = ${PIPPIT_DEFAULT_FACADE_TIMEOUT_MS};
+      var VIDEO_TOOL_NAMES = new Set([
+        "pippit_generate_video",
+        "pippit_get_video",
+        "pippit_download_video",
+        "pippit_edit_video_segment"
+      ]);
       var protocolVersion = "2026-01-26";
       var nextId = 1;
       var pending = new Map();
+      var clientRequests = new Set();
       var protocolReady = false;
       var serverResourcesAvailable = false;
       var serverToolsAvailable = false;
@@ -731,8 +740,9 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       var editIdempotencyKey;
       var awaitingPreview = false;
       var pollTimer;
-      var pollInFlight = false;
+      var pollInFlightEpoch;
       var pollDelayMs = 2000;
+      var generationEpoch = 0;
       var loaderTimer;
       var loaderStep = 0;
       var filmstripGeneration = 0;
@@ -804,15 +814,47 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         });
       }
 
+      function withClientTimeout(task, timeoutMs) {
+        return new Promise(function (resolve, reject) {
+          var settled = false;
+          var state;
+          var timer = window.setTimeout(function () {
+            state.cancel(new Error("tools/call timed out"));
+          }, timeoutMs);
+          state = {
+            cancel: function (error) {
+              if (settled) return;
+              settled = true;
+              clientRequests.delete(state);
+              window.clearTimeout(timer);
+              reject(error);
+            },
+            timer: timer
+          };
+          clientRequests.add(state);
+          Promise.resolve().then(task).then(function (value) {
+            if (settled) return;
+            settled = true;
+            clientRequests.delete(state);
+            window.clearTimeout(timer);
+            resolve(value);
+          }, function (error) {
+            state.cancel(error);
+          });
+        });
+      }
+
       function callTool(name, args) {
+        var timeoutMs = VIDEO_TOOL_NAMES.has(name)
+          ? VIDEO_TOOL_REQUEST_TIMEOUT_MS
+          : DEFAULT_REQUEST_TIMEOUT_MS;
         if (serverToolsAvailable) {
-          var timeoutMs = name === "pippit_edit_video_segment"
-            ? REGENERATION_REQUEST_TIMEOUT_MS
-            : DEFAULT_REQUEST_TIMEOUT_MS;
           return request("tools/call", { name: name, arguments: args }, timeoutMs);
         }
         if (window.openai && typeof window.openai.callTool === "function") {
-          return window.openai.callTool(name, args);
+          return withClientTimeout(function () {
+            return window.openai.callTool(name, args);
+          }, timeoutMs);
         }
         return Promise.reject(new Error("This host cannot call Pippit tools from the widget."));
       }
@@ -1026,6 +1068,13 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         editorElement.hidden = true;
         statusElement.textContent = loadingCopy(status);
         startInfinityLoader();
+      }
+
+      function showEditor() {
+        stopInfinityLoader();
+        loadingViewElement.hidden = true;
+        terminalViewElement.hidden = true;
+        editorElement.hidden = false;
       }
 
       function showTerminal(status) {
@@ -1541,10 +1590,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         );
         awaitingPreview = false;
         clearPollTimer();
-        stopInfinityLoader();
-        loadingViewElement.hidden = true;
-        terminalViewElement.hidden = true;
-        editorElement.hidden = false;
+        showEditor();
         setEditError("");
         if (updateKind === "unchanged") {
           var resourceReady = typeof media.resource_uri === "string" && Boolean(previewObjectUrl);
@@ -1624,14 +1670,18 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       }
 
       async function refresh(automatic) {
-        if (!activeJobId || pollInFlight) return;
-        pollInFlight = true;
+        if (!activeJobId || pollInFlightEpoch === generationEpoch) return;
+        var requestedJobId = activeJobId;
+        var requestedEpoch = generationEpoch;
+        pollInFlightEpoch = requestedEpoch;
         clearPollTimer();
         try {
-          var result = await callTool("pippit_get_video", { job_id: activeJobId });
+          var result = await callTool("pippit_get_video", { job_id: requestedJobId });
+          if (requestedEpoch !== generationEpoch || requestedJobId !== activeJobId) return;
           pollDelayMs = 2000;
           if (result) render(result);
         } catch (_error) {
+          if (requestedEpoch !== generationEpoch || requestedJobId !== activeJobId) return;
           pollDelayMs = Math.min(10000, Math.max(3000, Math.round(pollDelayMs * 1.6)));
           if (automatic && (jobIsRunning(activeStatus) || awaitingPreview)) {
             showLoading(activeStatus);
@@ -1641,8 +1691,8 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
             mediaMessageElement.hidden = false;
           }
         } finally {
-          pollInFlight = false;
-          schedulePoll(pollDelayMs);
+          if (pollInFlightEpoch === requestedEpoch) pollInFlightEpoch = undefined;
+          if (requestedEpoch === generationEpoch) schedulePoll(pollDelayMs);
         }
       }
 
@@ -1672,13 +1722,24 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         };
         if (prompt !== "") args.prompt = prompt;
         submitting = true;
+        generationEpoch += 1;
+        clearPollTimer();
         setEditError("");
         updateSubmitState();
         submitEditElement.textContent = "Preparing reference…";
+        showLoading("pending");
+        statusElement.textContent = "Starting regenerated video…";
+        void requestDisplayMode("inline");
         try {
           var result = await callTool("pippit_edit_video_segment", args);
           if (!result || result.isError) {
+            showEditor();
             setEditError(toolErrorText(result));
+            return;
+          }
+          if (!findJob(result.structuredContent, 0)) {
+            showEditor();
+            setEditError("Pippit returned an invalid regeneration result.");
             return;
           }
           annotations = [];
@@ -1688,6 +1749,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           renderAnnotations();
           render(result);
         } catch (error) {
+          showEditor();
           setEditError(error instanceof Error ? error.message : String(error));
         } finally {
           submitting = false;
@@ -1696,13 +1758,29 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         }
       }
 
-      async function requestFullscreen() {
+      async function requestDisplayMode(mode) {
         var modes = Array.isArray(hostContext.availableDisplayModes) ? hostContext.availableDisplayModes : [];
-        if (!protocolReady || !modes.includes("fullscreen")) return;
-        try {
-          var result = await request("ui/request-display-mode", { mode: "fullscreen" });
-          if (result && typeof result.mode === "string") hostContext.displayMode = result.mode;
-        } catch (_error) {}
+        if (protocolReady && modes.includes(mode)) {
+          try {
+            var result = await request("ui/request-display-mode", { mode: mode });
+            if (result && typeof result.mode === "string") {
+              hostContext.displayMode = result.mode;
+              if (result.mode === mode) return;
+            }
+          } catch (_error) {}
+        }
+        if (window.openai && typeof window.openai.requestDisplayMode === "function") {
+          try {
+            var fallbackResult = await window.openai.requestDisplayMode({ mode: mode });
+            if (fallbackResult && typeof fallbackResult.mode === "string") {
+              hostContext.displayMode = fallbackResult.mode;
+            }
+          } catch (_error) {}
+        }
+      }
+
+      function requestFullscreen() {
+        return requestDisplayMode("fullscreen");
       }
 
       function useOpenAiInitialResult() {
@@ -1729,6 +1807,10 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           state.reject(new Error("Widget was closed."));
         });
         pending.clear();
+        Array.from(clientRequests).forEach(function (state) {
+          state.cancel(new Error("Widget was closed."));
+        });
+        clientRequests.clear();
         videoElement.pause();
         videoElement.removeAttribute("src");
         videoElement.load();
@@ -1748,6 +1830,11 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           pending.delete(message.id);
           if (message.error) requestState.reject(new Error(message.error.message || "Host request failed"));
           else requestState.resolve(message.result);
+          return;
+        }
+        if (message.method === "ui/notifications/host-context-changed") {
+          var nextHostContext = message.params && typeof message.params === "object" ? message.params : {};
+          hostContext = Object.assign({}, hostContext, nextHostContext);
           return;
         }
         if (message.method === "ui/notifications/tool-result") render(message.params);
@@ -1882,7 +1969,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       fallbackTimer = window.setTimeout(useOpenAiInitialResult, 1200);
       request("ui/initialize", {
         protocolVersion: protocolVersion,
-        appInfo: { name: "pippit-video-editor", title: "Pippit video regeneration", version: "0.2.8" },
+        appInfo: { name: "pippit-video-editor", title: "Pippit video regeneration", version: "0.2.9" },
         appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] }
       }).then(function (result) {
         protocolReady = true;

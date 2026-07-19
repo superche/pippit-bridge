@@ -31,9 +31,10 @@ describe("Pippit stdio entrypoint", () => {
   it("starts the Codex plugin shim through the packaged compiled runtime", async () => {
     const packageRoot = fileURLToPath(new URL("..", import.meta.url))
     const manifest = JSON.parse(await readFile(join(packageRoot, ".mcp.json"), "utf8")) as {
-      mcpServers?: { "pippit-video"?: { args?: string[] } }
+      mcpServers?: { "pippit-video"?: { args?: string[]; tool_timeout_sec?: number } }
     }
     expect(manifest.mcpServers?.["pippit-video"]?.args).toEqual(["./plugin-entry.mjs"])
+    expect(manifest.mcpServers?.["pippit-video"]?.tool_timeout_sec).toBe(43_200)
 
     const result = await new Promise<{ code: number | null; stderr: string; stdout: string }>((resolve, reject) => {
       const child = spawn(process.execPath, [join(packageRoot, "plugin-entry.mjs")], {

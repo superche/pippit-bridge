@@ -9,6 +9,7 @@ import {
   type ReferenceKind,
   type ReferenceLoader,
 } from "@pippit-bridge/core"
+import { PIPPIT_DEFAULT_TIMEOUT_MS } from "@pippit-bridge/sdk"
 
 const MAX_REFERENCE_BYTES: Readonly<Record<ReferenceKind, number>> = {
   audio: 15 * 1024 * 1024,
@@ -16,7 +17,7 @@ const MAX_REFERENCE_BYTES: Readonly<Record<ReferenceKind, number>> = {
   video: 200 * 1024 * 1024,
 }
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024 * 1024
-const DEFAULT_OUTPUT_TIMEOUT_MS = 120_000
+const DEFAULT_OUTPUT_TIMEOUT_MS = PIPPIT_DEFAULT_TIMEOUT_MS
 
 function isInside(root: string, target: string): boolean {
   const path = relative(root, target)

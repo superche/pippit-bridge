@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  PIPPIT_DEFAULT_REFERENCE_TIMEOUT_MS,
   ReferenceLoadError,
   createReferenceLoader,
   type ReferenceFetch,
@@ -18,6 +19,10 @@ function publicLookup(): ReferenceLookup {
 }
 
 describe('createReferenceLoader', () => {
+  it('uses a 12-hour default reference timeout', () => {
+    expect(PIPPIT_DEFAULT_REFERENCE_TIMEOUT_MS).toBe(43_200_000);
+  });
+
   it('streams HTTP media and infers a safe filename and media type from headers', async () => {
     const fetchImpl = vi.fn<ReferenceFetch>(async () =>
       new Response(

@@ -158,9 +158,9 @@ try {
     clientInfo: { name: "installed-media-smoke", version: "1" },
     protocolVersion: "2025-11-25",
   })
-  if (initialized?.serverInfo?.version !== "0.2.8") throw new Error("Unexpected installed plugin version.")
-  const resource = await rpc("resources/read", { uri: "ui://widget/pippit-video-job-v9.html" })
-  if (!resource?.contents?.[0]?.text?.includes("pippit-video-editor")) throw new Error("Missing v9 widget resource.")
+  if (initialized?.serverInfo?.version !== "0.2.9") throw new Error("Unexpected installed plugin version.")
+  const resource = await rpc("resources/read", { uri: "ui://widget/pippit-video-job-v10.html" })
+  if (!resource?.contents?.[0]?.text?.includes("pippit-video-editor")) throw new Error("Missing v10 widget resource.")
   const result = await rpc("tools/call", {
     arguments: { job_id: "job_installed_media" },
     name: "pippit_get_video",

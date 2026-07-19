@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 import { createHash } from "node:crypto"
-import { defaultPippitOutputDirectory, facadeManagementClientOptions, parsePippitMcpOptions } from "../src/options.ts"
+import {
+  PIPPIT_DEFAULT_FACADE_TIMEOUT_MS,
+  defaultPippitOutputDirectory,
+  facadeManagementClientOptions,
+  parsePippitMcpOptions,
+} from "../src/options.ts"
 
 describe("parsePippitMcpOptions", () => {
   it("loads facade-only credentials without exposing raw Pippit access keys", () => {
@@ -32,6 +37,20 @@ describe("parsePippitMcpOptions", () => {
     expect(() => parsePippitMcpOptions({})).toThrow("PIPPIT_FACADE_API_KEY is required")
   })
 
+  it("uses a 12-hour facade timeout and enforces it as the configured upper bound", () => {
+    expect(PIPPIT_DEFAULT_FACADE_TIMEOUT_MS).toBe(43_200_000)
+    expect(parsePippitMcpOptions({ PIPPIT_FACADE_API_KEY: "key" }).facadeTimeoutMs)
+      .toBe(43_200_000)
+    expect(parsePippitMcpOptions({
+      PIPPIT_FACADE_API_KEY: "key",
+      PIPPIT_FACADE_TIMEOUT_MS: "43200000",
+    }).facadeTimeoutMs).toBe(43_200_000)
+    expect(() => parsePippitMcpOptions({
+      PIPPIT_FACADE_API_KEY: "key",
+      PIPPIT_FACADE_TIMEOUT_MS: "43200001",
+    })).toThrow(/43200000/u)
+  })
+
   it("keeps the management key optional and derives caller identity from the runtime key", () => {
     const withoutManagement = parsePippitMcpOptions({ PIPPIT_FACADE_API_KEY: "runtime-key" })
     expect(facadeManagementClientOptions(withoutManagement)).toBeUndefined()
@@ -46,7 +65,7 @@ describe("parsePippitMcpOptions", () => {
       baseUrl: "http://127.0.0.1:3000",
       facadeApiKeyHash: createHash("sha256").update("runtime-key").digest("hex"),
       managementApiKey: "management-key",
-      timeoutMs: 120_000,
+      timeoutMs: 43_200_000,
     })
   })
 })

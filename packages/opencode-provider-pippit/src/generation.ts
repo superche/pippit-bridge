@@ -6,12 +6,13 @@ import {
   type ReferenceLoader,
   type VideoModelDefinition,
 } from "@pippit-bridge/core"
-import type {
-  PippitApi,
-  PippitFailReason,
-  PippitMediaReference,
-  PippitRunState,
-  PippitVideoResult,
+import {
+  PIPPIT_DEFAULT_TIMEOUT_MS,
+  type PippitApi,
+  type PippitFailReason,
+  type PippitMediaReference,
+  type PippitRunState,
+  type PippitVideoResult,
 } from "@pippit-bridge/sdk"
 import { downloadPippitVideos, loadPippitReference } from "./media.js"
 
@@ -83,7 +84,8 @@ interface PreparedReferences {
 
 const DEFAULT_MODEL = "pippit/seedance-2.0"
 const DEFAULT_DURATION = 5
-const DEFAULT_MAX_WAIT_SECONDS = 900
+export const PIPPIT_MAX_WAIT_SECONDS = PIPPIT_DEFAULT_TIMEOUT_MS / 1_000
+const DEFAULT_MAX_WAIT_SECONDS = PIPPIT_MAX_WAIT_SECONDS
 const MAX_TOTAL_REFERENCE_BYTES = 300 * 1024 * 1024
 const MAX_AUDIO_REFERENCE_BYTES = 15 * 1024 * 1024
 
@@ -159,7 +161,7 @@ function validateGenerateInput(input: GenerateVideoInput): void {
     throw new Error("Pippit video prompts must contain 1 to 20,000 characters.")
   }
   positiveInteger(input.duration, DEFAULT_DURATION, "duration", 3_600)
-  positiveInteger(input.maxWaitSeconds, DEFAULT_MAX_WAIT_SECONDS, "max_wait_seconds", 3_600)
+  positiveInteger(input.maxWaitSeconds, DEFAULT_MAX_WAIT_SECONDS, "max_wait_seconds", PIPPIT_MAX_WAIT_SECONDS)
   if (
     input.seed !== undefined &&
     (!Number.isSafeInteger(input.seed) || input.seed < -1 || input.seed > 4_294_967_295)
@@ -301,7 +303,12 @@ export class PippitVideoService {
     this.outputFetcher = options.outputFetcher
     this.pippit = options.pippit
     this.pollIntervalMs = options.pollIntervalMs
-    this.requestTimeoutMs = positiveInteger(options.requestTimeoutMs, 120_000, "request_timeout_ms", 3_600_000)
+    this.requestTimeoutMs = positiveInteger(
+      options.requestTimeoutMs,
+      PIPPIT_DEFAULT_TIMEOUT_MS,
+      "request_timeout_ms",
+      PIPPIT_DEFAULT_TIMEOUT_MS,
+    )
     this.remoteLoader = options.remoteLoader
     this.sleep = options.sleep ?? defaultSleep
   }
@@ -356,7 +363,7 @@ export class PippitVideoService {
       input.maxWaitSeconds,
       DEFAULT_MAX_WAIT_SECONDS,
       "max_wait_seconds",
-      3_600,
+      PIPPIT_MAX_WAIT_SECONDS,
     )
     const deadline = Date.now() + maxWaitSeconds * 1_000
     let result: PippitVideoResult

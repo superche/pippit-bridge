@@ -462,7 +462,7 @@ export function createChatGptAppMcpServer(options: ChatGptAppMcpOptions): {
 } {
   const { config } = options
   const appRuntime = createChatGptAppRuntime(config, options.dependencies)
-  const server = new McpServer({ name: "pippit-chatgpt-app", version: "0.2.8" })
+  const server = new McpServer({ name: "pippit-chatgpt-app", version: "0.2.9" })
   const sharedList = sharedToolPresentation(CHATGPT_TOOL_NAMES.list)
   const sharedGenerate = sharedToolPresentation(CHATGPT_TOOL_NAMES.generate)
   const sharedGet = sharedToolPresentation(CHATGPT_TOOL_NAMES.get)

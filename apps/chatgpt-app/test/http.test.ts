@@ -111,7 +111,7 @@ describe("ChatGPT App HTTP server", () => {
     expect(await initialized.json()).toMatchObject({
       id: 1,
       jsonrpc: "2.0",
-      result: { serverInfo: { name: "pippit-chatgpt-app", version: "0.2.8" } },
+      result: { serverInfo: { name: "pippit-chatgpt-app", version: "0.2.9" } },
     })
 
     const toolsResponse = await fetch(`${baseUrl}/mcp`, {

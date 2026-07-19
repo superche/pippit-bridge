@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 
 import {
+  PIPPIT_DEFAULT_TIMEOUT_MS,
   PIPPIT_VIDEO_AGENT_NAME,
   PippitApiError,
   PippitClient,
@@ -15,6 +16,10 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe('PippitClient', () => {
+  it('uses a 12-hour default request timeout', () => {
+    expect(PIPPIT_DEFAULT_TIMEOUT_MS).toBe(43_200_000);
+  });
+
   it('uploads bytes as multipart and returns the pippit asset id', async () => {
     const fetchImpl = vi.fn<PippitFetch>(async (_url, init) => {
       const headers = new Headers(init?.headers);

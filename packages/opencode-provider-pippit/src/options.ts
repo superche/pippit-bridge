@@ -1,4 +1,4 @@
-import { PIPPIT_DEFAULT_BASE_URL } from "@pippit-bridge/sdk"
+import { PIPPIT_DEFAULT_BASE_URL, PIPPIT_DEFAULT_TIMEOUT_MS } from "@pippit-bridge/sdk"
 import { isAbsolute, win32 } from "node:path"
 
 export const PIPPIT_PROVIDER_ID = "pippit"
@@ -116,6 +116,6 @@ export function parsePluginOptions(value: unknown): PippitPluginOptions {
     ...(deviceAuthorization === undefined ? {} : { deviceAuthorization }),
     outputDirectory,
     pollIntervalMs: positiveInteger(input, "pollIntervalMs", 2_000),
-    requestTimeoutMs: positiveInteger(input, "requestTimeoutMs", 120_000),
+    requestTimeoutMs: positiveInteger(input, "requestTimeoutMs", PIPPIT_DEFAULT_TIMEOUT_MS),
   }
 }

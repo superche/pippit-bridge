@@ -1,6 +1,7 @@
 import { z } from "zod"
 
 import {
+  PIPPIT_DEFAULT_FACADE_TIMEOUT_MS,
   resolvePippitRuntimeEnvironment,
   type PippitResolvedRuntimeEnvironment,
 } from "@pippit-bridge/mcp-server"
@@ -66,7 +67,7 @@ const envSchema = z
     CHATGPT_APP_PUBLIC_BASE_URL: optionalPublicBaseUrl,
     PIPPIT_FACADE_API_KEY: z.string().trim().min(1),
     PIPPIT_FACADE_BASE_URL: facadeBaseUrl.default("http://127.0.0.1:3000"),
-    PIPPIT_FACADE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+    PIPPIT_FACADE_TIMEOUT_MS: z.coerce.number().int().positive().default(PIPPIT_DEFAULT_FACADE_TIMEOUT_MS),
   })
   .superRefine((value, context) => {
     const hasPublicUrl = value.CHATGPT_APP_PUBLIC_BASE_URL !== undefined

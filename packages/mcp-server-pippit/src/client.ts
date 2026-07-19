@@ -16,9 +16,11 @@ import {
   type PippitVideoModel,
   type PippitVideoModelList,
 } from "./contracts.ts"
-import { normalizePippitFacadeBaseUrl } from "./options.ts"
+import {
+  normalizePippitFacadeBaseUrl,
+  PIPPIT_DEFAULT_FACADE_TIMEOUT_MS,
+} from "./options.ts"
 
-const DEFAULT_TIMEOUT_MS = 120_000
 const MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024
 
 export class PippitFacadeError extends Error {
@@ -226,11 +228,11 @@ function normalizeTimeout(
   value: number | undefined,
   operation: PippitFacadeOperation = "list_video_models",
 ): number {
-  const timeout = value ?? DEFAULT_TIMEOUT_MS
-  if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 600_000) {
+  const timeout = value ?? PIPPIT_DEFAULT_FACADE_TIMEOUT_MS
+  if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > PIPPIT_DEFAULT_FACADE_TIMEOUT_MS) {
     throw new PippitFacadeError({
       code: "INVALID_CONFIGURATION",
-      message: "Pippit facade timeout must be an integer from 1 to 600000.",
+      message: "Pippit facade timeout must be an integer from 1 to 43200000.",
       operation,
     })
   }

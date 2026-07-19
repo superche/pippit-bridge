@@ -8,6 +8,19 @@ import {
 const job = { id: "job-1", polling_url: "/api/v1/videos/job-1", status: "pending" }
 
 describe("PippitFacadeClient", () => {
+  it("accepts a 12-hour timeout and rejects a longer configured deadline", () => {
+    expect(() => new PippitFacadeClient({
+      apiKey: "facade-key",
+      baseUrl: "https://bridge.example.test",
+      timeoutMs: 43_200_000,
+    })).not.toThrow()
+    expect(() => new PippitFacadeClient({
+      apiKey: "facade-key",
+      baseUrl: "https://bridge.example.test",
+      timeoutMs: 43_200_001,
+    })).toThrow(/43200000/u)
+  })
+
   it("authenticates only to the facade and parses a submitted job", async () => {
     const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
       expect(new Headers(init?.headers).get("authorization")).toBe("Bearer facade-key")

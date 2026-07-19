@@ -18,7 +18,7 @@ The widget receives only signed preview URLs in tool-result `_meta`; the facade 
 | `CHATGPT_APP_PORT` | `8787` | HTTP listen port |
 | `PIPPIT_FACADE_BASE_URL` | auto-resolved locally | Server-side facade URL; required with an explicit external key |
 | `PIPPIT_FACADE_API_KEY` | auto-generated locally | Server-side facade bearer key; never sent to the widget |
-| `PIPPIT_FACADE_TIMEOUT_MS` | `120000` | Facade request timeout |
+| `PIPPIT_FACADE_TIMEOUT_MS` | `43200000` | Facade request timeout (12 hours) |
 | `CHATGPT_APP_PUBLIC_BASE_URL` | unset | Public HTTPS origin used for signed previews |
 | `CHATGPT_APP_MEDIA_SIGNING_KEY_HEX` | auto-generated in local mode | Independent 32-byte HMAC key encoded as 64 hex characters |
 | `CHATGPT_APP_MEDIA_TTL_SECONDS` | `300` | Preview token lifetime, from 30 to 900 seconds |
@@ -42,9 +42,13 @@ The App projects exactly four tools from the shared MCP capability layer: list m
 
 Every generate request requires `idempotency_key`. It deduplicates retries only within the lifetime of the running MCP server process; it is not a durable cross-restart guarantee.
 
+Generation, reference preparation, regeneration, result lookup, and local materialization use a 12-hour internal timeout. A ChatGPT deployment, connector, tunnel, or reverse proxy can still impose a shorter outer deadline and must be configured separately when long synchronous preparation is expected.
+
 Generation can incur Pippit charges. Files and URLs supplied to the generate tool are uploaded to and processed by Pippit under the configured account.
 
 For a completed result, the widget supports reference-guided regeneration modeled after the supplied “片段重拍” interaction: choose a guidance range of at most 30 seconds, seek and drag a rectangle over intrinsic video content, insert timestamped regional instructions, optionally add an overall instruction, then submit through the stable `pippit_edit_video_segment` tool. The facade uses the complete current result as the only video reference and compiles the range and annotations into the generation prompt. Tool arguments contain only source job/index and structured guidance metadata; signed preview URLs and local absolute paths are never copied into `structuredContent` or the request.
+
+When regeneration is submitted, the widget immediately switches to loading and requests the host's `inline` display mode. A host that accepts the standard MCP Apps display-mode request returns the user to the conversation while the same widget continues polling; otherwise loading remains visible in the current container.
 
 The current upstream contract has no hard-trim or pixel-mask field. The complete source video remains a reference and segment/rectangle values are submitted as deterministic edit guidance. The widget therefore does not claim that unselected bytes are omitted or that an exact mask is enforced.
 

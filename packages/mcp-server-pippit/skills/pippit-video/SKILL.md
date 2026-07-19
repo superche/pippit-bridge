@@ -19,7 +19,7 @@ Account management is enabled only when `PIPPIT_FACADE_MANAGEMENT_API_KEY` is co
 
 External mode also reads:
 
-- `PIPPIT_FACADE_TIMEOUT_MS` (default `120000`)
+- `PIPPIT_FACADE_TIMEOUT_MS` (default `43200000`, 12 hours)
 - `PIPPIT_MCP_OUTPUT_ROOT` (default `~/Movies/Pippit` on macOS or `~/Videos/Pippit` elsewhere)
 
 In local mode, every completed output is first saved as an ordinary MP4 under `~/Movies/Pippit` on macOS or `~/Videos/Pippit` on other platforms. `PIPPIT_MCP_OUTPUT_ROOT` overrides this location. `PIPPIT_BRIDGE_HOME` is only a test/advanced isolation override; when it is set, outputs stay beneath that isolated root. Never suggest placing outputs in a temporary directory, plugin cache, or project checkout.
@@ -42,6 +42,8 @@ Use `pippit_edit_video_segment` only with a completed source job. Despite the st
 The current upstream contract does not expose a hard server-side trim or pixel mask. Describe the result as reference-guided regeneration, not as an in-place edit or proof that bytes outside the selection were omitted or that an exact mask was enforced.
 
 The regeneration returns another asynchronous job. Poll it with `pippit_get_video`; its completed result is likewise saved locally first and opens the same preview/regeneration widget. Create an extra copy only under the explicit-copy rule above.
+
+All generation-related tool paths use a 12-hour internal timeout. After `Regenerate video` is clicked, the widget immediately shows loading and requests the standard MCP Apps `inline` display mode so a supporting Codex host returns to the conversation while polling continues. Do not send a follow-up chat message to force this transition, because that could trigger a duplicate model turn.
 
 `frame_images` and `input_references` use HTTP(S) URLs that the facade resolves. A request containing frame images uses first/last-frame generation semantics. Never mix `frame_images` with `input_references` in one request.
 

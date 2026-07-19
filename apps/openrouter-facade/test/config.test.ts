@@ -5,6 +5,13 @@ import { loadConfig, mergeConfig, parseConfig } from "../src/config.js"
 const sha256 = (value: string): string => createHash("sha256").update(value).digest("hex")
 
 describe("configuration safety", () => {
+  it("uses 12-hour defaults for every generation-related facade deadline", () => {
+    const config = parseConfig({})
+    expect(config.PIPPIT_REQUEST_TIMEOUT_MS).toBe(43_200_000)
+    expect(config.REFERENCE_FETCH_TIMEOUT_MS).toBe(43_200_000)
+    expect(config.CONTENT_STREAM_IDLE_TIMEOUT_MS).toBe(43_200_000)
+  })
+
   it("requires independent BYOK, job-signing, management, and facade credentials", () => {
     expect(() => loadConfig({})).toThrow(/BYOK_ENCRYPTION_KEY_HEX/u)
   })

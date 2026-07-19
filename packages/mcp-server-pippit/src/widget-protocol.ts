@@ -20,6 +20,7 @@ const LEGACY_PIPPIT_WIDGET_URIS = new Set([
   "ui://widget/pippit-video-job-v6.html",
   "ui://widget/pippit-video-job-v7.html",
   "ui://widget/pippit-video-job-v8.html",
+  "ui://widget/pippit-video-job-v9.html",
 ])
 
 const INVOCATION_STATUS: Readonly<Record<string, readonly [string, string]>> = {
