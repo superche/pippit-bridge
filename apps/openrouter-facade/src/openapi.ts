@@ -20,6 +20,7 @@ export const OPENAPI_DOCUMENT = {
       get: {
         operationId: "listByokKeys",
         parameters: [
+          { $ref: "#/components/parameters/OptionalFacadeApiKeyHash" },
           {
             in: "query",
             name: "provider",
@@ -87,10 +88,66 @@ export const OPENAPI_DOCUMENT = {
         tags: ["BYOK"],
       },
     },
+    "/api/v1/byok/active": {
+      get: {
+        operationId: "getActiveByokKey",
+        parameters: [{ $ref: "#/components/parameters/FacadeApiKeyHash" }],
+        responses: {
+          "200": {
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ByokActiveSelectionNullableEnvelope" },
+              },
+            },
+            description: "The active credential selection for this facade API key hash, if configured.",
+            headers: { "Cache-Control": { $ref: "#/components/headers/NoStore" } },
+          },
+          "400": { $ref: "#/components/responses/Error" },
+          "401": { $ref: "#/components/responses/Error" },
+          "500": { $ref: "#/components/responses/Error" },
+        },
+        security: [{ managementBearer: [] }],
+        summary: "Get the active BYOK credential for a facade caller",
+        tags: ["BYOK"],
+      },
+      put: {
+        operationId: "setActiveByokKey",
+        requestBody: {
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/ByokActiveSelectionUpdate" },
+            },
+          },
+          required: true,
+        },
+        responses: {
+          "200": {
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ByokActiveSelectionEnvelope" },
+              },
+            },
+            description: "The caller now resolves only through the selected eligible credential.",
+            headers: { "Cache-Control": { $ref: "#/components/headers/NoStore" } },
+          },
+          "400": { $ref: "#/components/responses/Error" },
+          "401": { $ref: "#/components/responses/Error" },
+          "404": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+          "500": { $ref: "#/components/responses/Error" },
+        },
+        security: [{ managementBearer: [] }],
+        summary: "Switch the active BYOK credential for a facade caller",
+        tags: ["BYOK"],
+      },
+    },
     "/api/v1/byok/{id}": {
       delete: {
         operationId: "deleteByokKey",
-        parameters: [{ $ref: "#/components/parameters/ByokCredentialId" }],
+        parameters: [
+          { $ref: "#/components/parameters/ByokCredentialId" },
+          { $ref: "#/components/parameters/OptionalFacadeApiKeyHash" },
+        ],
         responses: {
           "200": {
             content: { "application/json": { schema: { $ref: "#/components/schemas/ByokCredentialDelete" } } },
@@ -99,6 +156,7 @@ export const OPENAPI_DOCUMENT = {
           },
           "401": { $ref: "#/components/responses/Error" },
           "404": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
           "500": { $ref: "#/components/responses/Error" },
         },
         security: [{ managementBearer: [] }],
@@ -185,6 +243,39 @@ export const OPENAPI_DOCUMENT = {
         },
         security: [{ runtimeBearer: [] }],
         summary: "Submit a video generation request",
+        tags: ["Videos"],
+      },
+    },
+    "/api/v1/videos/edits": {
+      post: {
+        description:
+          "Uses a completed facade job output as the only video reference and uploads it through the same safe reference loader as generation. Segment and normalized region values are provider instruction metadata; this endpoint does not byte-trim the source or apply a pixel mask.",
+        operationId: "createVideoEdit",
+        requestBody: {
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/VideoEditRequest" },
+            },
+          },
+          required: true,
+        },
+        responses: {
+          "202": {
+            content: { "application/json": { schema: { $ref: "#/components/schemas/VideoGenerationJob" } } },
+            description: "Localized video edit request accepted",
+          },
+          "400": { $ref: "#/components/responses/Error" },
+          "401": { $ref: "#/components/responses/Error" },
+          "404": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+          "413": { $ref: "#/components/responses/Error" },
+          "422": { $ref: "#/components/responses/Error" },
+          "502": { $ref: "#/components/responses/Error" },
+          "503": { $ref: "#/components/responses/Error" },
+          "504": { $ref: "#/components/responses/Error" },
+        },
+        security: [{ runtimeBearer: [] }],
+        summary: "Submit an instruction-based localized video edit",
         tags: ["Videos"],
       },
     },
@@ -280,6 +371,21 @@ export const OPENAPI_DOCUMENT = {
         required: true,
         schema: { format: "uuid", type: "string" },
       },
+      FacadeApiKeyHash: {
+        description: "Lowercase SHA-256 hash of the runtime facade API key whose active credential is queried.",
+        in: "query",
+        name: "facade_api_key_hash",
+        required: true,
+        schema: { pattern: "^[a-f0-9]{64}$", type: "string" },
+      },
+      OptionalFacadeApiKeyHash: {
+        description:
+          "Optional MCP caller scope. When present, list and delete operate only on credentials usable without a user identity and whose allowed_api_key_hashes are unrestricted or contain this hash. Omit for the existing global management API semantics.",
+        in: "query",
+        name: "facade_api_key_hash",
+        required: false,
+        schema: { pattern: "^[a-f0-9]{64}$", type: "string" },
+      },
     },
     responses: {
       Error: {
@@ -288,6 +394,46 @@ export const OPENAPI_DOCUMENT = {
       },
     },
     schemas: {
+      ByokActiveSelection: {
+        additionalProperties: false,
+        description:
+          "Persistent caller-scoped active credential metadata. Integrations should not expose facade_api_key_hash to end users.",
+        properties: {
+          credential_id: { format: "uuid", type: "string" },
+          facade_api_key_hash: { pattern: "^[a-f0-9]{64}$", type: "string" },
+          updated_at: { format: "date-time", type: "string" },
+        },
+        required: ["credential_id", "facade_api_key_hash", "updated_at"],
+        type: "object",
+      },
+      ByokActiveSelectionEnvelope: {
+        additionalProperties: false,
+        properties: { data: { $ref: "#/components/schemas/ByokActiveSelection" } },
+        required: ["data"],
+        type: "object",
+      },
+      ByokActiveSelectionNullableEnvelope: {
+        additionalProperties: false,
+        properties: {
+          data: {
+            anyOf: [
+              { $ref: "#/components/schemas/ByokActiveSelection" },
+              { type: "null" },
+            ],
+          },
+        },
+        required: ["data"],
+        type: "object",
+      },
+      ByokActiveSelectionUpdate: {
+        additionalProperties: false,
+        properties: {
+          credential_id: { format: "uuid", type: "string" },
+          facade_api_key_hash: { pattern: "^[a-f0-9]{64}$", type: "string" },
+        },
+        required: ["credential_id", "facade_api_key_hash"],
+        type: "object",
+      },
       ByokApiKeyHashes: {
         description:
           "Optional facade extension restricting this credential to runtime facade API keys identified by lowercase SHA-256 hashes.",
@@ -502,6 +648,99 @@ export const OPENAPI_DOCUMENT = {
           video_url: { properties: { url: { format: "uri", pattern: "^https?://", type: "string" } }, required: ["url"], type: "object" },
         },
         required: ["type", "video_url"],
+        type: "object",
+      },
+      VideoEditAnnotation: {
+        additionalProperties: false,
+        description: "A normalized region instruction whose timestamp must fall inside the requested segment.",
+        properties: {
+          at_ms: { minimum: 0, type: "integer" },
+          instruction: { maxLength: 2000, minLength: 1, type: "string" },
+          region: { $ref: "#/components/schemas/VideoEditRegion" },
+        },
+        required: ["at_ms", "region", "instruction"],
+        type: "object",
+      },
+      VideoEditRegion: {
+        additionalProperties: false,
+        description:
+          "Normalized edit-guidance region. Runtime validation also requires x + width <= 1 and y + height <= 1.",
+        properties: {
+          height: { exclusiveMinimum: 0, maximum: 1, type: "number" },
+          width: { exclusiveMinimum: 0, maximum: 1, type: "number" },
+          x: { maximum: 1, minimum: 0, type: "number" },
+          y: { maximum: 1, minimum: 0, type: "number" },
+        },
+        required: ["x", "y", "width", "height"],
+        type: "object",
+      },
+      VideoEditRequest: {
+        additionalProperties: false,
+        anyOf: [
+          { required: ["prompt"] },
+          {
+            properties: { annotations: { minItems: 1 } },
+            required: ["annotations"],
+          },
+        ],
+        properties: {
+          annotations: {
+            default: [],
+            items: { $ref: "#/components/schemas/VideoEditAnnotation" },
+            maxItems: 20,
+            type: "array",
+          },
+          model: { maxLength: 256, minLength: 1, type: "string" },
+          prompt: {
+            description: "Global edit instruction. The compiled prompt, including annotations, may not exceed 20000 characters.",
+            maxLength: 20000,
+            minLength: 1,
+            type: "string",
+          },
+          provider: {
+            additionalProperties: false,
+            description: "OpenRouter-style provider options; pippit.byok_id explicitly overrides caller active selection.",
+            properties: {
+              options: {
+                additionalProperties: { additionalProperties: true, type: "object" },
+                properties: {
+                  pippit: {
+                    additionalProperties: false,
+                    properties: {
+                      byok_id: { format: "uuid", type: "string" },
+                      thread_id: { minLength: 1, type: "string" },
+                    },
+                    type: "object",
+                  },
+                },
+                type: "object",
+              },
+            },
+            type: "object",
+          },
+          resolution: { maxLength: 64, minLength: 1, type: "string" },
+          seed: { maximum: 4294967295, minimum: -1, type: "integer" },
+          segment: { $ref: "#/components/schemas/VideoEditSegment" },
+          source_index: { default: 0, maximum: 1000, minimum: 0, type: "integer" },
+          source_job_id: {
+            description: "Completed job id issued to the same facade API key as this edit request.",
+            maxLength: 16384,
+            minLength: 1,
+            type: "string",
+          },
+        },
+        required: ["model", "segment", "source_job_id"],
+        type: "object",
+      },
+      VideoEditSegment: {
+        additionalProperties: false,
+        description:
+          "Instruction segment in the source timeline. end_ms must be greater than start_ms and their difference may not exceed 30000 ms.",
+        properties: {
+          end_ms: { minimum: 1, type: "integer" },
+          start_ms: { minimum: 0, type: "integer" },
+        },
+        required: ["start_ms", "end_ms"],
         type: "object",
       },
       VideoGenerationJob: {

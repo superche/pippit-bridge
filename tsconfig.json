@@ -3,7 +3,9 @@
   "references": [
     { "path": "./packages/core" },
     { "path": "./packages/sdk" },
+    { "path": "./packages/mcp-server-pippit" },
     { "path": "./apps/openrouter-facade" },
+    { "path": "./apps/chatgpt-app" },
     { "path": "./packages/opencode-provider-pippit" }
   ]
 }

@@ -1,0 +1,147 @@
+import { spawn } from "node:child_process"
+import { lstat, mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { isAbsolute, join, resolve } from "node:path"
+
+const entryArgument = process.argv[2]
+if (entryArgument === undefined) {
+  throw new Error("Usage: node smoke-installed-plugin.mjs /absolute/path/to/plugin-entry.mjs")
+}
+if (!isAbsolute(entryArgument)) throw new Error("The plugin entry path must be absolute.")
+const entryPath = resolve(entryArgument)
+
+const dataRoot = await mkdtemp(join(tmpdir(), "pippit-packed-runtime-"))
+await rm(dataRoot, { force: true, recursive: true })
+
+function request(id, method, params = {}) {
+  return { id, jsonrpc: "2.0", method, params }
+}
+
+async function waitForExit(pid, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0)
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 25))
+    } catch {
+      return
+    }
+  }
+  throw new Error("The packaged local Facade did not stop in time.")
+}
+
+let daemonPid
+try {
+  const protocol = [
+    request(1, "initialize", {
+      capabilities: {},
+      clientInfo: { name: "packed-smoke", version: "1" },
+      protocolVersion: "2025-11-25",
+    }),
+    request(2, "tools/list"),
+    request(3, "resources/list"),
+    request(4, "resources/read", { uri: "ui://widget/pippit-video-job-v7.html" }),
+    request(5, "tools/call", { arguments: {}, name: "pippit_list_access_keys" }),
+  ]
+  const run = await new Promise((resolveRun, rejectRun) => {
+    const child = spawn(process.execPath, [entryPath], {
+      env: { PIPPIT_BRIDGE_HOME: dataRoot },
+      stdio: ["pipe", "pipe", "pipe"],
+    })
+    let stderr = ""
+    let stdout = ""
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL")
+      rejectRun(new Error("The packaged MCP smoke test timed out."))
+    }, 20_000)
+    child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk })
+    let inputClosed = false
+    child.stdout.setEncoding("utf8").on("data", (chunk) => {
+      stdout += chunk
+      if (!inputClosed && stdout.split("\n").filter(Boolean).length >= protocol.length) {
+        inputClosed = true
+        child.stdin.end()
+      }
+    })
+    child.once("error", (error) => {
+      clearTimeout(timeout)
+      rejectRun(error)
+    })
+    child.once("close", (code) => {
+      clearTimeout(timeout)
+      resolveRun({ code, stderr, stdout })
+    })
+    child.stdin.write(`${protocol.map((message) => JSON.stringify(message)).join("\n")}\n`)
+  })
+
+  if (run.code !== 0 || run.stderr !== "") {
+    throw new Error("The packaged MCP entry did not exit cleanly.")
+  }
+  const responses = run.stdout
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const tools = responses.find((response) => response.id === 2)?.result?.tools ?? []
+  const listedResources = responses.find((response) => response.id === 3)?.result?.resources ?? []
+  const widgetResource = responses.find((response) => response.id === 4)?.result?.contents?.[0]
+  const toolCall = responses.find((response) => response.id === 5)?.result
+  if (responses.find((response) => response.id === 1)?.result?.serverInfo?.version !== "0.2.6") {
+    throw new Error("The packaged MCP server version is unexpected.")
+  }
+  if (tools.length !== 9 || !tools.some((tool) => tool.name === "pippit_add_access_key")) {
+    throw new Error("The packaged MCP tool surface is incomplete.")
+  }
+  const getVideo = tools.find((tool) => tool.name === "pippit_get_video")
+  if (
+    getVideo?._meta?.ui?.resourceUri !== "ui://widget/pippit-video-job-v7.html" ||
+    getVideo?._meta?.["openai/outputTemplate"] !== "ui://widget/pippit-video-job-v7.html"
+  ) {
+    throw new Error("The packaged MCP tools do not bind the shared widget.")
+  }
+  if (
+    listedResources[0]?.uri !== "ui://widget/pippit-video-job-v7.html" ||
+    widgetResource?.mimeType !== "text/html;profile=mcp-app" ||
+    !widgetResource?.text?.includes("pippit-video-editor")
+  ) {
+    throw new Error("The packaged MCP widget resource is incomplete.")
+  }
+  if (toolCall?.isError === true) {
+    throw new Error("The packaged MCP could not call its auto-bootstrapped local Facade.")
+  }
+
+  const descriptor = JSON.parse(await readFile(join(dataRoot, "facade-ready.json"), "utf8"))
+  const secrets = JSON.parse(await readFile(join(dataRoot, "runtime-secrets.json"), "utf8"))
+  daemonPid = descriptor.pid
+  const visibleProtocol = `${run.stderr}\n${run.stdout}`
+  for (const secret of [secrets.facade_api_key, secrets.management_api_key]) {
+    if (visibleProtocol.includes(secret)) throw new Error("An internal runtime key leaked into MCP output.")
+  }
+
+  if (process.platform !== "win32") {
+    const directory = await lstat(dataRoot)
+    const secretFile = await lstat(join(dataRoot, "runtime-secrets.json"))
+    const readyFile = await lstat(join(dataRoot, "facade-ready.json"))
+    const storeFile = await lstat(join(dataRoot, "byok", "credentials.json"))
+    if ((directory.mode & 0o777) !== 0o700) throw new Error("The local runtime directory is not private.")
+    for (const file of [secretFile, readyFile, storeFile]) {
+      if ((file.mode & 0o777) !== 0o600) throw new Error("A local runtime state file is not private.")
+    }
+  }
+
+  process.stdout.write(`${JSON.stringify({
+    account_count: toolCall?.structuredContent?.data?.length ?? 0,
+    server_version: "0.2.6",
+    tool_count: tools.length,
+    widget_resource: true,
+  })}\n`)
+} finally {
+  if (typeof daemonPid === "number") {
+    try {
+      process.kill(daemonPid, "SIGTERM")
+      await waitForExit(daemonPid)
+    } catch {
+      // The daemon may already have exited; the temporary root is still isolated.
+    }
+  }
+  await rm(dataRoot, { force: true, recursive: true })
+}

@@ -1,0 +1,44 @@
+{
+  "name": "@pippit-bridge/mcp-server",
+  "version": "0.2.6",
+  "description": "Dependency-free MCP server and Codex plugin for Pippit account management and video generation/editing",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    ".codex-plugin",
+    ".mcp.json",
+    "assets",
+    "dist",
+    "plugin-entry.mjs",
+    "skills",
+    "src",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./stdio": {
+      "types": "./dist/stdio.d.ts",
+      "import": "./dist/stdio.js"
+    }
+  },
+  "bin": {
+    "pippit-mcp": "./dist/stdio.js"
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json --force && esbuild scripts/local-facade-daemon-entry.mjs --bundle --platform=node --format=esm --target=node22 --legal-comments=none --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/local-facade-daemon.mjs",
+    "prepack": "npm run build",
+    "pretest": "npm run build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --configLoader native"
+  }
+}

@@ -3,7 +3,7 @@ import { z } from "zod"
 export const DEFAULT_BYOK_WORKSPACE_ID = "00000000-0000-0000-0000-000000000000"
 
 const boundedString = z.string().trim().min(1).max(256)
-const apiKeyHashSchema = z.string().regex(/^[a-f0-9]{64}$/u, "API key hashes must be lowercase SHA-256 hex")
+export const apiKeyHashSchema = z.string().regex(/^[a-f0-9]{64}$/u, "API key hashes must be lowercase SHA-256 hex")
 const uniqueApiKeyHashList = z
   .array(apiKeyHashSchema)
   .max(100)
@@ -48,10 +48,30 @@ export const byokCredentialUpdateSchema = z
 
 export const byokCredentialListQuerySchema = z
   .object({
+    facade_api_key_hash: apiKeyHashSchema.optional(),
     limit: z.coerce.number().int().min(1).max(100).default(100),
     offset: z.coerce.number().int().min(0).default(0),
     provider: z.literal("pippit").optional(),
     workspace_id: z.uuid().optional(),
+  })
+  .strict()
+
+export const byokCredentialDeleteQuerySchema = z
+  .object({
+    facade_api_key_hash: apiKeyHashSchema.optional(),
+  })
+  .strict()
+
+export const byokActiveSelectionQuerySchema = z
+  .object({
+    facade_api_key_hash: apiKeyHashSchema,
+  })
+  .strict()
+
+export const byokActiveSelectionUpdateSchema = z
+  .object({
+    credential_id: z.uuid(),
+    facade_api_key_hash: apiKeyHashSchema,
   })
   .strict()
 
@@ -79,6 +99,12 @@ export interface ByokCredentialList {
   readonly total_count: number
 }
 
+export interface ByokActiveSelection {
+  readonly credential_id: string
+  readonly facade_api_key_hash: string
+  readonly updated_at: string
+}
+
 export interface ByokKeyVersion {
   readonly created_at: string
   readonly id: string
@@ -102,12 +128,14 @@ export interface ByokResolveInput {
 export interface ByokStore {
   close(): Promise<void>
   create(input: ByokCredentialCreateInput): Promise<ByokCredential>
-  delete(id: string): Promise<boolean>
+  delete(id: string, facadeApiKeyHash?: string): Promise<boolean>
+  getActiveSelection(facadeApiKeyHash: string): Promise<ByokActiveSelection | undefined>
   get(id: string): Promise<ByokCredential | undefined>
   getVersion(credentialId: string, keyVersionId: string): Promise<ResolvedByokCredential | undefined>
   getWorkspaceId(): Promise<string>
   list(query?: ByokCredentialListQuery): Promise<ByokCredentialList>
   resolveCandidates(input: ByokResolveInput): Promise<readonly ResolvedByokCredential[]>
+  setActiveSelection(facadeApiKeyHash: string, credentialId: string): Promise<ByokActiveSelection>
   update(id: string, input: ByokCredentialUpdateInput): Promise<ByokCredential | undefined>
 }
 
@@ -139,7 +167,10 @@ export interface FileByokStoreOptions extends ByokStoreRuntimeOptions {
 }
 
 export type ByokStoreErrorCode =
+  | "ACTIVE_CREDENTIAL_DELETE_REQUIRES_SWITCH"
+  | "ACTIVE_CREDENTIAL_INELIGIBLE"
   | "CREDENTIAL_LIMIT_EXCEEDED"
+  | "CREDENTIAL_NOT_FOUND"
   | "INVALID_CONFIGURATION"
   | "STORE_CLOSED"
   | "STORE_CORRUPT"

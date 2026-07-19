@@ -14,6 +14,19 @@ apps/openrouter-facade ------------------+
   |-- auth, BYOK, job token, HTTP routes |
   `--------------------------------------+- depends on core + sdk
 
+packages/mcp-server-pippit --------------+
+  |-- facade-only client                 |
+  |-- shared account + video MCP tools   |
+  |-- one-time loopback AK enrollment    |
+  |-- stdio transport + local MP4 server |
+  `-- embedded Codex plugin metadata     |
+                                         +- depends on facade HTTP contract
+apps/chatgpt-app ------------------------+
+  |-- Streamable HTTP /mcp               |
+  |-- safe MCP capability projection     |
+  |-- Apps SDK segment-edit widget       |
+  `-- short-lived signed media proxy     |
+
 packages/opencode-provider-pippit -------+
   |-- OpenCode AuthHook
   |-- global multi-account AK keyring
@@ -22,9 +35,56 @@ packages/opencode-provider-pippit -------+
   `-- pippit_get_video
 ```
 
-`core` and `sdk` do not depend on an adapter. An adapter never imports another adapter. This keeps the stable model ids and upstream request types reusable when CLI, MCP, ChatGPT App, Codex, ComfyUI, n8n, or OpenMontage packages are added.
+`core` and `sdk` do not depend on an adapter. The MCP request/tool layer consumes only the facade HTTP contract. For zero-config local distribution, the MCP package additionally ships a build-time single-file bundle of the facade daemon; stdio still talks to it over the same authenticated HTTP contract rather than importing business handlers. The ChatGPT App reuses the MCP tool implementation but owns its HTTP transport, widget, and preview proxy. The Codex plugin is distribution metadata embedded in the MCP package, not another protocol implementation. This keeps the stable model ids and upstream request types reusable when CLI, ComfyUI, n8n, or OpenMontage packages are added.
 
 The root scripts intentionally start the facade from the repository root. This preserves the existing meaning of `.env` and relative `BYOK_STORE_PATH=./data/byok-credentials.json` after the workspace move.
+
+## MCP, ChatGPT App, and Codex distribution boundary
+
+The three wrappers expose one current media capability family: asynchronous video generation and structured segment-edit jobs. Image, video, and audio URLs may be video-generation references, but no wrapper advertises text generation, image generation, speech, or transcription. The generic MCP/Codex surfaces additionally expose facade account administration; the current ChatGPT `noauth` projection deliberately does not.
+
+```text
+generic MCP client                  Codex plugin
+  | stdio                             | embedded .mcp.json -> stdio
+  +-------------------+---------------+
+                      v
+          shared MCP account + video tools
+                      | lazy local resolver or complete external config
+                      v
+       user-level loopback Facade daemon --------> encrypted BYOK store
+       or explicitly deployed external Facade
+                      |
+                      | completed full download
+                      v
+       Movies/Videos/Pippit/*.mp4 <----- stdio/plugin loopback media server
+
+ChatGPT
+  | HTTPS Streamable HTTP POST /mcp
+  v
+ChatGPT App transport + MCP App result/editor widget
+  | safe projection of shared MCP video tools
+  | same local resolver / external Facade boundary
+  +-------------------------------------> Facade
+  `-- GET /media?token=... -------------> protected facade content route
+```
+
+`@pippit-bridge/mcp-server` owns the canonical definitions, validation and handlers for account list/add/switch/delete, model discovery, generation, structured segment editing, job polling, automatic completed-file materialization, and local download. Completed Codex/stdio results are atomically published under `PIPPIT_MCP_OUTPUT_ROOT`; the download tool realpath-confines an optional caller-supplied additional relative path under the same root and never overwrites an existing file. The ChatGPT App projects exact canonical video tool names and adds file parameters, UI metadata and signed previews; it deliberately omits the local-filesystem and all Management-Key-backed tools.
+
+Raw Pippit AK is not a normal MCP tool argument. `pippit_add_access_key` creates a bounded, high-entropy, one-time loopback enrollment URL. Its password form POSTs directly to the MCP process, which uses the distinct Management key only on `/api/v1/byok/**`. Runtime Facade API Key and Management API Key are never substituted for one another. The MCP process does not persist another copy of the AK.
+
+Local installation is deliberately lazy. Codex plugin installation and MCP `initialize` / `tools/list` do not execute the daemon or create secret material. The first actual tool call obtains a private bootstrap lock, creates one stable set of independent internal keys, starts the bundled Facade on port `0`, verifies an HMAC-signed ready descriptor plus a challenge proof, and then sends the Facade bearer key. Concurrent clients converge on the same process. An authenticated daemon with an older runtime version is stopped and replaced under that lock after an upgrade. Partial external configuration fails closed instead of borrowing local values.
+
+Local runtime state lives in a platform user-data directory (macOS `~/Library/Application Support/Pippit Bridge`), with directories `0700` and state files `0600`. Ordinary completed videos instead default to `~/Movies/Pippit` on macOS or `~/Videos/Pippit` elsewhere. Both are outside the plugin cache and checkout, so upgrade/uninstall does not rotate encryption/job keys, delete accounts, or remove completed MP4 files. If encrypted BYOK state exists without its matching secret file, bootstrap refuses to generate replacements. Bootstrap recognizes and removes only the exact same-inode private candidate hard link left by a dead lock owner; unfamiliar hard links fail closed. A crashed local daemon's store lock is removed only after the signed descriptor owner and lock PID are no longer alive; arbitrary live or malformed locks are not removed.
+
+The encrypted facade BYOK state stores active credential selections keyed by the runtime Facade API Key SHA-256. This makes the selection consistent across stdio MCP, Codex and the ChatGPT App when they intentionally share one runtime identity. MCP account list/delete also carry that hash only on the server-to-server management hop; the facade filters list results and performs scoped delete checks atomically, while the unscoped Management API retains administrator-wide behavior. An explicit `provider.options.pippit.byok_id` still wins. Without an explicit id, an active selection is fail-closed: a missing, disabled or ineligible selected credential is not silently replaced by another account. Existing signed job ids remain bound to the credential/key version used at submission.
+
+The Codex plugin root is `packages/mcp-server-pippit`. Its `.codex-plugin/plugin.json`, `.mcp.json`, `plugin-entry.mjs`, skills, assets, stdio runtime, and bundled local Facade are installed as one self-contained unit. The shim prefers compiled `dist/stdio.js` in an npm package and falls back to `src/stdio.ts` in an unbuilt repo checkout; a packaged install neither resolves monorepo siblings nor runs `npm install` on first start. The repo marketplace at `.agents/plugins/marketplace.json` points to that package; no second copy of the MCP implementation is maintained. Codex has no trusted arbitrary postinstall/secret-injection surface here, so automatic setup occurs on first capability use.
+
+The local ChatGPT App resolves the same user-level Facade and internal media-signing key at server startup, but explicitly removes the Management key before building its configuration. It registers only `/mcp`, a versioned result/editor widget resource, and the four safe video tools. Its current `noauth` declaration is a developer-mode boundary for local or controlled-tunnel use. A public, multi-user deployment still requires a reachable HTTPS service, a separately registered real App ID, OAuth 2.1 MCP resource-server validation, scopes, per-user mapping, remote persistence, and a secret manager; local plugin installation cannot create those production identity surfaces.
+
+The edit contract carries `source_job_id`, output index, a segment no longer than 30 seconds, timestamped intrinsic-video normalized rectangles, and global/local instructions. The facade resolves the source through the signed job boundary and submits a new asynchronous `pippit_video_part_agent` job. The currently documented upstream protocol has no hard-trim or pixel-mask field, so the complete source result is uploaded and the segment/ROI data is compiled into deterministic provider instructions. The UI must not claim that unselected bytes were omitted or that a pixel-exact mask was enforced.
+
+An Apps SDK registration creates a real identifier beginning with `plugin_asdk_app`. The repository therefore keeps only `apps/chatgpt-app/.app.json.example`. Until a real ID exists, the Codex plugin manifest must not claim an `apps` component. After registration, a real `packages/mcp-server-pippit/.app.json` may be created and the manifest may point `apps` at it; placeholder IDs are not a distributable integration.
 
 ## OpenCode direct-provider boundary
 
@@ -104,9 +164,12 @@ All image, video, and audio references cross an explicit two-step boundary: the 
 | --- | --- | --- | --- |
 | Management API Key | One SHA-256 digest in deployment config | `/api/v1/byok` CRUD only | Models, video create/poll/content |
 | Facade API Key | SHA-256 allowlist in deployment config | Models, video create/poll/content | `/api/v1/byok` management |
+| Wrapper copy of Facade API Key | Raw runtime secret in `PIPPIT_FACADE_API_KEY` | MCP/ChatGPT App/Codex server-to-facade requests | Pippit upstream auth, widget state, tool results, URLs |
 | Pippit AK | Encrypted at rest in the BYOK store | Server-to-Pippit upstream calls | Any facade `Authorization` header |
 | BYOK encryption key | Raw 32-byte deployment secret | Decrypt/encrypt BYOK store | Job signing |
 | Job signing key | Different raw 32-byte deployment secret | Job-token HMAC and API-key binding | BYOK encryption |
+| ChatGPT media signing key | Independent raw 32-byte app secret | Short-lived app preview tokens | Facade auth, Pippit upstream auth, BYOK/job signing |
+| Codex/stdio preview capability key | Process-random, memory only | Current plugin-lifecycle local MP4 URLs | Persistence, Facade auth, ChatGPT previews |
 
 The raw Management and Facade API Keys are generated and distributed outside this service; only their SHA-256 digests are configured. Startup rejects a Management digest that also appears in the Facade allowlist, so one raw key cannot be configured for both audiences.
 
@@ -207,6 +270,10 @@ The facade accepts HTTP(S) references only. Every source URL and redirect is che
 
 Generated output URLs are not returned as direct download targets. The content route resolves and streams them through the same public-network checks, forwards byte ranges, and only reflects video media types. Private-reference access is an explicit opt-in for trusted deployments.
 
+Facade content URLs remain Bearer-protected when consumed through an integration. For Codex/stdio MCP, every completed result is fully materialized first as a regular MP4 in the configured output root using an opaque SHA-256 identity, a private partial file, `fsync`, and an atomic no-overwrite publish. Only then does the widget receive a loopback capability URL signed with a process-random key. The current stdio/plugin process owns that listener for its stdin lifecycle and serves all HEAD/GET/Range reads from the completed local file; it never forwards browser ranges upstream. CORS and Private Network Access headers permit the sandboxed widget to reach loopback. At MCP EOF the listener closes and its capability expires naturally, while the complete MP4 remains intact. `pippit_download_video` creates only an optional additional user-named copy.
+
+The ChatGPT widget cannot attach or receive `PIPPIT_FACADE_API_KEY`, so the ChatGPT App replaces its preview targets with short-lived signed URLs on its own media proxy. The proxy validates the token and expiry, then attaches the Facade API Key only on the server-to-server hop. Neither the raw key nor any other credential is placed in widget HTML, ChatGPT tool results, preview URLs, or the token payload.
+
 The default bind address is `127.0.0.1`. Authentication is mandatory regardless of bind address: the Management API Key digest and at least one Facade API Key digest are required at startup. Generated content has separate response-header and body-idle timeouts so a stalled origin cannot occupy a stream indefinitely.
 
 ## Unsupported OpenRouter controls
@@ -227,4 +294,8 @@ A live Pippit proof requires an unmasked, officially issued AK with video permis
 - [OpenRouter BYOK overview](https://openrouter.ai/docs/guides/overview/auth/byok)
 - [OpenRouter Management API Keys](https://openrouter.ai/docs/guides/overview/auth/management-api-keys)
 - OpenRouter BYOK CRUD: [create](https://openrouter.ai/docs/api/api-reference/byok/create-byok-key), [list](https://openrouter.ai/docs/api/api-reference/byok/list-byok-keys), [get](https://openrouter.ai/docs/api/api-reference/byok/get-byok-key), [update](https://openrouter.ai/docs/api/api-reference/byok/update-byok-key), [delete](https://openrouter.ai/docs/api/api-reference/byok/delete-byok-key)
+- [OpenAI Apps SDK: Build your MCP server](https://developers.openai.com/apps-sdk/build/mcp-server)
+- [OpenAI Apps SDK: Connect from ChatGPT](https://developers.openai.com/apps-sdk/deploy/connect-chatgpt)
+- [OpenAI Apps SDK: Authentication](https://developers.openai.com/apps-sdk/build/auth)
+- [OpenAI: Build plugins](https://developers.openai.com/codex/build-plugins)
 - [Pippit](https://xyq.jianying.com/)

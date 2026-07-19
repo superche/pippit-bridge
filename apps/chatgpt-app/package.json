@@ -1,0 +1,33 @@
+{
+  "name": "@pippit-bridge/chatgpt-app",
+  "version": "0.2.6",
+  "private": true,
+  "description": "ChatGPT and MCP Apps wrapper for the Pippit video runtime",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "prebuild": "npm run build -w @pippit-bridge/mcp-server",
+    "build": "tsc -b tsconfig.build.json --force",
+    "dev": "node --watch --import tsx src/server.ts",
+    "start": "node dist/server.js",
+    "pretest": "npm run build -w @pippit-bridge/mcp-server",
+    "test": "vitest run --configLoader native",
+    "pretypecheck": "npm run build -w @pippit-bridge/mcp-server",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.2",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@pippit-bridge/mcp-server": "0.2.6",
+    "zod": "^4.1.12"
+  }
+}

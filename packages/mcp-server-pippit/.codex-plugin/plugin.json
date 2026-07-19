@@ -1,0 +1,42 @@
+{
+  "name": "pippit-video",
+  "version": "0.2.6",
+  "description": "Manage Pippit accounts and create, inspect, locally save, preview, and edit video jobs through one MCP server.",
+  "author": {
+    "name": "superche"
+  },
+  "homepage": "https://github.com/superche/pippit-bridge",
+  "repository": "https://github.com/superche/pippit-bridge",
+  "license": "MIT",
+  "keywords": [
+    "pippit",
+    "video generation",
+    "mcp",
+    "seedance"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Pippit Video",
+    "shortDescription": "Manage accounts and create or edit Pippit video",
+    "longDescription": "Use the bundled Pippit MCP server to securely enroll and select facade-managed Access Keys, list video models, submit asynchronous generation or segment-edit jobs, automatically save completed MP4 files, and preview them through a plugin-lifecycle local server.",
+    "developerName": "superche",
+    "category": "Creativity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/superche/pippit-bridge",
+    "defaultPrompt": [
+      "List the available Pippit video models",
+      "Add or switch the Pippit account used for new video jobs",
+      "Generate a Pippit video from this prompt and reference URL",
+      "Edit a selected segment and annotated region of this completed Pippit video",
+      "Check my Pippit video job and preview it when complete"
+    ],
+    "brandColor": "#6D5EF7",
+    "logo": "./assets/pippit-video.svg",
+    "composerIcon": "./assets/pippit-video-icon.svg",
+    "screenshots": []
+  }
+}

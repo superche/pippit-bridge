@@ -1,0 +1,22 @@
+{
+  "name": "pippit-bridge-release",
+  "interface": {
+    "displayName": "Pippit Bridge"
+  },
+  "plugins": [
+    {
+      "name": "pippit-video",
+      "source": {
+        "source": "npm",
+        "package": "@pippit-bridge/mcp-server",
+        "version": "0.2.6",
+        "registry": "https://registry.npmjs.org"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Creativity"
+    }
+  ]
+}
