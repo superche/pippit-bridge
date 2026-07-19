@@ -316,9 +316,9 @@ export const PIPPIT_TOOL_DEFINITIONS: readonly PippitToolDefinition[] = [
       idempotentHint: false,
       openWorldHint: true,
       readOnlyHint: false,
-      title: "Edit a Pippit video segment",
+      title: "Regenerate a Pippit video from a result",
     },
-    description: "Submit an asynchronous edit of one existing Pippit video output. Select at most 30 seconds and optionally attach normalized rectangular instructions to frames. This may incur Pippit charges.",
+    description: "Submit an asynchronous regeneration with one completed Pippit video output as the reference. The selected range, overall prompt, and normalized frame annotations become generation guidance. This may incur Pippit charges.",
     inputSchema: {
       additionalProperties: false,
       properties: {
@@ -349,7 +349,7 @@ export const PIPPIT_TOOL_DEFINITIONS: readonly PippitToolDefinition[] = [
         byok_id: { description: "Optional facade-managed BYOK credential identifier.", type: "string" },
         idempotency_key: { maxLength: 200, minLength: 1, type: "string" },
         model: { minLength: 1, type: "string" },
-        prompt: { description: "Optional instruction for the full selected segment.", maxLength: 20000, minLength: 1, type: "string" },
+        prompt: { description: "Optional overall instruction for the regenerated video.", maxLength: 20000, minLength: 1, type: "string" },
         resolution: { type: "string" },
         seed: { maximum: 4294967295, minimum: -1, type: "integer" },
         segment: {
@@ -370,7 +370,7 @@ export const PIPPIT_TOOL_DEFINITIONS: readonly PippitToolDefinition[] = [
     },
     name: "pippit_edit_video_segment",
     outputSchema: jobOutputSchema,
-    title: "Edit a Pippit video segment",
+    title: "Regenerate a Pippit video from a result",
   },
   {
     annotations: {

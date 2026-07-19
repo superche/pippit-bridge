@@ -143,7 +143,7 @@ export function adjustWidgetRegionFromKey(
   return { handled: true, region: next }
 }
 
-export const PIPPIT_WIDGET_URI = "ui://widget/pippit-video-job-v8.html"
+export const PIPPIT_WIDGET_URI = "ui://widget/pippit-video-job-v9.html"
 
 /**
  * A dependency-free MCP App. Business actions always call the shared MCP
@@ -154,7 +154,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pippit video editor</title>
+  <title>Pippit video regeneration</title>
   <style>
     :root {
       color-scheme: light;
@@ -485,15 +485,6 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
     .viewer-card .annotation-popover .primary { border-color: #0066cc; background: #0066cc; color: #ffffff; }
     .viewer-card .annotation-popover .primary:hover:not(:disabled) { background: #0071e3; }
     .viewer-message { margin: 0; padding: 10px 14px; color: #cccccc; font-size: 12px; }
-    .local-file {
-      margin: 0;
-      overflow-wrap: anywhere;
-      border-top: 1px solid rgb(255 255 255 / 10%);
-      padding: 10px 14px;
-      color: #cccccc;
-      font-size: 12px;
-      user-select: text;
-    }
     .trim-panel {
       display: grid;
       gap: 12px;
@@ -621,7 +612,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       <p id="message">This video could not be completed. Please try again.</p>
     </section>
 
-    <section id="editor" class="editor" aria-label="Edit generated video" hidden>
+    <section id="editor" class="editor" aria-label="Regenerate from the generated video" hidden>
       <div class="viewer-card">
         <div id="video-stage" class="video-stage">
           <video id="video" controls crossorigin="anonymous" playsinline preload="metadata"></video>
@@ -651,7 +642,6 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           </div>
         </div>
         <p id="media-message" class="viewer-message" aria-live="polite" hidden></p>
-        <p id="local-file" class="local-file" hidden></p>
       </div>
 
       <section class="trim-panel" aria-labelledby="trim-heading">
@@ -675,15 +665,15 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
 
       <div id="annotations" class="annotation-list" aria-live="polite"></div>
 
-      <section class="edit-compose" aria-label="Edit direction">
-        <label class="visually-hidden" for="prompt">Edit direction</label>
-        <textarea id="prompt" maxlength="20000" aria-label="Edit direction" placeholder="Describe how the selected time range should change…"></textarea>
+      <section class="edit-compose" aria-label="Regeneration direction">
+        <label class="visually-hidden" for="prompt">Regeneration direction</label>
+        <textarea id="prompt" maxlength="20000" aria-label="Regeneration direction" placeholder="Describe the regenerated video…"></textarea>
         <div class="submit-row">
           <div class="submit-copy">
-            <p class="hint">The selected range and any region annotations guide the edit.</p>
+            <p class="hint">The current video is the reference. The selected range and region annotations are added to the generation prompt.</p>
             <p id="edit-error" class="error" role="alert" hidden></p>
           </div>
-          <button id="submit-edit" class="primary" type="button" disabled>Start edit</button>
+          <button id="submit-edit" class="primary" type="button" disabled>Regenerate video</button>
         </div>
       </section>
     </section>
@@ -702,6 +692,8 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       var MAX_LOCAL_PREVIEW_BYTES = 256 * 1024 * 1024;
       var LOCAL_PREVIEW_CHUNK_BYTES = 1024 * 1024;
       var MAX_SEGMENT_MS = 30000;
+      var DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+      var REGENERATION_REQUEST_TIMEOUT_MS = 180000;
       var protocolVersion = "2026-01-26";
       var nextId = 1;
       var pending = new Map();
@@ -759,7 +751,6 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       var stageElement = document.getElementById("video-stage");
       var videoElement = document.getElementById("video");
       var mediaMessageElement = document.getElementById("media-message");
-      var localFileElement = document.getElementById("local-file");
       var roiLayerElement = document.getElementById("roi-layer");
       var roiBoxElement = document.getElementById("roi-box");
       var startElement = document.getElementById("segment-start");
@@ -796,13 +787,14 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         });
       }
 
-      function request(method, params) {
+      function request(method, params, timeoutMs) {
         return new Promise(function (resolve, reject) {
           var id = nextId++;
+          var effectiveTimeoutMs = timeoutMs === undefined ? DEFAULT_REQUEST_TIMEOUT_MS : timeoutMs;
           var timer = window.setTimeout(function () {
             pending.delete(id);
             reject(new Error(method + " timed out"));
-          }, 15000);
+          }, effectiveTimeoutMs);
           pending.set(id, {
             timer: timer,
             resolve: function (value) { window.clearTimeout(timer); resolve(value); },
@@ -814,7 +806,10 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
 
       function callTool(name, args) {
         if (serverToolsAvailable) {
-          return request("tools/call", { name: name, arguments: args });
+          var timeoutMs = name === "pippit_edit_video_segment"
+            ? REGENERATION_REQUEST_TIMEOUT_MS
+            : DEFAULT_REQUEST_TIMEOUT_MS;
+          return request("tools/call", { name: name, arguments: args }, timeoutMs);
         }
         if (window.openai && typeof window.openai.callTool === "function") {
           return window.openai.callTool(name, args);
@@ -929,9 +924,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         clearPreviewRenewal();
         revokePreviewObjectUrl();
         if (!retryLocalPreview()) {
-          mediaMessageElement.textContent = localFileElement.hidden
-            ? "The local video preview could not be loaded."
-            : "The player could not load this file, but the MP4 is saved locally.";
+          mediaMessageElement.textContent = "The player could not load this file, but the MP4 is saved locally.";
           mediaMessageElement.hidden = false;
         }
         updateSubmitState();
@@ -1028,7 +1021,6 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
 
       function showLoading(status) {
         videoElement.pause();
-        localFileElement.hidden = true;
         loadingViewElement.hidden = false;
         terminalViewElement.hidden = true;
         editorElement.hidden = true;
@@ -1038,7 +1030,6 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
 
       function showTerminal(status) {
         videoElement.pause();
-        localFileElement.hidden = true;
         stopInfinityLoader();
         loadingViewElement.hidden = true;
         editorElement.hidden = true;
@@ -1555,15 +1546,6 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         terminalViewElement.hidden = true;
         editorElement.hidden = false;
         setEditError("");
-        if (typeof media.local_path === "string" && media.local_path !== "") {
-          localFileElement.textContent = "Saved locally: " + media.local_path;
-          localFileElement.title = media.local_path;
-          localFileElement.hidden = false;
-        } else {
-          localFileElement.textContent = "";
-          localFileElement.removeAttribute("title");
-          localFileElement.hidden = true;
-        }
         if (updateKind === "unchanged") {
           var resourceReady = typeof media.resource_uri === "string" && Boolean(previewObjectUrl);
           var networkReady = typeof media.url === "string" && videoElement.getAttribute("src") === media.url;
@@ -1666,7 +1648,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
 
       function toolErrorText(result) {
         var text = textContent(result);
-        return text || "Pippit could not start this edit.";
+        return text || "Pippit could not start the regenerated video.";
       }
 
       async function submitEdit() {
@@ -1692,7 +1674,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         submitting = true;
         setEditError("");
         updateSubmitState();
-        submitEditElement.textContent = "Starting…";
+        submitEditElement.textContent = "Preparing reference…";
         try {
           var result = await callTool("pippit_edit_video_segment", args);
           if (!result || result.isError) {
@@ -1709,7 +1691,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           setEditError(error instanceof Error ? error.message : String(error));
         } finally {
           submitting = false;
-          submitEditElement.textContent = "Start edit";
+          submitEditElement.textContent = "Regenerate video";
           updateSubmitState();
         }
       }
@@ -1802,9 +1784,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
             videoElement.load();
           }, 500);
         } else {
-          mediaMessageElement.textContent = localFileElement.hidden
-            ? "The local video preview could not be loaded."
-            : "The player could not load this file, but the MP4 is saved locally.";
+          mediaMessageElement.textContent = "The video preview could not be loaded.";
           mediaMessageElement.hidden = false;
         }
         updateSubmitState();
@@ -1902,7 +1882,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       fallbackTimer = window.setTimeout(useOpenAiInitialResult, 1200);
       request("ui/initialize", {
         protocolVersion: protocolVersion,
-        appInfo: { name: "pippit-video-editor", title: "Pippit video editor", version: "0.2.7" },
+        appInfo: { name: "pippit-video-editor", title: "Pippit video regeneration", version: "0.2.8" },
         appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] }
       }).then(function (result) {
         protocolReady = true;

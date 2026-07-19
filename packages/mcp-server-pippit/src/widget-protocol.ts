@@ -19,10 +19,11 @@ const LEGACY_PIPPIT_WIDGET_URIS = new Set([
   "ui://widget/pippit-video-job-v5.html",
   "ui://widget/pippit-video-job-v6.html",
   "ui://widget/pippit-video-job-v7.html",
+  "ui://widget/pippit-video-job-v8.html",
 ])
 
 const INVOCATION_STATUS: Readonly<Record<string, readonly [string, string]>> = {
-  pippit_edit_video_segment: ["Submitting Pippit edit…", "Pippit edit submitted"],
+  pippit_edit_video_segment: ["Preparing reference video…", "New Pippit generation submitted"],
   pippit_generate_video: ["Starting Pippit generation…", "Pippit generation started"],
   pippit_get_video: ["Refreshing Pippit video…", "Pippit video refreshed"],
 }
@@ -38,7 +39,6 @@ export interface PippitWidgetMediaPreview {
   readonly filename?: string
   readonly index: number
   readonly kind: "video"
-  readonly local_path?: string
   readonly resource_uri?: string
   readonly url?: string
 }
@@ -99,6 +99,7 @@ export function sanitizePippitWidgetValue(value: unknown): unknown {
         const normalized = key.toLowerCase().replaceAll(/[_-]/gu, "")
         return normalized !== "authorization" &&
           normalized !== "unsignedurls" &&
+          normalized !== "localpath" &&
           !normalized.endsWith("accesskey") &&
           !normalized.endsWith("apikey")
       })
@@ -138,7 +139,6 @@ export async function projectPippitWidgetResult(
             filename: prepared.filename,
             index,
             kind: "video",
-            local_path: prepared.localPath,
             ...(prepared.resourceUri === undefined
               ? { url: prepared.url }
               : { resource_uri: prepared.resourceUri }),
@@ -215,7 +215,7 @@ export function pippitWidgetResourceMetadata(
     },
     "openai/widgetCSP": { connect_domains: origins, resource_domains: resourceOrigins },
     "openai/widgetDescription":
-      "Shows Pippit video job status, private local previews, and structured segment and region editing controls.",
+      "Shows Pippit video job status, private previews, and reference-guided regeneration controls.",
     "openai/widgetPrefersBorder": true,
   }
 }
@@ -224,7 +224,7 @@ export function pippitWidgetListResources(): Readonly<Record<string, unknown>> {
   return {
     resources: [
       {
-        description: "Inline status, private preview, and structured segment and region editor for Pippit video jobs.",
+        description: "Inline status, private preview, and reference-guided regeneration controls for Pippit video jobs.",
         mimeType: PIPPIT_WIDGET_MIME_TYPE,
         name: "Pippit video job widget",
         uri: PIPPIT_WIDGET_URI,

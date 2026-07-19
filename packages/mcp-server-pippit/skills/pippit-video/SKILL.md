@@ -1,6 +1,6 @@
 ---
 name: pippit-video
-description: Use when the user wants to manage facade-backed Pippit accounts, list video models, submit generation or structured segment-edit jobs, inspect status, locally save and preview completed video, or create an additional named copy through Pippit Bridge.
+description: Use when the user wants to manage facade-backed Pippit accounts, list video models, submit generation or reference-guided regeneration jobs, inspect status, locally save and preview completed video, or create an additional named copy through Pippit Bridge.
 ---
 
 # Pippit Video
@@ -32,16 +32,16 @@ For Codex/stdio, the widget reads bounded chunks of the completed MP4 through st
 2. Use `pippit_switch_access_key` to select the account for new jobs. Switching never changes the credential embedded in an existing job id. Before `pippit_delete_access_key`, show the selected masked account and get explicit confirmation; local deletion does not revoke the AK on the Pippit website.
 3. Call `pippit_list_video_models` when the model or its supported settings are not already known.
 4. Call `pippit_generate_video` once with a new, stable `idempotency_key`. It submits a job and returns immediately; it does not wait for generation to finish.
-5. Save the returned job `id`, then poll `pippit_get_video` until the job reaches a terminal state. A completed `pippit_get_video` first materializes every output as a regular local MP4, then automatically opens the shared video preview and segment-edit widget through the MCP Apps local resource bridge. Report the local path when it helps the user find the result.
+5. Save the returned job `id`, then poll `pippit_get_video` until the job reaches a terminal state. A completed `pippit_get_video` first materializes every output as a regular local MP4, then automatically opens the shared video preview and regeneration widget through the MCP Apps local resource bridge. The widget must not expose an absolute filesystem path; mention the configured output folder only when the user asks where files are saved.
 6. Call `pippit_download_video` only when the user asks for an additional copy with a chosen relative file name/path. The job must be `completed`; use a new relative `output_path` beneath the configured output root. Existing files are never overwritten. Do not use this tool as a prerequisite for normal playback or initial local persistence.
 
-## Segment editing
+## Reference-guided regeneration
 
-Use `pippit_edit_video_segment` only with a completed source job. Supply a source output index, a segment of at most 30 seconds, and either an overall prompt or one or more timestamped rectangle annotations. Rectangle coordinates are normalized to the intrinsic video content, not the widget box or its letterboxing.
+Use `pippit_edit_video_segment` only with a completed source job. Despite the stable tool name, this submits a new generation: the complete source output becomes the only video reference, while the selected segment, overall prompt, and timestamped rectangle annotations become deterministic prompt guidance. Rectangle coordinates are normalized to the intrinsic video content, not the widget box or its letterboxing.
 
-The current upstream contract receives the source video plus deterministic segment and region instructions. It does not expose a hard server-side trim or pixel mask. Describe the result as an instructed local edit, not as proof that bytes outside the selection were omitted or that an exact mask was enforced.
+The current upstream contract does not expose a hard server-side trim or pixel mask. Describe the result as reference-guided regeneration, not as an in-place edit or proof that bytes outside the selection were omitted or that an exact mask was enforced.
 
-The edit returns another asynchronous job. Poll it with `pippit_get_video`; its completed result is likewise saved locally first and opens the same preview/editor widget. Create an extra copy only under the explicit-copy rule above.
+The regeneration returns another asynchronous job. Poll it with `pippit_get_video`; its completed result is likewise saved locally first and opens the same preview/regeneration widget. Create an extra copy only under the explicit-copy rule above.
 
 `frame_images` and `input_references` use HTTP(S) URLs that the facade resolves. A request containing frame images uses first/last-frame generation semantics. Never mix `frame_images` with `input_references` in one request.
 

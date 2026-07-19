@@ -219,12 +219,15 @@ describe("Pippit stdio entrypoint", () => {
         result: { contents?: Array<{ blob?: string }>; _meta?: Record<string, unknown> }
       })
       const previews = responses.find(response => response.id === 3)?.result._meta?.["pippit/media"] as Array<{
-        local_path: string
+        filename: string
         resource_uri: string
       }>
       expect(previews).toHaveLength(1)
-      expect(previews[0]?.local_path).toMatch(/pippit-video-[a-f0-9]{64}\.mp4$/u)
-      expect(new Uint8Array(await readFile(previews[0]!.local_path))).toEqual(bytes)
+      expect(previews[0]?.filename).toMatch(/pippit-video-[a-f0-9]{64}\.mp4$/u)
+      expect(JSON.stringify(responses.find(response => response.id === 3)?.result)).not.toContain("local_path")
+      expect(JSON.stringify(responses.find(response => response.id === 3)?.result)).not.toContain(outputRoot)
+      const localPath = join(outputRoot, previews[0]!.filename)
+      expect(new Uint8Array(await readFile(localPath))).toEqual(bytes)
       const chunkUri = new URL(previews[0]!.resource_uri)
       chunkUri.searchParams.set("length", "4")
       chunkUri.searchParams.set("offset", "4")
@@ -244,7 +247,7 @@ describe("Pippit stdio entrypoint", () => {
       expect(new Uint8Array(Buffer.from(chunk ?? "", "base64"))).toEqual(bytes.slice(4))
       input.end()
       await running
-      expect(new Uint8Array(await readFile(previews[0]!.local_path))).toEqual(bytes)
+      expect(new Uint8Array(await readFile(localPath))).toEqual(bytes)
 
       const shouldNotDownload = vi.fn(async () => { throw new Error("unexpected download") })
       const restarted = createPippitWidgetMediaServer({
@@ -348,11 +351,12 @@ describe("Pippit stdio entrypoint", () => {
         filename: "pippit-video-0.mp4",
         index: 0,
         kind: "video",
-        local_path: "/Movies/Pippit/pippit-video-0.mp4",
         resource_uri: `pippit-video://artifact/${"0".repeat(64)}`,
       },
     ])
     expect(JSON.stringify(callResult)).not.toContain("unsigned_urls")
+    expect(JSON.stringify(callResult)).not.toContain("local_path")
+    expect(JSON.stringify(callResult)).not.toContain("/Movies/Pippit")
     expect(widgetClose).toHaveBeenCalledOnce()
     expect(runtimeClose).toHaveBeenCalledOnce()
   })

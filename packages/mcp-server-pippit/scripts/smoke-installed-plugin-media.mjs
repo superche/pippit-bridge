@@ -158,16 +158,22 @@ try {
     clientInfo: { name: "installed-media-smoke", version: "1" },
     protocolVersion: "2025-11-25",
   })
-  if (initialized?.serverInfo?.version !== "0.2.7") throw new Error("Unexpected installed plugin version.")
-  const resource = await rpc("resources/read", { uri: "ui://widget/pippit-video-job-v8.html" })
-  if (!resource?.contents?.[0]?.text?.includes("pippit-video-editor")) throw new Error("Missing v8 widget resource.")
+  if (initialized?.serverInfo?.version !== "0.2.8") throw new Error("Unexpected installed plugin version.")
+  const resource = await rpc("resources/read", { uri: "ui://widget/pippit-video-job-v9.html" })
+  if (!resource?.contents?.[0]?.text?.includes("pippit-video-editor")) throw new Error("Missing v9 widget resource.")
   const result = await rpc("tools/call", {
     arguments: { job_id: "job_installed_media" },
     name: "pippit_get_video",
   })
   const preview = result?._meta?.["pippit/media"]?.[0]
   if (result?.isError === true || preview === undefined) throw new Error("The installed plugin did not return local media.")
-  localPath = preview.local_path
+  if (JSON.stringify(result).includes("local_path") || JSON.stringify(result).includes(outputRoot)) {
+    throw new Error("The installed plugin exposed its local output path.")
+  }
+  if (!/^pippit-video-[a-f0-9]{64}\.mp4$/u.test(preview.filename)) {
+    throw new Error("The installed plugin returned an invalid opaque media filename.")
+  }
+  localPath = join(outputRoot, preview.filename)
   resourceUri = preview.resource_uri
   if (!/^pippit-video:\/\/artifact\/[a-f0-9]{64}$/u.test(resourceUri) || preview.url !== undefined) {
     throw new Error("The installed plugin did not return a stable local MCP media resource.")
@@ -186,7 +192,7 @@ try {
   process.stdout.write(`${JSON.stringify({
     event: "preview_ready",
     facade_port: facadeAddress.port,
-    local_path: localPath,
+    local_file_verified: true,
     media_bytes: mediaBytes.byteLength,
     plugin_pid: child.pid,
     transport: "mcp-resource",

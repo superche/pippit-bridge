@@ -159,6 +159,7 @@ describe("Pippit ChatGPT MCP App", () => {
     expect((generated._meta?.["pippit/media"] as unknown[] | undefined)).toEqual([
       expect.objectContaining({ index: 0, kind: "video", url: expect.stringContaining("/media?token=") }),
     ])
+    expect(JSON.stringify(generated)).not.toContain("local_path")
 
     const edited = await client.callTool({
       arguments: {
@@ -206,6 +207,7 @@ describe("Pippit ChatGPT MCP App", () => {
     })
     expect(edited.structuredContent).not.toHaveProperty("unsigned_urls")
     expect((edited._meta?.["pippit/media"] as unknown[] | undefined)).toHaveLength(1)
+    expect(JSON.stringify(edited)).not.toContain("local_path")
   })
 
   it("validates edit duration, region bounds, and instruction presence", () => {

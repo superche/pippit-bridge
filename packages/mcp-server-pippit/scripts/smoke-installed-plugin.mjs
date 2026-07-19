@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process"
 import { lstat, mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { isAbsolute, join, resolve } from "node:path"
+import { dirname, isAbsolute, join, resolve } from "node:path"
 
 const entryArgument = process.argv[2]
 if (entryArgument === undefined) {
@@ -9,6 +9,8 @@ if (entryArgument === undefined) {
 }
 if (!isAbsolute(entryArgument)) throw new Error("The plugin entry path must be absolute.")
 const entryPath = resolve(entryArgument)
+const pluginManifest = JSON.parse(await readFile(join(dirname(entryPath), ".codex-plugin", "plugin.json"), "utf8"))
+if (pluginManifest.version !== "0.2.8") throw new Error("The packaged Codex plugin manifest version is unexpected.")
 
 const dataRoot = await mkdtemp(join(tmpdir(), "pippit-packed-runtime-"))
 await rm(dataRoot, { force: true, recursive: true })
@@ -40,7 +42,7 @@ try {
     }),
     request(2, "tools/list"),
     request(3, "resources/list"),
-    request(4, "resources/read", { uri: "ui://widget/pippit-video-job-v8.html" }),
+    request(4, "resources/read", { uri: "ui://widget/pippit-video-job-v9.html" }),
     request(5, "tools/call", { arguments: {}, name: "pippit_list_access_keys" }),
   ]
   const run = await new Promise((resolveRun, rejectRun) => {
@@ -85,7 +87,7 @@ try {
   const listedResources = responses.find((response) => response.id === 3)?.result?.resources ?? []
   const widgetResource = responses.find((response) => response.id === 4)?.result?.contents?.[0]
   const toolCall = responses.find((response) => response.id === 5)?.result
-  if (responses.find((response) => response.id === 1)?.result?.serverInfo?.version !== "0.2.7") {
+  if (responses.find((response) => response.id === 1)?.result?.serverInfo?.version !== "0.2.8") {
     throw new Error("The packaged MCP server version is unexpected.")
   }
   if (tools.length !== 9 || !tools.some((tool) => tool.name === "pippit_add_access_key")) {
@@ -93,13 +95,13 @@ try {
   }
   const getVideo = tools.find((tool) => tool.name === "pippit_get_video")
   if (
-    getVideo?._meta?.ui?.resourceUri !== "ui://widget/pippit-video-job-v8.html" ||
-    getVideo?._meta?.["openai/outputTemplate"] !== "ui://widget/pippit-video-job-v8.html"
+    getVideo?._meta?.ui?.resourceUri !== "ui://widget/pippit-video-job-v9.html" ||
+    getVideo?._meta?.["openai/outputTemplate"] !== "ui://widget/pippit-video-job-v9.html"
   ) {
     throw new Error("The packaged MCP tools do not bind the shared widget.")
   }
   if (
-    listedResources[0]?.uri !== "ui://widget/pippit-video-job-v8.html" ||
+    listedResources[0]?.uri !== "ui://widget/pippit-video-job-v9.html" ||
     widgetResource?.mimeType !== "text/html;profile=mcp-app" ||
     !widgetResource?.text?.includes("pippit-video-editor")
   ) {
@@ -130,7 +132,7 @@ try {
 
   process.stdout.write(`${JSON.stringify({
     account_count: toolCall?.structuredContent?.data?.length ?? 0,
-    server_version: "0.2.7",
+    server_version: "0.2.8",
     tool_count: tools.length,
     widget_resource: true,
   })}\n`)

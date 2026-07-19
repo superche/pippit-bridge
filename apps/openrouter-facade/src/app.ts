@@ -291,7 +291,7 @@ function compileVideoEditPrompt(request: VideoEditRequest): string {
   // Pippit receives the complete source video. Segment and normalized ROI values
   // are deterministic provider instructions, not hard-trim or pixel-mask operations.
   const prompt = [
-    "Pippit localized video edit instruction v1.",
+    "Pippit reference-guided video regeneration instruction v1.",
     "The complete source video is attached as the only video reference.",
     "Treat segment and normalized region values as edit guidance only; preserve unrelated content outside them.",
     JSON.stringify({

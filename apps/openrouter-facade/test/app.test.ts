@@ -571,7 +571,7 @@ describe("OpenRouter video facade", () => {
     expect(response.json().id).toMatch(/^pippit_job_v2\./u)
   })
 
-  it("submits a localized edit through the safe source loader with derived duration", async () => {
+  it("regenerates from the complete source video with compiled guidance and derived duration", async () => {
     const harness = createHarness()
     const source = await createVideo(harness.app)
     const response = await harness.app.inject({
@@ -606,6 +606,7 @@ describe("OpenRouter video facade", () => {
     expect(submitted?.video_part_tool_param.videos).toEqual([{ pippit_asset_id: "asset-1" }])
     expect(submitted?.asset_ids).toEqual(["asset-1"])
     expect(submitted?.message).toBe(submitted?.video_part_tool_param.prompt)
+    expect(submitted?.message).toContain("Pippit reference-guided video regeneration instruction v1.")
     expect(submitted?.message).toContain("The complete source video is attached as the only video reference.")
     expect(JSON.parse(submitted?.message.split("\n").at(-1) ?? "null")).toEqual({
       annotations: [

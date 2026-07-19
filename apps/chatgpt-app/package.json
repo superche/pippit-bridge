@@ -1,6 +1,6 @@
 {
   "name": "@pippit-bridge/chatgpt-app",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "private": true,
   "description": "ChatGPT and MCP Apps wrapper for the Pippit video runtime",
   "type": "module",
@@ -27,7 +27,7 @@
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "^1.7.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@pippit-bridge/mcp-server": "0.2.7",
+    "@pippit-bridge/mcp-server": "0.2.8",
     "zod": "^4.1.12"
   }
 }

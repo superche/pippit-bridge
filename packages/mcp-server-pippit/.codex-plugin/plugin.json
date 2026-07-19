@@ -1,7 +1,7 @@
 {
   "name": "pippit-video",
-  "version": "0.2.7",
-  "description": "Manage Pippit accounts and create, inspect, locally save, preview, and edit video jobs through one MCP server.",
+  "version": "0.2.8",
+  "description": "Manage Pippit accounts and create, inspect, locally save, preview, and regenerate video jobs through one MCP server.",
   "author": {
     "name": "superche"
   },
@@ -18,8 +18,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Pippit Video",
-    "shortDescription": "Manage accounts and create or edit Pippit video",
-    "longDescription": "Use the bundled Pippit MCP server to securely enroll and select facade-managed Access Keys, list video models, submit asynchronous generation or segment-edit jobs, automatically save completed MP4 files, and preview them through the MCP Apps local resource bridge.",
+    "shortDescription": "Manage accounts and generate Pippit video",
+    "longDescription": "Use the bundled Pippit MCP server to securely enroll and select facade-managed Access Keys, list video models, submit asynchronous generation or reference-guided regeneration jobs, automatically save completed MP4 files, and preview them through the MCP Apps local resource bridge without exposing absolute paths.",
     "developerName": "superche",
     "category": "Creativity",
     "capabilities": [
@@ -31,7 +31,7 @@
       "List the available Pippit video models",
       "Add or switch the Pippit account used for new video jobs",
       "Generate a Pippit video from this prompt and reference URL",
-      "Edit a selected segment and annotated region of this completed Pippit video",
+      "Regenerate this completed Pippit video using the selected range and annotations as guidance",
       "Check my Pippit video job and preview it when complete"
     ],
     "brandColor": "#6D5EF7",

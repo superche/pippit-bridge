@@ -12,7 +12,7 @@ import {
 
 describe("Pippit MCP App widget", () => {
   it("uses the stable MCP App resource contract", () => {
-    expect(PIPPIT_WIDGET_URI).toBe("ui://widget/pippit-video-job-v8.html")
+    expect(PIPPIT_WIDGET_URI).toBe("ui://widget/pippit-video-job-v9.html")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/initialize")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/notifications/initialized")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/notifications/tool-result")
@@ -27,6 +27,10 @@ describe("Pippit MCP App widget", () => {
 
   it("gates standard tool calls and keeps window.openai as a compatibility fallback", () => {
     expect(PIPPIT_WIDGET_HTML).toContain("if (serverToolsAvailable)")
+    expect(PIPPIT_WIDGET_HTML).toContain("DEFAULT_REQUEST_TIMEOUT_MS = 15000")
+    expect(PIPPIT_WIDGET_HTML).toContain("REGENERATION_REQUEST_TIMEOUT_MS = 180000")
+    expect(PIPPIT_WIDGET_HTML).toContain('name === "pippit_edit_video_segment"')
+    expect(PIPPIT_WIDGET_HTML).toContain('request("tools/call", { name: name, arguments: args }, timeoutMs)')
     expect(PIPPIT_WIDGET_HTML).toContain("window.openai.toolOutput")
     expect(PIPPIT_WIDGET_HTML).toContain("window.openai.callTool")
   })
@@ -55,7 +59,8 @@ describe("Pippit MCP App widget", () => {
     expect(PIPPIT_WIDGET_HTML).toContain("annotations.length >= MAX_ANNOTATIONS")
     expect(PIPPIT_WIDGET_HTML).toContain("Math.min(pendingRegion.width, 1 - x)")
     expect(PIPPIT_WIDGET_HTML).toContain("Math.min(pendingRegion.height, 1 - y)")
-    expect(PIPPIT_WIDGET_HTML).toContain("The selected range and any region annotations guide the edit.")
+    expect(PIPPIT_WIDGET_HTML).toContain("The current video is the reference.")
+    expect(PIPPIT_WIDGET_HTML).toContain("region annotations are added to the generation prompt.")
     expect(PIPPIT_WIDGET_HTML).not.toContain("only sends")
     expect(PIPPIT_WIDGET_HTML).not.toContain("white frame")
   })
@@ -104,7 +109,11 @@ describe("Pippit MCP App widget", () => {
     expect(PIPPIT_WIDGET_HTML).toContain('id="filmstrip" class="filmstrip"')
     expect(PIPPIT_WIDGET_HTML).toContain('class="trim-handle" type="button" role="slider"')
     expect(PIPPIT_WIDGET_HTML).toContain("#ffd60a")
-    expect(PIPPIT_WIDGET_HTML).toContain('class="edit-compose" aria-label="Edit direction"')
+    expect(PIPPIT_WIDGET_HTML).toContain('class="edit-compose" aria-label="Regeneration direction"')
+    expect(PIPPIT_WIDGET_HTML).toContain(">Regenerate video</button>")
+    expect(PIPPIT_WIDGET_HTML).not.toContain("Saved locally: ")
+    expect(PIPPIT_WIDGET_HTML).not.toContain("media.local_path")
+    expect(PIPPIT_WIDGET_HTML).not.toContain('id="local-file"')
     expect(PIPPIT_WIDGET_HTML).not.toContain("Frame detail")
     expect(PIPPIT_WIDGET_HTML).not.toContain('<p class="eyebrow">Edit direction</p>')
   })

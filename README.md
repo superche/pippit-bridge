@@ -31,8 +31,8 @@ pippit-bridge
 
 | 形式 | 运行入口 | 暴露能力 | 适用场景 |
 | --- | --- | --- | --- |
-| 通用 MCP package | `packages/mcp-server-pippit/src/stdio.ts` | 安全新增/列出/切换/删除 AK；列模型、生成、局部编辑、查询；completed 自动本地落盘与受限额外下载 | 支持 stdio MCP 的本地 client |
-| ChatGPT App | `https://<host>/mcp` | 投影 MCP 的列模型、生成、查询和局部编辑，并用结果 widget 选段/框选注释 | ChatGPT developer mode；本地或 tunnel 调试 |
+| 通用 MCP package | `packages/mcp-server-pippit/src/stdio.ts` | 安全新增/列出/切换/删除 AK；列模型、生成、参考视频重新生成、查询；completed 自动本地落盘与受限额外下载 | 支持 stdio MCP 的本地 client |
+| ChatGPT App | `https://<host>/mcp` | 投影 MCP 的列模型、生成、查询和参考视频重新生成，并用结果 widget 选段/框选注释 | ChatGPT developer mode；本地或 tunnel 调试 |
 | Codex plugin | `pippit-video@pippit-bridge` | `.mcp.json` 直接启动同一个通用 MCP，skill 只负责安全编排 | Codex CLI 或 ChatGPT Desktop 的 Codex 插件面 |
 
 本地 stdio MCP、Codex plugin 和本地 ChatGPT App 默认不需要预设 facade 环境变量。安装与 `initialize` / `tools/list` 发现阶段不启动服务、也不创建密钥；第一次实际 MCP 工具调用（或本地 ChatGPT App 启动）才幂等创建/复用一个用户级、只监听 loopback 的共享 Facade。内部 runtime、management、BYOK encryption、job signing 与 ChatGPT media signing key 保存在 plugin cache 和项目目录之外，卸载 plugin 默认不会删除账号数据；Codex/stdio 预览通过宿主代理的 MCP 本地资源读取，不依赖临时端口。

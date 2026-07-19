@@ -249,7 +249,7 @@ export const OPENAPI_DOCUMENT = {
     "/api/v1/videos/edits": {
       post: {
         description:
-          "Uses a completed facade job output as the only video reference and uploads it through the same safe reference loader as generation. Segment and normalized region values are provider instruction metadata; this endpoint does not byte-trim the source or apply a pixel mask.",
+          "Regenerates a video using one completed facade job output as the only video reference. The source is uploaded through the same safe reference loader as generation. Segment and normalized region values are prompt guidance; this endpoint does not byte-trim the source or apply a pixel mask.",
         operationId: "createVideoEdit",
         requestBody: {
           content: {
@@ -262,7 +262,7 @@ export const OPENAPI_DOCUMENT = {
         responses: {
           "202": {
             content: { "application/json": { schema: { $ref: "#/components/schemas/VideoGenerationJob" } } },
-            description: "Localized video edit request accepted",
+            description: "Reference-guided video generation request accepted",
           },
           "400": { $ref: "#/components/responses/Error" },
           "401": { $ref: "#/components/responses/Error" },
@@ -275,7 +275,7 @@ export const OPENAPI_DOCUMENT = {
           "504": { $ref: "#/components/responses/Error" },
         },
         security: [{ runtimeBearer: [] }],
-        summary: "Submit an instruction-based localized video edit",
+        summary: "Regenerate a video from a completed result",
         tags: ["Videos"],
       },
     },
@@ -692,7 +692,7 @@ export const OPENAPI_DOCUMENT = {
           },
           model: { maxLength: 256, minLength: 1, type: "string" },
           prompt: {
-            description: "Global edit instruction. The compiled prompt, including annotations, may not exceed 20000 characters.",
+            description: "Overall regeneration instruction. The compiled prompt, including annotations, may not exceed 20000 characters.",
             maxLength: 20000,
             minLength: 1,
             type: "string",

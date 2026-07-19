@@ -44,7 +44,7 @@ Every generate request requires `idempotency_key`. It deduplicates retries only 
 
 Generation can incur Pippit charges. Files and URLs supplied to the generate tool are uploaded to and processed by Pippit under the configured account.
 
-For a completed result, the widget supports a segment-edit draft modeled after the supplied “片段重拍” interaction: choose a range of at most 30 seconds, seek and drag a rectangle over intrinsic video content, insert timestamped regional instructions, optionally add an overall instruction, then submit through `pippit_edit_video_segment`. The tool arguments contain only source job/index and structured edit metadata; the signed preview URL is never copied into `structuredContent` or the edit request.
+For a completed result, the widget supports reference-guided regeneration modeled after the supplied “片段重拍” interaction: choose a guidance range of at most 30 seconds, seek and drag a rectangle over intrinsic video content, insert timestamped regional instructions, optionally add an overall instruction, then submit through the stable `pippit_edit_video_segment` tool. The facade uses the complete current result as the only video reference and compiles the range and annotations into the generation prompt. Tool arguments contain only source job/index and structured guidance metadata; signed preview URLs and local absolute paths are never copied into `structuredContent` or the request.
 
 The current upstream contract has no hard-trim or pixel-mask field. The complete source video remains a reference and segment/rectangle values are submitted as deterministic edit guidance. The widget therefore does not claim that unselected bytes are omitted or that an exact mask is enforced.
 

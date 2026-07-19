@@ -48,6 +48,7 @@ describe("Pippit widget protocol", () => {
     const projected = await projectPippitWidgetResult(result({
       authorization: "Bearer secret",
       id: "job_123",
+      local_path: "/Users/test/private-source.mp4",
       polling_url: "/api/v1/videos/job_123",
       status: "completed",
       unsigned_urls: [
@@ -70,7 +71,6 @@ describe("Pippit widget protocol", () => {
         filename: "pippit-video-0.mp4",
         index: 0,
         kind: "video",
-        local_path: "/Users/test/Movies/Pippit/pippit-video-0.mp4",
         resource_uri: `pippit-video://artifact/${"0".repeat(64)}`,
       },
       {
@@ -78,10 +78,11 @@ describe("Pippit widget protocol", () => {
         filename: "pippit-video-1.mp4",
         index: 1,
         kind: "video",
-        local_path: "/Users/test/Movies/Pippit/pippit-video-1.mp4",
         resource_uri: `pippit-video://artifact/${"0".repeat(63)}1`,
       },
     ])
+    expect(JSON.stringify(projected)).not.toContain("local_path")
+    expect(JSON.stringify(projected)).not.toContain("/Users/test")
   })
 
   it("does not create previews for pending or failed tool results", async () => {
@@ -121,6 +122,8 @@ describe("Pippit widget protocol", () => {
       .toMatchObject({ contents: [{ text: PIPPIT_WIDGET_HTML, uri: "ui://widget/pippit-video-job-v6.html" }] })
     expect(pippitWidgetReadResource("ui://widget/pippit-video-job-v7.html"))
       .toMatchObject({ contents: [{ text: PIPPIT_WIDGET_HTML, uri: "ui://widget/pippit-video-job-v7.html" }] })
+    expect(pippitWidgetReadResource("ui://widget/pippit-video-job-v8.html"))
+      .toMatchObject({ contents: [{ text: PIPPIT_WIDGET_HTML, uri: "ui://widget/pippit-video-job-v8.html" }] })
     expect(pippitWidgetReadResource("ui://widget/unknown.html")).toBeUndefined()
   })
 
@@ -136,7 +139,12 @@ describe("Pippit widget protocol", () => {
     expect(PIPPIT_WIDGET_HTML).toContain("expiresAtMs <= Date.now() + 5000")
     expect(PIPPIT_WIDGET_HTML).toContain("schedulePreviewRenewal(expiresAtMs)")
     expect(PIPPIT_WIDGET_HTML).toContain("Retrying the local video…")
-    expect(PIPPIT_WIDGET_HTML).toContain("Saved locally: ")
+    expect(PIPPIT_WIDGET_HTML).not.toContain("Saved locally: ")
+    expect(PIPPIT_WIDGET_HTML).not.toContain("media.local_path")
+    expect(PIPPIT_WIDGET_HTML).not.toContain('id="local-file"')
+    expect(PIPPIT_WIDGET_HTML).toContain("REGENERATION_REQUEST_TIMEOUT_MS = 180000")
+    expect(PIPPIT_WIDGET_HTML).toContain('name === "pippit_edit_video_segment"')
+    expect(PIPPIT_WIDGET_HTML).toContain('request("tools/call", { name: name, arguments: args }, timeoutMs)')
     expect(PIPPIT_WIDGET_HTML).toContain("if (changedSource) previewRetryCount = 0")
     expect(PIPPIT_WIDGET_HTML).toContain("void refresh(true)")
     expect(PIPPIT_WIDGET_HTML).toContain("schedulePoll(pollDelayMs)")

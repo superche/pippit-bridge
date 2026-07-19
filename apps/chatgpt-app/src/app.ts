@@ -462,7 +462,7 @@ export function createChatGptAppMcpServer(options: ChatGptAppMcpOptions): {
 } {
   const { config } = options
   const appRuntime = createChatGptAppRuntime(config, options.dependencies)
-  const server = new McpServer({ name: "pippit-chatgpt-app", version: "0.2.7" })
+  const server = new McpServer({ name: "pippit-chatgpt-app", version: "0.2.8" })
   const sharedList = sharedToolPresentation(CHATGPT_TOOL_NAMES.list)
   const sharedGenerate = sharedToolPresentation(CHATGPT_TOOL_NAMES.generate)
   const sharedGet = sharedToolPresentation(CHATGPT_TOOL_NAMES.get)
@@ -473,7 +473,7 @@ export function createChatGptAppMcpServer(options: ChatGptAppMcpOptions): {
     "Pippit video job widget",
     PIPPIT_WIDGET_URI,
     {
-      description: "Inline status, private preview, and structured segment and region editor for Pippit video jobs.",
+      description: "Inline status, private preview, and reference-guided regeneration controls for Pippit video jobs.",
       mimeType: RESOURCE_MIME_TYPE,
       _meta: resourceMetadata(config),
     },
@@ -547,7 +547,7 @@ export function createChatGptAppMcpServer(options: ChatGptAppMcpOptions): {
     server,
     CHATGPT_TOOL_NAMES.edit,
     withNoauthSecurity({
-      _meta: toolMetadata("Starting Pippit segment edit…", "Pippit segment edit started", true),
+      _meta: toolMetadata("Preparing reference video…", "New Pippit generation submitted", true),
       annotations: sharedEdit.annotations,
       description: sharedEdit.description,
       inputSchema: CHATGPT_EDIT_INPUT_SHAPE,

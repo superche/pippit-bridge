@@ -24,7 +24,7 @@ packages/mcp-server-pippit --------------+
 apps/chatgpt-app ------------------------+
   |-- Streamable HTTP /mcp               |
   |-- safe MCP capability projection     |
-  |-- Apps SDK segment-edit widget       |
+  |-- Apps SDK regeneration widget       |
   `-- short-lived signed media proxy     |
 
 packages/opencode-provider-pippit -------+
@@ -41,7 +41,7 @@ The root scripts intentionally start the facade from the repository root. This p
 
 ## MCP, ChatGPT App, and Codex distribution boundary
 
-The three wrappers expose one current media capability family: asynchronous video generation and structured segment-edit jobs. Image, video, and audio URLs may be video-generation references, but no wrapper advertises text generation, image generation, speech, or transcription. The generic MCP/Codex surfaces additionally expose facade account administration; the current ChatGPT `noauth` projection deliberately does not.
+The three wrappers expose one current media capability family: asynchronous video generation and reference-guided regeneration jobs. Image, video, and audio URLs may be video-generation references, but no wrapper advertises text generation, image generation, speech, or transcription. The generic MCP/Codex surfaces additionally expose facade account administration; the current ChatGPT `noauth` projection deliberately does not.
 
 ```text
 generic MCP client                  Codex plugin
@@ -61,14 +61,14 @@ generic MCP client                  Codex plugin
 ChatGPT
   | HTTPS Streamable HTTP POST /mcp
   v
-ChatGPT App transport + MCP App result/editor widget
+ChatGPT App transport + MCP App result/regeneration widget
   | safe projection of shared MCP video tools
   | same local resolver / external Facade boundary
   +-------------------------------------> Facade
   `-- GET /media?token=... -------------> protected facade content route
 ```
 
-`@pippit-bridge/mcp-server` owns the canonical definitions, validation and handlers for account list/add/switch/delete, model discovery, generation, structured segment editing, job polling, automatic completed-file materialization, and local download. Completed Codex/stdio results are atomically published under `PIPPIT_MCP_OUTPUT_ROOT`; the download tool realpath-confines an optional caller-supplied additional relative path under the same root and never overwrites an existing file. The ChatGPT App projects exact canonical video tool names and adds file parameters, UI metadata and signed previews; it deliberately omits the local-filesystem and all Management-Key-backed tools.
+`@pippit-bridge/mcp-server` owns the canonical definitions, validation and handlers for account list/add/switch/delete, model discovery, generation, reference-guided regeneration, job polling, automatic completed-file materialization, and local download. Completed Codex/stdio results are atomically published under `PIPPIT_MCP_OUTPUT_ROOT`; absolute paths stay server-side while the widget receives only an opaque filename and MCP resource URI. The download tool realpath-confines an optional caller-supplied additional relative path under the same root and never overwrites an existing file. The ChatGPT App projects exact canonical video tool names and adds file parameters, UI metadata and signed previews; it deliberately omits the local-filesystem and all Management-Key-backed tools.
 
 Raw Pippit AK is not a normal MCP tool argument. `pippit_add_access_key` creates a bounded, high-entropy, one-time loopback enrollment URL. Its password form POSTs directly to the MCP process, which uses the distinct Management key only on `/api/v1/byok/**`. Runtime Facade API Key and Management API Key are never substituted for one another. The MCP process does not persist another copy of the AK.
 
@@ -80,9 +80,9 @@ The encrypted facade BYOK state stores active credential selections keyed by the
 
 The Codex plugin root is `packages/mcp-server-pippit`. Its `.codex-plugin/plugin.json`, `.mcp.json`, `plugin-entry.mjs`, skills, assets, stdio runtime, and bundled local Facade are installed as one self-contained unit. The shim prefers compiled `dist/stdio.js` in an npm package and falls back to `src/stdio.ts` in an unbuilt repo checkout; a packaged install neither resolves monorepo siblings nor runs `npm install` on first start. The repo marketplace at `.agents/plugins/marketplace.json` points to that package; no second copy of the MCP implementation is maintained. Codex has no trusted arbitrary postinstall/secret-injection surface here, so automatic setup occurs on first capability use.
 
-The local ChatGPT App resolves the same user-level Facade and internal media-signing key at server startup, but explicitly removes the Management key before building its configuration. It registers only `/mcp`, a versioned result/editor widget resource, and the four safe video tools. Its current `noauth` declaration is a developer-mode boundary for local or controlled-tunnel use. A public, multi-user deployment still requires a reachable HTTPS service, a separately registered real App ID, OAuth 2.1 MCP resource-server validation, scopes, per-user mapping, remote persistence, and a secret manager; local plugin installation cannot create those production identity surfaces.
+The local ChatGPT App resolves the same user-level Facade and internal media-signing key at server startup, but explicitly removes the Management key before building its configuration. It registers only `/mcp`, a versioned result/regeneration widget resource, and the four safe video tools. Its current `noauth` declaration is a developer-mode boundary for local or controlled-tunnel use. A public, multi-user deployment still requires a reachable HTTPS service, a separately registered real App ID, OAuth 2.1 MCP resource-server validation, scopes, per-user mapping, remote persistence, and a secret manager; local plugin installation cannot create those production identity surfaces.
 
-The edit contract carries `source_job_id`, output index, a segment no longer than 30 seconds, timestamped intrinsic-video normalized rectangles, and global/local instructions. The facade resolves the source through the signed job boundary and submits a new asynchronous `pippit_video_part_agent` job. The currently documented upstream protocol has no hard-trim or pixel-mask field, so the complete source result is uploaded and the segment/ROI data is compiled into deterministic provider instructions. The UI must not claim that unselected bytes were omitted or that a pixel-exact mask was enforced.
+The stable `pippit_edit_video_segment` contract carries `source_job_id`, output index, a segment no longer than 30 seconds, timestamped intrinsic-video normalized rectangles, and global/local instructions. The facade resolves and uploads the complete source through the signed job boundary as the only video reference, compiles the guidance into the prompt, and submits a new asynchronous `pippit_video_part_agent` generation job. The currently documented upstream protocol has no hard-trim or pixel-mask field, so the UI presents this as regeneration and must not claim an in-place edit, omitted unselected bytes, or a pixel-exact mask.
 
 An Apps SDK registration creates a real identifier beginning with `plugin_asdk_app`. The repository therefore keeps only `apps/chatgpt-app/.app.json.example`. Until a real ID exists, the Codex plugin manifest must not claim an `apps` component. After registration, a real `packages/mcp-server-pippit/.app.json` may be created and the manifest may point `apps` at it; placeholder IDs are not a distributable integration.
 
