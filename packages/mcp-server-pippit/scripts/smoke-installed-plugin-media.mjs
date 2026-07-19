@@ -70,13 +70,14 @@ const facadeAddress = facade.address()
 if (facadeAddress === null || typeof facadeAddress === "string") throw new Error("The fake Facade did not bind TCP.")
 const facadeOrigin = `http://127.0.0.1:${facadeAddress.port}`
 
+const pluginEnv = {
+  PATH: process.env.PATH ?? "",
+  PIPPIT_FACADE_API_KEY: facadeApiKey,
+  PIPPIT_FACADE_BASE_URL: facadeOrigin,
+  PIPPIT_MCP_OUTPUT_ROOT: outputRoot,
+}
 const child = spawn(process.execPath, [entryPath], {
-  env: {
-    PATH: process.env.PATH ?? "",
-    PIPPIT_FACADE_API_KEY: facadeApiKey,
-    PIPPIT_FACADE_BASE_URL: facadeOrigin,
-    PIPPIT_MCP_OUTPUT_ROOT: outputRoot,
-  },
+  env: pluginEnv,
   stdio: ["pipe", "pipe", "pipe"],
 })
 const lines = createInterface({ input: child.stdout, terminal: false })
@@ -150,6 +151,89 @@ async function readMediaResource(resourceUri, totalBytes) {
   return Buffer.concat(chunks)
 }
 
+async function readMediaThroughFreshAppTool(resourceUri, totalBytes) {
+  const fresh = spawn(process.execPath, [entryPath], {
+    env: pluginEnv,
+    stdio: ["pipe", "pipe", "pipe"],
+  })
+  const freshLines = createInterface({ input: fresh.stdout, terminal: false })
+  const freshPending = new Map()
+  let freshNextId = 1
+  let freshStderr = ""
+  fresh.stderr.setEncoding("utf8").on("data", (chunk) => { freshStderr += chunk })
+  freshLines.on("line", (line) => {
+    const response = JSON.parse(line)
+    const waiter = freshPending.get(response.id)
+    if (waiter === undefined) return
+    freshPending.delete(response.id)
+    if (response.error) waiter.reject(new Error(response.error.message ?? "MCP request failed"))
+    else waiter.resolve(response.result)
+  })
+  const freshRpc = (method, params = {}) => {
+    const id = freshNextId++
+    return new Promise((resolveRpc, rejectRpc) => {
+      const timer = setTimeout(() => {
+        freshPending.delete(id)
+        rejectRpc(new Error(`${method} timed out in the fresh plugin process`))
+      }, 15_000)
+      freshPending.set(id, {
+        reject(error) { clearTimeout(timer); rejectRpc(error) },
+        resolve(value) { clearTimeout(timer); resolveRpc(value) },
+      })
+      fresh.stdin.write(`${JSON.stringify({ id, jsonrpc: "2.0", method, params })}\n`)
+    })
+  }
+  let restored
+  try {
+    await freshRpc("initialize", {
+      capabilities: {},
+      clientInfo: { name: "installed-media-session-restore", version: "1" },
+      protocolVersion: "2025-11-25",
+    })
+    const tools = (await freshRpc("tools/list"))?.tools ?? []
+    const chunkTool = tools.find((tool) => tool.name === "pippit_read_video_chunk")
+    if (
+      JSON.stringify(chunkTool?._meta?.ui?.visibility) !== JSON.stringify(["app"]) ||
+      chunkTool?._meta?.["openai/widgetAccessible"] !== true
+    ) {
+      throw new Error("The fresh plugin process did not expose an app-only media reader.")
+    }
+    const chunks = []
+    const chunkBytes = 1024 * 1024
+    for (let offset = 0; offset < totalBytes; offset += chunkBytes) {
+      const expectedBytes = Math.min(chunkBytes, totalBytes - offset)
+      const result = await freshRpc("tools/call", {
+        arguments: { length: expectedBytes, offset, resource_uri: resourceUri },
+        name: "pippit_read_video_chunk",
+      })
+      const content = result?.structuredContent
+      if (
+        result?.isError === true ||
+        content?.resource_uri !== resourceUri ||
+        content?.offset !== offset ||
+        content?.bytes !== expectedBytes ||
+        content?.total_bytes !== totalBytes ||
+        content?.complete !== (offset + expectedBytes === totalBytes) ||
+        content?.mime_type !== "video/mp4" ||
+        typeof content?.blob !== "string"
+      ) {
+        throw new Error("The fresh plugin process returned an invalid app-only media chunk.")
+      }
+      chunks.push(Buffer.from(content.blob, "base64"))
+    }
+    restored = Buffer.concat(chunks)
+  } finally {
+    fresh.stdin.end()
+    await Promise.race([
+      once(fresh, "close"),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("The fresh plugin process did not stop.")), 5_000)),
+    ])
+    freshLines.close()
+  }
+  if (freshStderr !== "") throw new Error("The fresh plugin process wrote unexpected stderr output.")
+  return restored
+}
+
 let localPath
 let resourceUri
 try {
@@ -158,9 +242,9 @@ try {
     clientInfo: { name: "installed-media-smoke", version: "1" },
     protocolVersion: "2025-11-25",
   })
-  if (initialized?.serverInfo?.version !== "0.2.9") throw new Error("Unexpected installed plugin version.")
-  const resource = await rpc("resources/read", { uri: "ui://widget/pippit-video-job-v10.html" })
-  if (!resource?.contents?.[0]?.text?.includes("pippit-video-editor")) throw new Error("Missing v10 widget resource.")
+  if (initialized?.serverInfo?.version !== "0.2.11") throw new Error("Unexpected installed plugin version.")
+  const resource = await rpc("resources/read", { uri: "ui://widget/pippit-video-job-v12.html" })
+  if (!resource?.contents?.[0]?.text?.includes("pippit-video-editor")) throw new Error("Missing v12 widget resource.")
   const result = await rpc("tools/call", {
     arguments: { job_id: "job_installed_media" },
     name: "pippit_get_video",
@@ -206,7 +290,16 @@ try {
   if (stderr !== "") throw new Error("The installed plugin wrote unexpected stderr output.")
   const retained = await lstat(localPath)
   if (!retained.isFile() || retained.size !== mediaBytes.byteLength) throw new Error("The local MP4 disappeared at plugin EOF.")
-  process.stdout.write(`${JSON.stringify({ event: "complete", file_retained: true, resource_transport: true })}\n`)
+  const restoredBytes = await readMediaThroughFreshAppTool(resourceUri, mediaBytes.byteLength)
+  const restoredDigest = createHash("sha256").update(restoredBytes).digest("hex")
+  if (restoredDigest !== mediaDigest) throw new Error("The fresh plugin process changed the persisted MP4.")
+  process.stdout.write(`${JSON.stringify({
+    app_tool_transport: true,
+    event: "complete",
+    file_retained: true,
+    resource_transport: true,
+    session_restore: true,
+  })}\n`)
 } finally {
   lines.close()
   if (child.exitCode === null) child.kill("SIGTERM")

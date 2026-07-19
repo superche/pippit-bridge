@@ -32,6 +32,7 @@ export interface PippitWidgetMediaBackend {
 export interface PippitWidgetMediaServer extends PippitMcpResourceProvider {
   close(): Promise<void>
   preparePreview(jobId: string, index: number): Promise<PippitPreparedWidgetMedia>
+  readChunk(resourceUri: string, offset: number, length: number): Promise<PippitWidgetMediaChunk | undefined>
 }
 
 export interface PippitPreparedWidgetMedia {
@@ -39,6 +40,16 @@ export interface PippitPreparedWidgetMedia {
   readonly filename: string
   readonly localPath: string
   readonly resourceUri: string
+}
+
+export interface PippitWidgetMediaChunk {
+  readonly blob: string
+  readonly bytes: number
+  readonly complete: boolean
+  readonly mimeType: "video/mp4"
+  readonly offset: number
+  readonly resourceUri: string
+  readonly totalBytes: number
 }
 
 export interface PippitWidgetMediaServerOptions {
@@ -60,6 +71,7 @@ interface ArtifactResourceRequest {
   readonly artifactId: string
   readonly length: number
   readonly offset: number
+  readonly resourceUri: string
 }
 
 function playableContentType(value: string | null): boolean {
@@ -81,7 +93,7 @@ function artifactResourceUri(id: string): string {
   return `${ARTIFACT_RESOURCE_PROTOCOL}//${ARTIFACT_RESOURCE_HOST}/${id}`
 }
 
-function parseArtifactResourceUri(uri: string, maxChunkBytes: number): ArtifactResourceRequest | undefined {
+function parseArtifactResourceIdentity(uri: string): string | undefined {
   let parsed: URL
   try {
     parsed = new URL(uri)
@@ -94,13 +106,24 @@ function parseArtifactResourceUri(uri: string, maxChunkBytes: number): ArtifactR
     parsed.port !== "" ||
     parsed.username !== "" ||
     parsed.password !== "" ||
-    parsed.hash !== ""
+    parsed.hash !== "" ||
+    parsed.search !== ""
   ) return undefined
   const resourceArtifactId = parsed.pathname.slice(1)
   if (
     !ARTIFACT_ID_PATTERN.test(resourceArtifactId) ||
     parsed.pathname !== `/${resourceArtifactId}`
   ) return undefined
+  return resourceArtifactId
+}
+
+function parseArtifactResourceUri(uri: string, maxChunkBytes: number): ArtifactResourceRequest | undefined {
+  let parsed: URL
+  try {
+    parsed = new URL(uri)
+  } catch {
+    return undefined
+  }
   const keys = [...parsed.searchParams.keys()]
   if (
     keys.length !== 2 ||
@@ -117,17 +140,18 @@ function parseArtifactResourceUri(uri: string, maxChunkBytes: number): ArtifactR
     length > maxChunkBytes ||
     offset < 0
   ) return undefined
-  return { artifactId: resourceArtifactId, length, offset }
+  parsed.search = ""
+  const resourceUri = parsed.toString()
+  const resourceArtifactId = parseArtifactResourceIdentity(resourceUri)
+  if (resourceArtifactId === undefined) return undefined
+  return { artifactId: resourceArtifactId, length, offset, resourceUri }
 }
 
-async function readArtifactResource(
-  uri: string,
+async function readArtifactChunk(
+  request: ArtifactResourceRequest,
   resolveRoot: () => Promise<string>,
   maxReadableBytes: number,
-  maxChunkBytes: number,
-): Promise<Readonly<Record<string, unknown>> | undefined> {
-  const request = parseArtifactResourceUri(uri, maxChunkBytes)
-  if (request === undefined) return undefined
+): Promise<PippitWidgetMediaChunk | undefined> {
   const root = await resolveRoot()
   let handle: FileHandle
   try {
@@ -163,24 +187,45 @@ async function readArtifactResource(
       bytesRead += next.bytesRead
     }
     return {
-      contents: [
-        {
-          _meta: {
-            "pippit/chunk": {
-              bytes: bytesRead,
-              complete: request.offset + bytesRead === stats.size,
-              offset: request.offset,
-              total_bytes: stats.size,
-            },
-          },
-          blob: buffer.toString("base64"),
-          mimeType: "video/mp4",
-          uri,
-        },
-      ],
+      blob: buffer.toString("base64"),
+      bytes: bytesRead,
+      complete: request.offset + bytesRead === stats.size,
+      mimeType: "video/mp4",
+      offset: request.offset,
+      resourceUri: request.resourceUri,
+      totalBytes: stats.size,
     }
   } finally {
     await handle.close()
+  }
+}
+
+async function readArtifactResource(
+  uri: string,
+  resolveRoot: () => Promise<string>,
+  maxReadableBytes: number,
+  maxChunkBytes: number,
+): Promise<Readonly<Record<string, unknown>> | undefined> {
+  const request = parseArtifactResourceUri(uri, maxChunkBytes)
+  if (request === undefined) return undefined
+  const chunk = await readArtifactChunk(request, resolveRoot, maxReadableBytes)
+  if (chunk === undefined) return undefined
+  return {
+    contents: [
+      {
+        _meta: {
+          "pippit/chunk": {
+            bytes: chunk.bytes,
+            complete: chunk.complete,
+            offset: chunk.offset,
+            total_bytes: chunk.totalBytes,
+          },
+        },
+        blob: chunk.blob,
+        mimeType: chunk.mimeType,
+        uri,
+      },
+    ],
   }
 }
 
@@ -442,6 +487,23 @@ export function createPippitWidgetMediaServer(
       }
     },
     preparePreview,
+    async readChunk(resourceUri, offset, length) {
+      if (closed) throw new Error("The widget media server is closed.")
+      const resourceArtifactId = parseArtifactResourceIdentity(resourceUri)
+      if (
+        resourceArtifactId === undefined ||
+        !Number.isSafeInteger(offset) ||
+        !Number.isSafeInteger(length) ||
+        offset < 0 ||
+        length < 1 ||
+        length > maxResourceChunkBytes
+      ) return undefined
+      return await readArtifactChunk(
+        { artifactId: resourceArtifactId, length, offset, resourceUri },
+        resolveArtifactRoot,
+        maxInlinePreviewBytes,
+      )
+    },
     async readResource(uri) {
       if (closed) throw new Error("The widget media server is closed.")
       const widgetResource = pippitWidgetReadResource(uri)

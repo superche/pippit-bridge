@@ -1,6 +1,6 @@
 {
   "name": "pippit-video",
-  "version": "0.2.9",
+  "version": "0.2.11",
   "description": "Manage Pippit accounts and create, inspect, locally save, preview, and regenerate video jobs through one MCP server.",
   "author": {
     "name": "superche"

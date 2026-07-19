@@ -24,7 +24,7 @@ External mode also reads:
 
 In local mode, every completed output is first saved as an ordinary MP4 under `~/Movies/Pippit` on macOS or `~/Videos/Pippit` on other platforms. `PIPPIT_MCP_OUTPUT_ROOT` overrides this location. `PIPPIT_BRIDGE_HOME` is only a test/advanced isolation override; when it is set, outputs stay beneath that isolated root. Never suggest placing outputs in a temporary directory, plugin cache, or project checkout.
 
-For Codex/stdio, the widget reads bounded chunks of the completed MP4 through standard MCP Apps `resources/read`, reconstructs a sandbox-local `blob:` URL, and revokes that URL when the widget changes source or closes. The stable resource identity is derived from the job and output index, so a new stdio process can reopen the same ordinary local file without a stale port. Neither an upstream signed URL nor a local filesystem path is assigned directly to the player.
+For Codex/stdio, the widget reads bounded chunks of the completed MP4 through standard MCP Apps `resources/read`, reconstructs a sandbox-local `blob:` URL, and revokes that URL when the widget changes source or closes. The stable resource identity is derived from the job and output index, so a new stdio process can reopen the same ordinary local file without a stale port. When a historical widget is restored after its original MCP bridge has ended, it falls back to the app-only `pippit_read_video_chunk` transport; this tool is not visible to the model and reads the same persistent artifact with the same 1 MiB, permission, size, and symlink checks. Neither an upstream signed URL nor a local filesystem path is assigned directly to the player. A failed bridge must leave loading within a bounded timeout and show a recoverable player error.
 
 ## Workflow
 

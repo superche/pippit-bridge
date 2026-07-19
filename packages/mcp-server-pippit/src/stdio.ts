@@ -21,6 +21,7 @@ import {
   PIPPIT_RUNTIME_TOOL_DEFINITIONS,
   createPippitToolRuntime,
   type PippitMcpCallToolResult,
+  type PippitToolDefinition,
   type PippitToolRuntime,
 } from "./tools.ts"
 import {
@@ -39,6 +40,86 @@ export interface PippitStdioServerOptions {
   readonly output?: NodeJS.WritableStream
   readonly runtime?: PippitToolRuntime
   readonly widgetMedia?: PippitWidgetMediaServer
+}
+
+export const PIPPIT_READ_VIDEO_CHUNK_TOOL_NAME = "pippit_read_video_chunk"
+
+const MAX_VIDEO_CHUNK_BYTES = 1024 * 1024
+const PIPPIT_READ_VIDEO_CHUNK_TOOL_DEFINITION: PippitToolDefinition = {
+  _meta: {
+    ui: { visibility: ["app"] },
+    "openai/widgetAccessible": true,
+  },
+  annotations: {
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+    readOnlyHint: true,
+    title: "Read saved video chunk",
+  },
+  description: "Read one bounded chunk from a persistent local Pippit MP4 for the Pippit video widget.",
+  inputSchema: {
+    additionalProperties: false,
+    properties: {
+      length: { maximum: MAX_VIDEO_CHUNK_BYTES, minimum: 1, type: "integer" },
+      offset: { minimum: 0, type: "integer" },
+      resource_uri: {
+        pattern: "^pippit-video://artifact/[a-f0-9]{64}$",
+        type: "string",
+      },
+    },
+    required: ["resource_uri", "offset", "length"],
+    type: "object",
+  },
+  name: PIPPIT_READ_VIDEO_CHUNK_TOOL_NAME as PippitToolDefinition["name"],
+  outputSchema: {
+    additionalProperties: false,
+    properties: {
+      blob: { contentEncoding: "base64", type: "string" },
+      bytes: { minimum: 1, type: "integer" },
+      complete: { type: "boolean" },
+      mime_type: { const: "video/mp4", type: "string" },
+      offset: { minimum: 0, type: "integer" },
+      resource_uri: { type: "string" },
+      total_bytes: { minimum: 1, type: "integer" },
+    },
+    required: ["resource_uri", "offset", "bytes", "total_bytes", "complete", "mime_type", "blob"],
+    type: "object",
+  },
+  title: "Read saved video chunk",
+}
+
+interface ReadVideoChunkInput {
+  readonly length: number
+  readonly offset: number
+  readonly resourceUri: string
+}
+
+function parseReadVideoChunkInput(value: unknown): ReadVideoChunkInput | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  if (
+    Object.keys(record).length !== 3 ||
+    typeof record.resource_uri !== "string" ||
+    !Number.isSafeInteger(record.offset) ||
+    !Number.isSafeInteger(record.length) ||
+    (record.offset as number) < 0 ||
+    (record.length as number) < 1 ||
+    (record.length as number) > MAX_VIDEO_CHUNK_BYTES
+  ) return undefined
+  return {
+    length: record.length as number,
+    offset: record.offset as number,
+    resourceUri: record.resource_uri,
+  }
+}
+
+function localVideoChunkFailure(code: string, message: string): PippitMcpCallToolResult {
+  return {
+    content: [{ text: message, type: "text" }],
+    isError: true,
+    structuredContent: { error: { code, message } },
+  }
 }
 
 function parseFailure(): JsonRpcResponse {
@@ -180,6 +261,38 @@ function withWidgetRuntime(
 ): PippitToolRuntime {
   return {
     async callTool(name, argumentsValue) {
+      if (name === PIPPIT_READ_VIDEO_CHUNK_TOOL_NAME) {
+        const input = parseReadVideoChunkInput(argumentsValue)
+        if (input === undefined) {
+          return localVideoChunkFailure("invalid_arguments", "Invalid saved video chunk request.")
+        }
+        try {
+          const chunk = await widgetMedia.readChunk(input.resourceUri, input.offset, input.length)
+          if (chunk === undefined) {
+            return localVideoChunkFailure(
+              "local_media_chunk_unavailable",
+              "The saved local video chunk is unavailable.",
+            )
+          }
+          return {
+            content: [],
+            structuredContent: {
+              blob: chunk.blob,
+              bytes: chunk.bytes,
+              complete: chunk.complete,
+              mime_type: chunk.mimeType,
+              offset: chunk.offset,
+              resource_uri: chunk.resourceUri,
+              total_bytes: chunk.totalBytes,
+            },
+          }
+        } catch {
+          return localVideoChunkFailure(
+            "local_media_chunk_unavailable",
+            "The saved local video chunk is unavailable.",
+          )
+        }
+      }
       const result = await runtime.callTool(name, argumentsValue)
       try {
         return await projectPippitWidgetResult(result, (jobId, index) => widgetMedia.preparePreview(jobId, index))
@@ -195,7 +308,10 @@ function withWidgetRuntime(
       }
     },
     listTools() {
-      return withPippitWidgetTools(runtime.listTools())
+      return [
+        ...withPippitWidgetTools(runtime.listTools()),
+        PIPPIT_READ_VIDEO_CHUNK_TOOL_DEFINITION,
+      ]
     },
   }
 }

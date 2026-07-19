@@ -145,7 +145,7 @@ export function adjustWidgetRegionFromKey(
   return { handled: true, region: next }
 }
 
-export const PIPPIT_WIDGET_URI = "ui://widget/pippit-video-job-v10.html"
+export const PIPPIT_WIDGET_URI = "ui://widget/pippit-video-job-v12.html"
 
 /**
  * A dependency-free MCP App. Business actions always call the shared MCP
@@ -693,6 +693,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       var MAX_ANNOTATIONS = 20;
       var MAX_LOCAL_PREVIEW_BYTES = 256 * 1024 * 1024;
       var LOCAL_PREVIEW_CHUNK_BYTES = 1024 * 1024;
+      var LOCAL_RESOURCE_REQUEST_TIMEOUT_MS = 5000;
       var MAX_SEGMENT_MS = 30000;
       var DEFAULT_REQUEST_TIMEOUT_MS = 15000;
       var VIDEO_TOOL_REQUEST_TIMEOUT_MS = ${PIPPIT_DEFAULT_FACADE_TIMEOUT_MS};
@@ -702,6 +703,10 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         "pippit_download_video",
         "pippit_edit_video_segment"
       ]);
+      var RETRY_SAFE_TOOL_NAMES = new Set([
+        "pippit_get_video",
+        "pippit_read_video_chunk"
+      ]);
       var protocolVersion = "2026-01-26";
       var nextId = 1;
       var pending = new Map();
@@ -709,6 +714,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       var protocolReady = false;
       var serverResourcesAvailable = false;
       var serverToolsAvailable = false;
+      var resourceBridgeDemoted = false;
       var hostContext = {};
       var activeJobId;
       var activeModel;
@@ -832,7 +838,14 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
             timer: timer
           };
           clientRequests.add(state);
-          Promise.resolve().then(task).then(function (value) {
+          var taskResult;
+          try {
+            taskResult = task();
+          } catch (error) {
+            state.cancel(error);
+            return;
+          }
+          Promise.resolve(taskResult).then(function (value) {
             if (settled) return;
             settled = true;
             clientRequests.delete(state);
@@ -848,14 +861,30 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         var timeoutMs = VIDEO_TOOL_NAMES.has(name)
           ? VIDEO_TOOL_REQUEST_TIMEOUT_MS
           : DEFAULT_REQUEST_TIMEOUT_MS;
-        if (serverToolsAvailable) {
-          return request("tools/call", { name: name, arguments: args }, timeoutMs);
-        }
-        if (window.openai && typeof window.openai.callTool === "function") {
+        var legacyAvailable = Boolean(window.openai && typeof window.openai.callTool === "function");
+        function callLegacy() {
           return withClientTimeout(function () {
             return window.openai.callTool(name, args);
           }, timeoutMs);
         }
+        if (name === "pippit_read_video_chunk" && legacyAvailable) {
+          return callLegacy().catch(function (error) {
+            if (serverToolsAvailable) {
+              return request("tools/call", { name: name, arguments: args }, timeoutMs);
+            }
+            throw error;
+          });
+        }
+        if (!protocolReady && RETRY_SAFE_TOOL_NAMES.has(name) && legacyAvailable) {
+          return callLegacy();
+        }
+        if (serverToolsAvailable) {
+          return request("tools/call", { name: name, arguments: args }, timeoutMs).catch(function (error) {
+            if (RETRY_SAFE_TOOL_NAMES.has(name) && legacyAvailable) return callLegacy();
+            throw error;
+          });
+        }
+        if (legacyAvailable) return callLegacy();
         return Promise.reject(new Error("This host cannot call Pippit tools from the widget."));
       }
 
@@ -880,6 +909,82 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         return bytes;
       }
 
+      function localPreviewTransportAvailable() {
+        return (
+          (protocolReady && (serverResourcesAvailable || serverToolsAvailable)) ||
+          Boolean(window.openai && typeof window.openai.callTool === "function")
+        );
+      }
+
+      function appChunkContent(result, resourceUri, offset, expectedBytes, totalBytes) {
+        var value = result && result.structuredContent && typeof result.structuredContent === "object"
+          ? result.structuredContent
+          : undefined;
+        if (
+          !value ||
+          value.resource_uri !== resourceUri ||
+          value.offset !== offset ||
+          value.bytes !== expectedBytes ||
+          value.total_bytes !== totalBytes ||
+          typeof value.blob !== "string"
+        ) {
+          throw new Error("The local video tool response is invalid.");
+        }
+        return {
+          _meta: {
+            "pippit/chunk": {
+              bytes: value.bytes,
+              complete: value.complete,
+              offset: value.offset,
+              total_bytes: value.total_bytes
+            }
+          },
+          blob: value.blob,
+          mimeType: "video/mp4",
+          uri: resourceChunkUri(resourceUri, offset, expectedBytes)
+        };
+      }
+
+      async function readLocalPreviewChunk(resourceUri, offset, expectedBytes, totalBytes) {
+        var uri = resourceChunkUri(resourceUri, offset, expectedBytes);
+        if (protocolReady && serverResourcesAvailable && !resourceBridgeDemoted) {
+          try {
+            var resourceResult = await request(
+              "resources/read",
+              { uri: uri },
+              LOCAL_RESOURCE_REQUEST_TIMEOUT_MS
+            );
+            var resourceContent = resourceResult && Array.isArray(resourceResult.contents)
+              ? resourceResult.contents[0]
+              : undefined;
+            var resourceMeta = resourceContent && resourceContent._meta && typeof resourceContent._meta === "object"
+              ? resourceContent._meta["pippit/chunk"]
+              : undefined;
+            if (
+              resourceContent &&
+              resourceContent.uri === uri &&
+              resourceContent.mimeType === "video/mp4" &&
+              resourceMeta &&
+              resourceMeta.offset === offset &&
+              resourceMeta.bytes === expectedBytes &&
+              resourceMeta.total_bytes === totalBytes &&
+              resourceMeta.complete === (offset + expectedBytes === totalBytes) &&
+              typeof resourceContent.blob === "string"
+            ) return resourceContent;
+          } catch (_error) {}
+          resourceBridgeDemoted = true;
+        }
+        var toolResult = await callTool("pippit_read_video_chunk", {
+          length: expectedBytes,
+          offset: offset,
+          resource_uri: resourceUri
+        });
+        if (!toolResult || toolResult.isError) {
+          throw new Error("The saved local video could not be reopened.");
+        }
+        return appChunkContent(toolResult, resourceUri, offset, expectedBytes, totalBytes);
+      }
+
       function revokePreviewObjectUrl() {
         if (!previewObjectUrl) return;
         URL.revokeObjectURL(previewObjectUrl);
@@ -894,17 +999,18 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         if (totalBytes > MAX_LOCAL_PREVIEW_BYTES) {
           throw new Error("The local video is too large for an inline preview.");
         }
-        if (!serverResourcesAvailable) {
-          throw new Error("This host cannot read local MCP media resources.");
-        }
         var chunks = [];
         var offset = 0;
         while (offset < totalBytes) {
           if (destroyed || generation !== previewLoadGeneration) return;
           var expectedBytes = Math.min(LOCAL_PREVIEW_CHUNK_BYTES, totalBytes - offset);
           var uri = resourceChunkUri(media.resource_uri, offset, expectedBytes);
-          var result = await request("resources/read", { uri: uri });
-          var content = result && Array.isArray(result.contents) ? result.contents[0] : undefined;
+          var content = await readLocalPreviewChunk(
+            media.resource_uri,
+            offset,
+            expectedBytes,
+            totalBytes
+          );
           if (!content || content.uri !== uri || content.mimeType !== "video/mp4") {
             throw new Error("The local video resource response is invalid.");
           }
@@ -943,8 +1049,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           !activeJobId ||
           !activePreviewMedia ||
           typeof activePreviewMedia.resource_uri !== "string" ||
-          !protocolReady ||
-          !serverResourcesAvailable ||
+          !localPreviewTransportAvailable() ||
           previewRetryCount >= 1
         ) return false;
         previewRetryCount += 1;
@@ -965,6 +1070,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         draftBeforeMediaRefresh = undefined;
         clearPreviewRenewal();
         revokePreviewObjectUrl();
+        showEditor();
         if (!retryLocalPreview()) {
           mediaMessageElement.textContent = "The player could not load this file, but the MP4 is saved locally.";
           mediaMessageElement.hidden = false;
@@ -1146,9 +1252,40 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         return Number(value.toFixed(6));
       }
 
-      function newIdempotencyKey() {
+      function newAnnotationId() {
         if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
-        return "widget-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+        return "annotation-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+      }
+
+      function fallbackPayloadDigest(input) {
+        var seeds = [2166136261, 2246822507, 3266489909, 668265263];
+        for (var index = 0; index < input.length; index += 1) {
+          var code = input.charCodeAt(index);
+          for (var seedIndex = 0; seedIndex < seeds.length; seedIndex += 1) {
+            seeds[seedIndex] = Math.imul(seeds[seedIndex] ^ code, 16777619 + seedIndex * 2) >>> 0;
+          }
+        }
+        return seeds.map(function (value) { return value.toString(16).padStart(8, "0"); }).join("");
+      }
+
+      async function stableEditIdempotencyKey(payload) {
+        var input = JSON.stringify(payload);
+        if (
+          window.crypto &&
+          window.crypto.subtle &&
+          typeof window.crypto.subtle.digest === "function" &&
+          typeof TextEncoder === "function"
+        ) {
+          try {
+            var digest = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+            var digestBytes = new Uint8Array(digest);
+            var hex = Array.from(digestBytes).map(function (value) {
+              return value.toString(16).padStart(2, "0");
+            }).join("");
+            return "widget-edit-v1-" + hex;
+          } catch (_error) {}
+        }
+        return "widget-edit-v1-fallback-" + fallbackPayloadDigest(input);
       }
 
       function markDraftChanged() {
@@ -1505,7 +1642,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           return;
         }
         annotations.push({
-          id: newIdempotencyKey(),
+          id: newAnnotationId(),
           at_ms: annotationAtCurrentTime(),
           instruction: instruction,
           region: pendingRegion
@@ -1621,7 +1758,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           revokePreviewObjectUrl();
           mediaMessageElement.textContent = "Loading the saved local video…";
           mediaMessageElement.hidden = false;
-          if (!protocolReady) {
+          if (!localPreviewTransportAvailable()) {
             pendingPreviewRetry = true;
             showLoading("completed");
           } else {
@@ -1705,8 +1842,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         if (submitting || !sourceJobId || !activeModel) return;
         var prompt = promptElement.value.trim();
         if (prompt === "" && annotations.length === 0) return;
-        if (!editIdempotencyKey) editIdempotencyKey = newIdempotencyKey();
-        var args = {
+        var payload = {
           source_job_id: sourceJobId,
           source_index: sourceIndex,
           segment: { start_ms: segmentStartMs, end_ms: segmentEndMs },
@@ -1717,10 +1853,9 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
               region: annotation.region
             };
           }),
-          model: activeModel,
-          idempotency_key: editIdempotencyKey
+          model: activeModel
         };
-        if (prompt !== "") args.prompt = prompt;
+        if (prompt !== "") payload.prompt = prompt;
         submitting = true;
         generationEpoch += 1;
         clearPollTimer();
@@ -1729,9 +1864,12 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         submitEditElement.textContent = "Preparing reference…";
         showLoading("pending");
         statusElement.textContent = "Starting regenerated video…";
-        void requestDisplayMode("inline");
         try {
-          var result = await callTool("pippit_edit_video_segment", args);
+          if (!editIdempotencyKey) editIdempotencyKey = await stableEditIdempotencyKey(payload);
+          var args = Object.assign({}, payload, { idempotency_key: editIdempotencyKey });
+          var editRequest = callTool("pippit_edit_video_segment", args);
+          void requestDisplayMode("inline");
+          var result = await editRequest;
           if (!result || result.isError) {
             showEditor();
             setEditError(toolErrorText(result));
@@ -1759,8 +1897,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       }
 
       async function requestDisplayMode(mode) {
-        var modes = Array.isArray(hostContext.availableDisplayModes) ? hostContext.availableDisplayModes : [];
-        if (protocolReady && modes.includes(mode)) {
+        if (protocolReady) {
           try {
             var result = await request("ui/request-display-mode", { mode: mode });
             if (result && typeof result.mode === "string") {
@@ -1969,7 +2106,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       fallbackTimer = window.setTimeout(useOpenAiInitialResult, 1200);
       request("ui/initialize", {
         protocolVersion: protocolVersion,
-        appInfo: { name: "pippit-video-editor", title: "Pippit video regeneration", version: "0.2.9" },
+        appInfo: { name: "pippit-video-editor", title: "Pippit video regeneration", version: "0.2.11" },
         appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] }
       }).then(function (result) {
         protocolReady = true;
@@ -1997,6 +2134,19 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         reportSize();
       }).catch(function () {
         useOpenAiInitialResult();
+        if (pendingPreviewRetry) {
+          pendingPreviewRetry = false;
+          if (
+            localPreviewTransportAvailable() &&
+            activeJobId &&
+            activePreviewMedia &&
+            typeof activePreviewMedia.resource_uri === "string"
+          ) {
+            setPreview({ id: activeJobId }, activePreviewMedia);
+          } else if (previewLoading) {
+            localPreviewFailed();
+          }
+        }
         schedulePoll(0);
       });
     }());

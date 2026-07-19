@@ -12,7 +12,7 @@ import {
 
 describe("Pippit MCP App widget", () => {
   it("uses the stable MCP App resource contract", () => {
-    expect(PIPPIT_WIDGET_URI).toBe("ui://widget/pippit-video-job-v10.html")
+    expect(PIPPIT_WIDGET_URI).toBe("ui://widget/pippit-video-job-v12.html")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/initialize")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/notifications/initialized")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/notifications/tool-result")
@@ -21,7 +21,7 @@ describe("Pippit MCP App widget", () => {
     expect(PIPPIT_WIDGET_HTML).toContain('request("tools/call"')
     expect(PIPPIT_WIDGET_HTML).toContain("Boolean(capabilities.serverTools)")
     expect(PIPPIT_WIDGET_HTML).toContain("Boolean(capabilities.serverResources)")
-    expect(PIPPIT_WIDGET_HTML).toContain("modes.includes(mode)")
+    expect(PIPPIT_WIDGET_HTML).not.toContain("modes.includes(mode)")
     expect(PIPPIT_WIDGET_HTML).toContain('request("ui/request-display-mode"')
     expect(PIPPIT_WIDGET_HTML).toContain('requestDisplayMode("inline")')
     expect(PIPPIT_WIDGET_HTML).toContain("window.openai.requestDisplayMode")
@@ -40,6 +40,7 @@ describe("Pippit MCP App widget", () => {
       expect(PIPPIT_WIDGET_HTML).toContain(`"${name}"`)
     }
     expect(PIPPIT_WIDGET_HTML).toContain("VIDEO_TOOL_NAMES.has(name)")
+    expect(PIPPIT_WIDGET_HTML).toContain("RETRY_SAFE_TOOL_NAMES.has(name)")
     expect(PIPPIT_WIDGET_HTML).toContain('request("tools/call", { name: name, arguments: args }, timeoutMs)')
     expect(PIPPIT_WIDGET_HTML).toContain("window.openai.toolOutput")
     expect(PIPPIT_WIDGET_HTML).toContain("window.openai.callTool")
@@ -48,7 +49,15 @@ describe("Pippit MCP App widget", () => {
   it("renders only metadata-provided HTTPS or local MCP resource previews", () => {
     expect(PIPPIT_WIDGET_HTML).toContain('meta["pippit/media"]')
     expect(PIPPIT_WIDGET_HTML).toContain("typeof item.resource_uri")
-    expect(PIPPIT_WIDGET_HTML).toContain('request("resources/read"')
+    expect(PIPPIT_WIDGET_HTML).toContain('"resources/read"')
+    expect(PIPPIT_WIDGET_HTML).toContain('callTool("pippit_read_video_chunk"')
+    expect(PIPPIT_WIDGET_HTML).toContain('name === "pippit_read_video_chunk"')
+    expect(PIPPIT_WIDGET_HTML).toContain("localPreviewTransportAvailable()")
+    expect(PIPPIT_WIDGET_HTML).toContain("LOCAL_RESOURCE_REQUEST_TIMEOUT_MS = 5000")
+    expect(PIPPIT_WIDGET_HTML).toContain("var resourceBridgeDemoted = false")
+    expect(PIPPIT_WIDGET_HTML).toContain("resourceBridgeDemoted = true")
+    expect(PIPPIT_WIDGET_HTML).toContain("serverResourcesAvailable && !resourceBridgeDemoted")
+    expect(PIPPIT_WIDGET_HTML).toContain("showEditor();\n        if (!retryLocalPreview())")
     expect(PIPPIT_WIDGET_HTML).not.toContain("unsigned_urls")
   })
 
@@ -67,6 +76,9 @@ describe("Pippit MCP App widget", () => {
     expect(PIPPIT_WIDGET_HTML).toContain("openAnnotationPopover();")
     expect(PIPPIT_WIDGET_HTML).toContain("Delete annotation")
     expect(PIPPIT_WIDGET_HTML).toContain("annotations.length >= MAX_ANNOTATIONS")
+    expect(PIPPIT_WIDGET_HTML).toContain("function newAnnotationId()")
+    expect(PIPPIT_WIDGET_HTML).toContain("id: newAnnotationId()")
+    expect(PIPPIT_WIDGET_HTML).not.toContain("newIdempotencyKey()")
     expect(PIPPIT_WIDGET_HTML).toContain("Math.min(pendingRegion.width, 1 - x)")
     expect(PIPPIT_WIDGET_HTML).toContain("Math.min(pendingRegion.height, 1 - y)")
     expect(PIPPIT_WIDGET_HTML).toContain("The current video is the reference.")
@@ -324,6 +336,9 @@ describe("Pippit MCP App widget", () => {
     expect(submitSource).not.toContain("videoElement.src")
     expect(submitSource).toContain("if (submitting")
     expect(submitSource).toContain("if (!editIdempotencyKey)")
+    expect(submitSource).toContain("await stableEditIdempotencyKey(payload)")
+    expect(PIPPIT_WIDGET_HTML).toContain('window.crypto.subtle.digest("SHA-256"')
+    expect(PIPPIT_WIDGET_HTML).toContain('return "widget-edit-v1-fallback-"')
     expect(submitSource).toContain("setEditError(toolErrorText(result))")
     expect(submitSource).toContain('showLoading("pending")')
     expect(submitSource).toContain('requestDisplayMode("inline")')
@@ -333,8 +348,8 @@ describe("Pippit MCP App widget", () => {
     expect(submitSource.indexOf('showLoading("pending")')).toBeLessThan(
       submitSource.indexOf('callTool("pippit_edit_video_segment", args)'),
     )
-    expect(submitSource.indexOf('requestDisplayMode("inline")')).toBeLessThan(
-      submitSource.indexOf('callTool("pippit_edit_video_segment", args)'),
+    expect(submitSource.indexOf('callTool("pippit_edit_video_segment", args)')).toBeLessThan(
+      submitSource.indexOf('requestDisplayMode("inline")'),
     )
     expect(submitSource.indexOf("render(result)")).toBeGreaterThan(
       submitSource.indexOf('callTool("pippit_edit_video_segment", args)'),

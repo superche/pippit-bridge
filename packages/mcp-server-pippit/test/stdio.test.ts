@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest"
 
 import { defaultPippitOutputDirectory } from "../src/options.ts"
 import {
+  PIPPIT_READ_VIDEO_CHUNK_TOOL_NAME,
   isPippitStdioEntrypoint,
   resolvePippitStdioMediaOutputRoot,
   runPippitStdioServer,
@@ -104,6 +105,7 @@ describe("Pippit stdio entrypoint", () => {
         async close() {},
         async listResources() { return { resources: [] } },
         async preparePreview() { throw new Error("not used") },
+        async readChunk() { return undefined },
         async readResource() { throw new Error("disk read failed") },
       },
     })
@@ -255,14 +257,67 @@ describe("Pippit stdio entrypoint", () => {
         artifactRoot: outputRoot,
         backend: { downloadVideo: shouldNotDownload },
       })
+      const restartedInput = new PassThrough()
+      const restartedOutput = new PassThrough()
+      let restartedStdout = ""
+      restartedOutput.setEncoding("utf8").on("data", (value: string) => {
+        restartedStdout += value
+      })
+      const facadeCall = vi.fn(async () => {
+        throw new Error("the facade runtime must not be initialized")
+      })
+      const restartedRunning = runPippitStdioServer({
+        input: restartedInput,
+        output: restartedOutput,
+        runtime: { callTool: facadeCall, listTools: () => [] },
+        widgetMedia: restarted,
+      })
       try {
-        const recovered = await restarted.readResource(chunkUri.toString()) as {
-          contents?: Array<{ blob?: string }>
-        } | undefined
-        expect(new Uint8Array(Buffer.from(recovered?.contents?.[0]?.blob ?? "", "base64"))).toEqual(bytes.slice(4))
+        restartedInput.write([
+          JSON.stringify({ id: 1, jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-11-25" } }),
+          JSON.stringify({ id: 2, jsonrpc: "2.0", method: "tools/list" }),
+          JSON.stringify({
+            id: 3,
+            jsonrpc: "2.0",
+            method: "tools/call",
+            params: {
+              arguments: { length: 4, offset: 4, resource_uri: previews[0]!.resource_uri },
+              name: PIPPIT_READ_VIDEO_CHUNK_TOOL_NAME,
+            },
+          }),
+          "",
+        ].join("\n"))
+        await vi.waitFor(() => expect(restartedStdout.trim().split("\n")).toHaveLength(3))
+        restartedInput.end()
+        await restartedRunning
+        const restartedResponses = restartedStdout.trim().split("\n").map(line => JSON.parse(line) as {
+          id: number
+          result: { structuredContent?: Record<string, unknown>; tools?: Array<Record<string, unknown>> }
+        })
+        const tools = restartedResponses.find(response => response.id === 2)?.result.tools ?? []
+        expect(tools).toContainEqual(expect.objectContaining({
+          _meta: {
+            ui: { visibility: ["app"] },
+            "openai/widgetAccessible": true,
+          },
+          name: PIPPIT_READ_VIDEO_CHUNK_TOOL_NAME,
+        }))
+        const recovered = restartedResponses.find(response => response.id === 3)?.result.structuredContent
+        expect(recovered).toEqual({
+          blob: Buffer.from(bytes.slice(4)).toString("base64"),
+          bytes: bytes.byteLength - 4,
+          complete: true,
+          mime_type: "video/mp4",
+          offset: 4,
+          resource_uri: previews[0]!.resource_uri,
+          total_bytes: bytes.byteLength,
+        })
+        expect(JSON.stringify(restartedResponses)).not.toContain(outputRoot)
+        expect(facadeCall).not.toHaveBeenCalled()
         expect(shouldNotDownload).not.toHaveBeenCalled()
       } finally {
-        await restarted.close()
+        restartedInput.end()
+        await restartedRunning.catch(() => undefined)
       }
     } finally {
       input.end()
@@ -306,6 +361,7 @@ describe("Pippit stdio entrypoint", () => {
             resourceUri: `pippit-video://artifact/${String(index).padStart(64, "0")}`,
           }
         },
+        async readChunk() { return undefined },
         async readResource(uri) {
           return uri === PIPPIT_WIDGET_URI
             ? { contents: [{ mimeType: "text/html;profile=mcp-app", text: "<main></main>", uri }] }
@@ -383,6 +439,7 @@ describe("Pippit stdio entrypoint", () => {
         async close() {},
         async listResources() { return { resources: [] } },
         async preparePreview() { throw new Error("disk full") },
+        async readChunk() { return undefined },
         async readResource() { return undefined },
       },
     })

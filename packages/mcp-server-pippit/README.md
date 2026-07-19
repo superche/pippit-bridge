@@ -30,7 +30,7 @@ Set a distinct `PIPPIT_FACADE_MANAGEMENT_API_KEY` only if this external identity
 
 The npm tarball includes compiled stdio code and a self-contained local Facade daemon. Codex's npm marketplace installer does not run package lifecycle scripts, so `prepack` builds these artifacts before publication. A clean installed tarball requires no package install, build step, or secret injection at first use.
 
-The repo-local marketplace is for development. Run `npm run build -w @pippit-bridge/mcp-server` before installing it from a clean checkout. After publishing version `0.2.9`, use the npm marketplace shape in `.agents/plugins/marketplace.npm.example.json` for an end-user install.
+The repo-local marketplace is for development. Run `npm run build -w @pippit-bridge/mcp-server` before installing it from a clean checkout. After publishing version `0.2.11`, use the npm marketplace shape in `.agents/plugins/marketplace.npm.example.json` for an end-user install.
 
 The plugin manifest configures Codex MCP tool calls for a 12-hour timeout. The same default applies to facade requests, reference preparation, generation/regeneration submission, result materialization, and widget video-tool calls. Generic MCP hosts may have their own shorter outer timeout and must opt into an equivalent limit separately.
 

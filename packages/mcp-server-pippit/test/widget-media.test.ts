@@ -102,6 +102,15 @@ describe("Pippit widget media server", () => {
         }],
       })
       expect(await readResourceBytes(media, preview.resourceUri, bytes.byteLength)).toEqual(bytes)
+      await expect(media.readChunk(preview.resourceUri, 3, 3)).resolves.toEqual({
+        blob: Buffer.from(bytes.slice(3, 6)).toString("base64"),
+        bytes: 3,
+        complete: false,
+        mimeType: "video/mp4",
+        offset: 3,
+        resourceUri: preview.resourceUri,
+        totalBytes: bytes.byteLength,
+      })
       expect(downloadVideo).toHaveBeenCalledOnce()
     } finally {
       await media.close()
@@ -125,6 +134,15 @@ describe("Pippit widget media server", () => {
     const restarted = createPippitWidgetMediaServer({ artifactRoot: root, backend: { downloadVideo: shouldNotDownload } })
     try {
       expect(await readResourceBytes(restarted, previews[0]!.resourceUri, bytes.byteLength)).toEqual(bytes)
+      await expect(restarted.readChunk(previews[0]!.resourceUri, 2, 99)).resolves.toEqual({
+        blob: Buffer.from(bytes.slice(2)).toString("base64"),
+        bytes: bytes.byteLength - 2,
+        complete: true,
+        mimeType: "video/mp4",
+        offset: 2,
+        resourceUri: previews[0]!.resourceUri,
+        totalBytes: bytes.byteLength,
+      })
       expect(shouldNotDownload).not.toHaveBeenCalled()
       expect(await artifactFiles(root)).toHaveLength(1)
     } finally {
@@ -224,6 +242,10 @@ describe("Pippit widget media server", () => {
         preview.resourceUri.replace("pippit-video:", "file:"),
       ]
       for (const uri of malformed) expect(await media.readResource(uri)).toBeUndefined()
+      await expect(media.readChunk(`${preview.resourceUri}?offset=0`, 0, 1)).resolves.toBeUndefined()
+      await expect(media.readChunk(preview.resourceUri, -1, 1)).resolves.toBeUndefined()
+      await expect(media.readChunk(preview.resourceUri, 0, 5)).resolves.toBeUndefined()
+      await expect(media.readChunk(preview.resourceUri, bytes.byteLength, 1)).resolves.toBeUndefined()
       expect(await readResourceBytes(media, preview.resourceUri, bytes.byteLength, 4)).toEqual(bytes)
     } finally {
       await media.close()

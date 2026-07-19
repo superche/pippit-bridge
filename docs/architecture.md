@@ -56,7 +56,10 @@ generic MCP client                  Codex plugin
                       |
                       | completed full download
                       v
-       Movies/Videos/Pippit/*.mp4 <----- stdio/plugin loopback media server
+       Movies/Videos/Pippit/*.mp4 <----- persistent artifact store
+                      ^
+                      | stable opaque artifact id
+                      `----- MCP resources/read or app-only chunk reader
 
 ChatGPT
   | HTTPS Streamable HTTP POST /mcp
@@ -68,7 +71,7 @@ ChatGPT App transport + MCP App result/regeneration widget
   `-- GET /media?token=... -------------> protected facade content route
 ```
 
-`@pippit-bridge/mcp-server` owns the canonical definitions, validation and handlers for account list/add/switch/delete, model discovery, generation, reference-guided regeneration, job polling, automatic completed-file materialization, and local download. Completed Codex/stdio results are atomically published under `PIPPIT_MCP_OUTPUT_ROOT`; absolute paths stay server-side while the widget receives only an opaque filename and MCP resource URI. The download tool realpath-confines an optional caller-supplied additional relative path under the same root and never overwrites an existing file. The ChatGPT App projects exact canonical video tool names and adds file parameters, UI metadata and signed previews; it deliberately omits the local-filesystem and all Management-Key-backed tools.
+`@pippit-bridge/mcp-server` owns the canonical definitions, validation and handlers for account list/add/switch/delete, model discovery, generation, reference-guided regeneration, job polling, automatic completed-file materialization, and local download. Completed Codex/stdio results are atomically published under `PIPPIT_MCP_OUTPUT_ROOT`; absolute paths stay server-side while the widget receives only an opaque filename, byte count, and stable artifact URI. A live MCP Apps view reads that URI through `resources/read`. A historical view whose original session bridge has ended can rebind through `pippit_read_video_chunk`, an app-only, model-hidden reader that resolves the same artifact from the current plugin process without initializing the Facade. The first stale or invalid resource response demotes that bridge for the remainder of the widget lifetime, so later chunks use the current app bridge without repeated timeouts. Both transports enforce a 1 MiB chunk limit, the configured inline-size limit, private-file permissions, and no-follow file access. The download tool realpath-confines an optional caller-supplied additional relative path under the same root and never overwrites an existing file. The ChatGPT App projects exact canonical video tool names and adds file parameters, UI metadata and signed previews; it deliberately omits the local-filesystem and all Management-Key-backed tools.
 
 Raw Pippit AK is not a normal MCP tool argument. `pippit_add_access_key` creates a bounded, high-entropy, one-time loopback enrollment URL. Its password form POSTs directly to the MCP process, which uses the distinct Management key only on `/api/v1/byok/**`. Runtime Facade API Key and Management API Key are never substituted for one another. The MCP process does not persist another copy of the AK.
 
