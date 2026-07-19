@@ -1,6 +1,6 @@
 {
   "name": "@pippit-bridge/mcp-server",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Dependency-free MCP server and Codex plugin for Pippit account management and video generation/editing",
   "type": "module",
   "license": "MIT",

@@ -72,7 +72,7 @@ pippit-mcp
 
 本地模式的 output root 默认是 macOS `~/Movies/Pippit`、其他平台 `~/Videos/Pippit`。外部模式可设置 `PIPPIT_FACADE_BASE_URL`、`PIPPIT_FACADE_API_KEY`、可选的独立 `PIPPIT_FACADE_MANAGEMENT_API_KEY` 和 `PIPPIT_MCP_OUTPUT_ROOT`；这些 secret 应放在用户级 secret 配置中，不要提交到项目。下载工具只接受 root 下的相对 `output_path`，拒绝路径越界和覆盖。
 
-Codex/MCP widget 在 completed 后会先把完整 MP4 原子写成 output root 下的普通本地文件，然后才签发 loopback URL。URL 使用当前 stdio/plugin 进程随机生成的 capability key，且只在该进程生命周期内有效；同一进程直接从本地文件处理 HEAD/GET/Range，不经过远程签名资源或持久 Facade daemon。响应包含 CORS、Private Network Access 和跨源媒体所需 header。stdin EOF 或 plugin disable 会关闭 listener，完整 MP4 仍保留；文件不会进入 `/tmp`、项目目录或版本化 plugin cache。需要自定文件名或额外路径时再调用 `pippit_download_video`。
+Codex/MCP widget 在 completed 后会先把完整 MP4 原子写成 output root 下的普通本地文件，然后返回稳定的本地 artifact resource identity。widget 通过宿主代理的标准 `resources/read` 读取最多 1 MiB 的分块、校验总长度后创建沙箱内 `blob:` URL；换源、失败或 teardown 会撤销该 URL。artifact identity 不依赖 stdio 端口或进程随机密钥，因此 stdio 重启后仍可恢复同一文件。完整 MP4 不会进入 `/tmp`、项目目录或版本化 plugin cache；需要自定文件名或额外路径时再调用 `pippit_download_video`。
 
 ### AK 新增、切换与删除
 
@@ -203,9 +203,9 @@ codex plugin list --json
 
 plugin 包内的 stdio server 与 Facade daemon bundle 是自包含的，安装 plugin 不需要在 plugin cache 中再运行 `npm install`、build 或写环境变量。`.mcp.json` 通过 `plugin-entry.mjs` 启动；安装和 MCP discovery 不生成 key，第一次实际工具调用才启动用户级共享 runtime。plugin 升级后，下一次实际调用会先认证已有 daemon 的 challenge proof 与 runtime version；旧版本 daemon 会在 bootstrap lock 内自动停止并替换，持久化 key 与账号不变。需要外部部署时，仍可从启动 Codex 的 secret 环境中显式提供完整 Facade 配置。
 
-生成、查询和局部编辑工具共享同一个 MCP App widget resource。widget 会自动轮询 pending/in-progress job；`pippit_get_video` 到达 `completed` 后，stdio/plugin 进程先把完整 MP4 原子保存为普通本地文件，再用自身生命周期的 loopback listener 提供 Range 播放。Codex 不要求模型另行生成 `file://` 可视化；facade content URL、API key 与 `unsigned_urls` 不进入 model-visible 结果。listener 随 plugin stdin 关闭，文件继续保留；用户需要自定文件名或额外路径时再调用下载工具。
+生成、查询和局部编辑工具共享同一个 MCP App widget resource。widget 会自动轮询 pending/in-progress job；`pippit_get_video` 到达 `completed` 后，stdio/plugin 进程先把完整 MP4 原子保存为普通本地文件，再通过 MCP Apps `resources/read` 分块传给 widget 并创建 `blob:` 播放地址。Codex 不要求模型另行生成 `file://` 可视化；facade content URL、API key 与 `unsigned_urls` 不进入 model-visible 结果。stdin 重启不改变本地 artifact identity，文件继续保留；用户需要自定文件名或额外路径时再调用下载工具。
 
-上面的 repo-local marketplace 是开发入口：从干净 checkout 测试前先运行 `npm run build -w @pippit-bridge/mcp-server`，因为 Codex 会复制 source 目录且不会替它执行 npm lifecycle。正式分发应先发布由 `prepack` 生成自包含 artifact 的 `@pippit-bridge/mcp-server@0.2.6`，再使用 [npm marketplace example](../.agents/plugins/marketplace.npm.example.json) 的 `source: "npm"` 形式；Codex 下载该 tarball 时同样不会运行 lifecycle scripts。
+上面的 repo-local marketplace 是开发入口：从干净 checkout 测试前先运行 `npm run build -w @pippit-bridge/mcp-server`，因为 Codex 会复制 source 目录且不会替它执行 npm lifecycle。正式分发应先发布由 `prepack` 生成自包含 artifact 的 `@pippit-bridge/mcp-server@0.2.7`，再使用 [npm marketplace example](../.agents/plugins/marketplace.npm.example.json) 的 `source: "npm"` 形式；Codex 下载该 tarball 时同样不会运行 lifecycle scripts。
 
 进入 Codex 后可用 `/plugins` 检查/enable plugin。安装或更新后开始一个新 session，再请求 `pippit-video` 列出模型、生成或查询视频；完成结果会自动保存本地 MP4 并展示 widget，只有需要额外自定义文件名或路径副本时才请求下载。
 

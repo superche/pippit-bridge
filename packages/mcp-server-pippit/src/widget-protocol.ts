@@ -18,6 +18,7 @@ const WIDGET_TOOL_NAMES = new Set([
 const LEGACY_PIPPIT_WIDGET_URIS = new Set([
   "ui://widget/pippit-video-job-v5.html",
   "ui://widget/pippit-video-job-v6.html",
+  "ui://widget/pippit-video-job-v7.html",
 ])
 
 const INVOCATION_STATUS: Readonly<Record<string, readonly [string, string]>> = {
@@ -38,15 +39,20 @@ export interface PippitWidgetMediaPreview {
   readonly index: number
   readonly kind: "video"
   readonly local_path?: string
-  readonly url: string
+  readonly resource_uri?: string
+  readonly url?: string
 }
 
-export interface PippitWidgetPreparedPreview {
+interface PippitWidgetPreparedPreviewBase {
   readonly bytes: number
   readonly filename: string
   readonly localPath: string
-  readonly url: string
 }
+
+export type PippitWidgetPreparedPreview = PippitWidgetPreparedPreviewBase & (
+  | { readonly resourceUri: string; readonly url?: never }
+  | { readonly resourceUri?: never; readonly url: string }
+)
 
 export type PippitWidgetPreviewUrlFactory = (
   jobId: string,
@@ -133,7 +139,9 @@ export async function projectPippitWidgetResult(
             index,
             kind: "video",
             local_path: prepared.localPath,
-            url: prepared.url,
+            ...(prepared.resourceUri === undefined
+              ? { url: prepared.url }
+              : { resource_uri: prepared.resourceUri }),
           })
     }
   }
@@ -198,15 +206,16 @@ export function pippitWidgetResourceMetadata(
   options: PippitWidgetResourceMetadataOptions = {},
 ): Readonly<Record<string, unknown>> {
   const origins = options.origin === undefined ? [] : [options.origin]
+  const resourceOrigins = [...origins, "blob:"]
   return {
     ui: {
-      csp: { connectDomains: origins, resourceDomains: origins },
+      csp: { connectDomains: origins, resourceDomains: resourceOrigins },
       ...(options.domain === undefined ? {} : { domain: options.domain }),
       prefersBorder: true,
     },
-    "openai/widgetCSP": { connect_domains: origins, resource_domains: origins },
+    "openai/widgetCSP": { connect_domains: origins, resource_domains: resourceOrigins },
     "openai/widgetDescription":
-      "Shows Pippit video job status, private signed previews, and structured segment and region editing controls.",
+      "Shows Pippit video job status, private local previews, and structured segment and region editing controls.",
     "openai/widgetPrefersBorder": true,
   }
 }

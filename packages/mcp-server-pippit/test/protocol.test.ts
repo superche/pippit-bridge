@@ -36,6 +36,9 @@ describe("MCP JSON-RPC protocol", () => {
       async listResources() {
         return { resources: [{ name: "widget", uri: PIPPIT_WIDGET_URI }] }
       },
+      async listResourceTemplates() {
+        return { resourceTemplates: [{ uriTemplate: "pippit-video://artifact/{artifact_id}{?length,offset}" }] }
+      },
       async readResource(uri: string) {
         return uri === PIPPIT_WIDGET_URI
           ? { contents: [{ mimeType: "text/html;profile=mcp-app", text: "<main></main>", uri }] }
@@ -75,6 +78,8 @@ describe("MCP JSON-RPC protocol", () => {
       id: 5,
       jsonrpc: "2.0",
       method: "resources/templates/list",
-    })).resolves.toMatchObject({ result: { resourceTemplates: [] } })
+    })).resolves.toMatchObject({
+      result: { resourceTemplates: [{ uriTemplate: "pippit-video://artifact/{artifact_id}{?length,offset}" }] },
+    })
   })
 })

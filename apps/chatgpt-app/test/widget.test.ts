@@ -12,7 +12,7 @@ import {
 
 describe("Pippit MCP App widget", () => {
   it("uses the stable MCP App resource contract", () => {
-    expect(PIPPIT_WIDGET_URI).toBe("ui://widget/pippit-video-job-v7.html")
+    expect(PIPPIT_WIDGET_URI).toBe("ui://widget/pippit-video-job-v8.html")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/initialize")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/notifications/initialized")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/notifications/tool-result")
@@ -20,6 +20,7 @@ describe("Pippit MCP App widget", () => {
     expect(PIPPIT_WIDGET_HTML).toContain("ui/resource-teardown")
     expect(PIPPIT_WIDGET_HTML).toContain('request("tools/call"')
     expect(PIPPIT_WIDGET_HTML).toContain("Boolean(capabilities.serverTools)")
+    expect(PIPPIT_WIDGET_HTML).toContain("Boolean(capabilities.serverResources)")
     expect(PIPPIT_WIDGET_HTML).toContain('modes.includes("fullscreen")')
     expect(PIPPIT_WIDGET_HTML).toContain('request("ui/request-display-mode"')
   })
@@ -30,8 +31,10 @@ describe("Pippit MCP App widget", () => {
     expect(PIPPIT_WIDGET_HTML).toContain("window.openai.callTool")
   })
 
-  it("renders only metadata-provided preview URLs", () => {
+  it("renders only metadata-provided HTTPS or local MCP resource previews", () => {
     expect(PIPPIT_WIDGET_HTML).toContain('meta["pippit/media"]')
+    expect(PIPPIT_WIDGET_HTML).toContain("typeof item.resource_uri")
+    expect(PIPPIT_WIDGET_HTML).toContain('request("resources/read"')
     expect(PIPPIT_WIDGET_HTML).not.toContain("unsigned_urls")
   })
 
@@ -166,7 +169,7 @@ describe("Pippit MCP App widget", () => {
       segmentStartMs: 2_000,
     })
     expect(shorterDuration.annotations).toEqual([draft.annotations[0]])
-    expect(PIPPIT_WIDGET_HTML).toContain('if (updateKind === "unchanged") return;')
+    expect(PIPPIT_WIDGET_HTML).toContain('updateKind = initializedSourceDraft ? "renewed-url" : "new-source";')
     expect(PIPPIT_WIDGET_HTML).toContain('updateKind === "renewed-url" ? draftSnapshot() : undefined')
     expect(PIPPIT_WIDGET_HTML).toContain("restoreDraftAfterMediaRefresh(savedDraft)")
   })
@@ -284,6 +287,7 @@ describe("Pippit MCP App widget", () => {
 
   it("declares the standard MCP tool capability state exactly once", () => {
     expect(PIPPIT_WIDGET_HTML.match(/var serverToolsAvailable = false;/g)).toHaveLength(1)
+    expect(PIPPIT_WIDGET_HTML.match(/var serverResourcesAvailable = false;/g)).toHaveLength(1)
   })
 
   it("submits edit instructions through the shared MCP tool without preview URLs", () => {
@@ -309,5 +313,6 @@ describe("Pippit MCP App widget", () => {
     expect(PIPPIT_WIDGET_HTML).toContain("pending.clear()")
     expect(PIPPIT_WIDGET_HTML).toContain("resizeObserver.disconnect()")
     expect(PIPPIT_WIDGET_HTML).toContain('videoElement.removeAttribute("src")')
+    expect(PIPPIT_WIDGET_HTML).toContain("URL.revokeObjectURL(previewObjectUrl)")
   })
 })

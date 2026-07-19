@@ -1,4 +1,4 @@
-import { spawn, execFile } from "node:child_process"
+import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { lstat, mkdtemp, readFile, rm } from "node:fs/promises"
 import { createServer } from "node:http"
@@ -114,15 +114,6 @@ function rpc(method, params = {}) {
   })
 }
 
-function execFileAsync(command, args) {
-  return new Promise((resolveExec, rejectExec) => {
-    execFile(command, args, { encoding: "utf8" }, (error, stdout) => {
-      if (error) rejectExec(error)
-      else resolveExec(stdout)
-    })
-  })
-}
-
 async function closeServer(server) {
   await new Promise((resolveClose, rejectClose) => {
     server.close((error) => error === undefined ? resolveClose() : rejectClose(error))
@@ -130,17 +121,46 @@ async function closeServer(server) {
   })
 }
 
+async function readMediaResource(resourceUri, totalBytes) {
+  const chunks = []
+  const chunkBytes = 1024 * 1024
+  for (let offset = 0; offset < totalBytes; offset += chunkBytes) {
+    const expectedBytes = Math.min(chunkBytes, totalBytes - offset)
+    const uri = new URL(resourceUri)
+    uri.searchParams.set("length", String(expectedBytes))
+    uri.searchParams.set("offset", String(offset))
+    const result = await rpc("resources/read", { uri: uri.toString() })
+    const content = result?.contents?.[0]
+    const metadata = content?._meta?.["pippit/chunk"]
+    if (
+      content?.uri !== uri.toString() ||
+      content?.mimeType !== "video/mp4" ||
+      metadata?.offset !== offset ||
+      metadata?.bytes !== expectedBytes ||
+      metadata?.total_bytes !== totalBytes ||
+      metadata?.complete !== (offset + expectedBytes === totalBytes) ||
+      typeof content?.blob !== "string"
+    ) {
+      throw new Error("The installed plugin returned an invalid local media resource chunk.")
+    }
+    const chunk = Buffer.from(content.blob, "base64")
+    if (chunk.byteLength !== expectedBytes) throw new Error("The installed plugin truncated a media resource chunk.")
+    chunks.push(chunk)
+  }
+  return Buffer.concat(chunks)
+}
+
 let localPath
-let previewUrl
+let resourceUri
 try {
   const initialized = await rpc("initialize", {
     capabilities: {},
     clientInfo: { name: "installed-media-smoke", version: "1" },
     protocolVersion: "2025-11-25",
   })
-  if (initialized?.serverInfo?.version !== "0.2.6") throw new Error("Unexpected installed plugin version.")
-  const resource = await rpc("resources/read", { uri: "ui://widget/pippit-video-job-v7.html" })
-  if (!resource?.contents?.[0]?.text?.includes("pippit-video-editor")) throw new Error("Missing v7 widget resource.")
+  if (initialized?.serverInfo?.version !== "0.2.7") throw new Error("Unexpected installed plugin version.")
+  const resource = await rpc("resources/read", { uri: "ui://widget/pippit-video-job-v8.html" })
+  if (!resource?.contents?.[0]?.text?.includes("pippit-video-editor")) throw new Error("Missing v8 widget resource.")
   const result = await rpc("tools/call", {
     arguments: { job_id: "job_installed_media" },
     name: "pippit_get_video",
@@ -148,10 +168,9 @@ try {
   const preview = result?._meta?.["pippit/media"]?.[0]
   if (result?.isError === true || preview === undefined) throw new Error("The installed plugin did not return local media.")
   localPath = preview.local_path
-  previewUrl = preview.url
-  const parsedPreview = new URL(previewUrl)
-  if (parsedPreview.hostname !== "127.0.0.1" || Number(parsedPreview.port) === facadeAddress.port) {
-    throw new Error("The preview is not owned by a distinct plugin loopback listener.")
+  resourceUri = preview.resource_uri
+  if (!/^pippit-video:\/\/artifact\/[a-f0-9]{64}$/u.test(resourceUri) || preview.url !== undefined) {
+    throw new Error("The installed plugin did not return a stable local MCP media resource.")
   }
   if (!isAbsolute(localPath) || !localPath.startsWith(`${outputRoot}/`)) {
     throw new Error("The installed plugin did not publish beneath its output root.")
@@ -160,40 +179,9 @@ try {
   if (!localStats.isFile() || localStats.size !== mediaBytes.byteLength) throw new Error("The local MP4 is incomplete.")
   const localDigest = createHash("sha256").update(await readFile(localPath)).digest("hex")
   if (localDigest !== mediaDigest) throw new Error("The local MP4 differs from the completed output.")
-
-  const previewPort = Number(parsedPreview.port)
-  if (process.platform === "darwin") {
-    const listeners = await execFileAsync("/usr/sbin/lsof", [
-      "-nP",
-      "-a",
-      "-p",
-      String(child.pid),
-      `-iTCP:${previewPort}`,
-      "-sTCP:LISTEN",
-    ])
-    if (!listeners.includes(String(child.pid))) throw new Error("The plugin process does not own the preview listener.")
-  }
-
-  const preflight = await fetch(previewUrl, {
-    headers: {
-      "access-control-request-headers": "range",
-      "access-control-request-method": "GET",
-      "access-control-request-private-network": "true",
-      origin: "https://chatgpt.com",
-    },
-    method: "OPTIONS",
-  })
-  if (preflight.status !== 204 || preflight.headers.get("access-control-allow-private-network") !== "true") {
-    throw new Error("The installed plugin did not authorize Private Network Access.")
-  }
-  const head = await fetch(previewUrl, { method: "HEAD" })
-  if (head.status !== 200 || head.headers.get("content-length") !== String(mediaBytes.byteLength)) {
-    throw new Error("The installed plugin did not serve a complete local HEAD response.")
-  }
-  const ranged = await fetch(previewUrl, { headers: { range: "bytes=0-31" } })
-  if (ranged.status !== 206 || (await ranged.arrayBuffer()).byteLength !== Math.min(32, mediaBytes.byteLength)) {
-    throw new Error("The installed plugin did not serve a local byte range.")
-  }
+  const bridgedBytes = await readMediaResource(resourceUri, mediaBytes.byteLength)
+  const bridgedDigest = createHash("sha256").update(bridgedBytes).digest("hex")
+  if (bridgedDigest !== mediaDigest) throw new Error("The MCP resource bridge changed the completed output.")
 
   process.stdout.write(`${JSON.stringify({
     event: "preview_ready",
@@ -201,14 +189,8 @@ try {
     local_path: localPath,
     media_bytes: mediaBytes.byteLength,
     plugin_pid: child.pid,
-    preview_port: previewPort,
-    preview_url: previewUrl,
+    transport: "mcp-resource",
   })}\n`)
-  if (process.stdin.isTTY) {
-    process.stdout.write("Press Enter after browser playback validation.\n")
-    await once(process.stdin, "data")
-    process.stdin.pause()
-  }
 
   child.stdin.end()
   await Promise.race([
@@ -216,22 +198,12 @@ try {
     new Promise((_, reject) => setTimeout(() => reject(new Error("The installed plugin did not stop at EOF.")), 5_000)),
   ])
   if (stderr !== "") throw new Error("The installed plugin wrote unexpected stderr output.")
-  await expectFetchFailure(previewUrl)
   const retained = await lstat(localPath)
   if (!retained.isFile() || retained.size !== mediaBytes.byteLength) throw new Error("The local MP4 disappeared at plugin EOF.")
-  process.stdout.write(`${JSON.stringify({ event: "complete", file_retained: true, listener_closed: true })}\n`)
+  process.stdout.write(`${JSON.stringify({ event: "complete", file_retained: true, resource_transport: true })}\n`)
 } finally {
   lines.close()
   if (child.exitCode === null) child.kill("SIGTERM")
   await closeServer(facade).catch(() => undefined)
   await rm(outputRoot, { force: true, recursive: true })
-}
-
-async function expectFetchFailure(url) {
-  try {
-    await fetch(url)
-  } catch {
-    return
-  }
-  throw new Error("The plugin preview listener remained reachable after stdin EOF.")
 }

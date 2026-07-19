@@ -43,7 +43,7 @@ describe("Pippit widget protocol", () => {
       bytes: 100 + index,
       filename: `pippit-video-${index}.mp4`,
       localPath: `/Users/test/Movies/Pippit/pippit-video-${index}.mp4`,
-      url: `http://127.0.0.1:4123/media?token=${index}`,
+      resourceUri: `pippit-video://artifact/${String(index).padStart(64, "0")}`,
     }))
     const projected = await projectPippitWidgetResult(result({
       authorization: "Bearer secret",
@@ -71,7 +71,7 @@ describe("Pippit widget protocol", () => {
         index: 0,
         kind: "video",
         local_path: "/Users/test/Movies/Pippit/pippit-video-0.mp4",
-        url: "http://127.0.0.1:4123/media?token=0",
+        resource_uri: `pippit-video://artifact/${"0".repeat(64)}`,
       },
       {
         bytes: 101,
@@ -79,13 +79,13 @@ describe("Pippit widget protocol", () => {
         index: 1,
         kind: "video",
         local_path: "/Users/test/Movies/Pippit/pippit-video-1.mp4",
-        url: "http://127.0.0.1:4123/media?token=1",
+        resource_uri: `pippit-video://artifact/${"0".repeat(63)}1`,
       },
     ])
   })
 
   it("does not create previews for pending or failed tool results", async () => {
-    const previewUrl = vi.fn(async () => "http://127.0.0.1/media")
+    const previewUrl = vi.fn(async () => "https://media.example.test/video")
     const pending = await projectPippitWidgetResult(result({
       id: "job_pending",
       status: "in_progress",
@@ -101,8 +101,8 @@ describe("Pippit widget protocol", () => {
     expect(failed._meta).toBeUndefined()
   })
 
-  it("returns a standard MCP App resource with media-only loopback CSP", () => {
-    const resource = pippitWidgetReadResource(PIPPIT_WIDGET_URI, { origin: "http://127.0.0.1:4321" })
+  it("returns a standard MCP App resource with blob media CSP and no loopback dependency", () => {
+    const resource = pippitWidgetReadResource(PIPPIT_WIDGET_URI)
     expect(resource).toMatchObject({
       contents: [{ mimeType: PIPPIT_WIDGET_MIME_TYPE, text: PIPPIT_WIDGET_HTML, uri: PIPPIT_WIDGET_URI }],
     })
@@ -110,15 +110,17 @@ describe("Pippit widget protocol", () => {
     const metadata = (resource.contents as Array<{ _meta?: Record<string, unknown> }>)[0]?._meta
     expect(metadata?.ui).toMatchObject({
       csp: {
-        connectDomains: ["http://127.0.0.1:4321"],
-        resourceDomains: ["http://127.0.0.1:4321"],
+        connectDomains: [],
+        resourceDomains: ["blob:"],
       },
     })
     expect((metadata?.ui as { domain?: string } | undefined)?.domain).toBeUndefined()
-    expect(pippitWidgetReadResource("ui://widget/pippit-video-job-v5.html", { origin: "http://127.0.0.1:4321" }))
+    expect(pippitWidgetReadResource("ui://widget/pippit-video-job-v5.html"))
       .toMatchObject({ contents: [{ text: PIPPIT_WIDGET_HTML, uri: "ui://widget/pippit-video-job-v5.html" }] })
-    expect(pippitWidgetReadResource("ui://widget/pippit-video-job-v6.html", { origin: "http://127.0.0.1:4321" }))
+    expect(pippitWidgetReadResource("ui://widget/pippit-video-job-v6.html"))
       .toMatchObject({ contents: [{ text: PIPPIT_WIDGET_HTML, uri: "ui://widget/pippit-video-job-v6.html" }] })
+    expect(pippitWidgetReadResource("ui://widget/pippit-video-job-v7.html"))
+      .toMatchObject({ contents: [{ text: PIPPIT_WIDGET_HTML, uri: "ui://widget/pippit-video-job-v7.html" }] })
     expect(pippitWidgetReadResource("ui://widget/unknown.html")).toBeUndefined()
   })
 
@@ -126,6 +128,11 @@ describe("Pippit widget protocol", () => {
     expect(PIPPIT_WIDGET_HTML).toContain('<video id="video" controls')
     expect(PIPPIT_WIDGET_HTML).toContain('crossorigin="anonymous"')
     expect(PIPPIT_WIDGET_HTML).toContain("function previewExpirationMs(media)")
+    expect(PIPPIT_WIDGET_HTML).toContain('request("resources/read", { uri: uri })')
+    expect(PIPPIT_WIDGET_HTML).toContain("URL.createObjectURL(new Blob(chunks")
+    expect(PIPPIT_WIDGET_HTML).toContain("URL.revokeObjectURL(previewObjectUrl)")
+    expect(PIPPIT_WIDGET_HTML).toContain("serverResourcesAvailable = Boolean(capabilities.serverResources)")
+    expect(PIPPIT_WIDGET_HTML).toContain("setPreview({ id: activeJobId }, activePreviewMedia)")
     expect(PIPPIT_WIDGET_HTML).toContain("expiresAtMs <= Date.now() + 5000")
     expect(PIPPIT_WIDGET_HTML).toContain("schedulePreviewRenewal(expiresAtMs)")
     expect(PIPPIT_WIDGET_HTML).toContain("Retrying the local video…")
@@ -136,5 +143,6 @@ describe("Pippit widget protocol", () => {
     expect(PIPPIT_WIDGET_HTML).toContain('typeof result.mode === "string"')
     expect(PIPPIT_WIDGET_HTML).not.toContain("result.displayMode")
     expect(PIPPIT_WIDGET_HTML).not.toContain("file://")
+    expect(PIPPIT_WIDGET_HTML).not.toContain("http://127.0.0.1")
   })
 })

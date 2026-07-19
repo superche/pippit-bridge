@@ -45,6 +45,17 @@ function parseFailure(): JsonRpcResponse {
   return { error: { code: -32700, message: "Invalid JSON." }, id: null, jsonrpc: "2.0" }
 }
 
+function internalFailure(message: unknown): JsonRpcResponse {
+  let id: number | string | null = null
+  if (typeof message === "object" && message !== null && !Array.isArray(message)) {
+    const candidate = (message as Record<string, unknown>).id
+    if (typeof candidate === "string" || (typeof candidate === "number" && Number.isFinite(candidate))) {
+      id = candidate
+    }
+  }
+  return { error: { code: -32603, message: "Internal error." }, id, jsonrpc: "2.0" }
+}
+
 function runtimeUnavailable(error: unknown): PippitMcpCallToolResult {
   const message = error instanceof PippitLocalRuntimeError
     ? error.message
@@ -77,7 +88,6 @@ function localMediaUnavailable(): PippitMcpCallToolResult {
 
 interface ConfiguredRuntime {
   readonly client: PippitFacadeClient
-  readonly mediaOutputRoot: string
   readonly runtime: PippitToolRuntime
 }
 
@@ -89,7 +99,6 @@ function createConfiguredRuntime(
   const client = new PippitFacadeClient(facadeClientOptions(configured))
   return {
     client,
-    mediaOutputRoot: configured.outputRoot,
     runtime: createPippitToolRuntime({
       client,
       enrollmentPort: configured.enrollmentPort,
@@ -100,6 +109,13 @@ function createConfiguredRuntime(
       outputRoot: configured.outputRoot,
     }),
   }
+}
+
+export function resolvePippitStdioMediaOutputRoot(env: NodeJS.ProcessEnv = process.env): string {
+  if (typeof env.PIPPIT_FACADE_API_KEY === "string" && env.PIPPIT_FACADE_API_KEY.trim() !== "") {
+    return parsePippitMcpOptions(env).outputRoot
+  }
+  return resolvePippitLocalRuntimePaths(env).outputRoot
 }
 
 function createLazyPippitToolRuntime(env: NodeJS.ProcessEnv): {
@@ -136,7 +152,7 @@ function createLazyPippitToolRuntime(env: NodeJS.ProcessEnv): {
       },
     },
     async resolveMediaOutputRoot() {
-      return (await initialize()).mediaOutputRoot
+      return resolvePippitStdioMediaOutputRoot(env)
     },
     runtime: {
       async callTool(name, argumentsValue) {
@@ -217,10 +233,18 @@ export async function runPippitStdioServer(options: PippitStdioServerOptions = {
   try {
     for await (const line of lines) {
       let response: JsonRpcResponse | undefined
+      let message: unknown
       try {
-        response = await handler.handle(JSON.parse(line) as unknown)
+        message = JSON.parse(line) as unknown
       } catch {
         response = parseFailure()
+      }
+      if (response === undefined) {
+        try {
+          response = await handler.handle(message)
+        } catch {
+          response = internalFailure(message)
+        }
       }
       if (response !== undefined) output.write(`${JSON.stringify(response)}\n`)
     }

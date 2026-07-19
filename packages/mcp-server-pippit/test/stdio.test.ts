@@ -7,12 +7,27 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 
 import { describe, expect, it, vi } from "vitest"
 
-import { isPippitStdioEntrypoint, runPippitStdioServer } from "../src/stdio.ts"
+import { defaultPippitOutputDirectory } from "../src/options.ts"
+import {
+  isPippitStdioEntrypoint,
+  resolvePippitStdioMediaOutputRoot,
+  runPippitStdioServer,
+} from "../src/stdio.ts"
 import { PIPPIT_RUNTIME_TOOL_DEFINITIONS } from "../src/tools.ts"
 import { createPippitWidgetMediaServer } from "../src/widget-media.ts"
 import { PIPPIT_WIDGET_URI } from "../src/widget.ts"
 
 describe("Pippit stdio entrypoint", () => {
+  it("uses the matching output contract for local and external facades", () => {
+    const bridgeHome = join(tmpdir(), "pippit-stdio-output-contract")
+    expect(resolvePippitStdioMediaOutputRoot({ PIPPIT_BRIDGE_HOME: bridgeHome }))
+      .toBe(join(bridgeHome, "outputs"))
+    expect(resolvePippitStdioMediaOutputRoot({
+      PIPPIT_BRIDGE_HOME: bridgeHome,
+      PIPPIT_FACADE_API_KEY: "external-facade-key",
+    })).toBe(defaultPippitOutputDirectory())
+  })
+
   it("starts the Codex plugin shim through the packaged compiled runtime", async () => {
     const packageRoot = fileURLToPath(new URL("..", import.meta.url))
     const manifest = JSON.parse(await readFile(join(packageRoot, ".mcp.json"), "utf8")) as {
@@ -68,6 +83,35 @@ describe("Pippit stdio entrypoint", () => {
       },
     })
     expect(close).toHaveBeenCalledOnce()
+  })
+
+  it("reports resource failures as internal errors instead of invalid JSON", async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    let stdout = ""
+    output.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk })
+    input.end([
+      JSON.stringify({ id: 1, jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-11-25" } }),
+      JSON.stringify({ id: 2, jsonrpc: "2.0", method: "resources/read", params: { uri: "pippit-video://artifact/failure?length=1&offset=0" } }),
+      "",
+    ].join("\n"))
+    await runPippitStdioServer({
+      input,
+      output,
+      runtime: { callTool: vi.fn(), listTools: () => [] },
+      widgetMedia: {
+        async close() {},
+        async listResources() { return { resources: [] } },
+        async preparePreview() { throw new Error("not used") },
+        async readResource() { throw new Error("disk read failed") },
+      },
+    })
+    const responses = stdout.trim().split("\n").map(line => JSON.parse(line) as {
+      error?: { code: number }
+      id: number
+    })
+    expect(responses).toHaveLength(2)
+    expect(responses[1]).toMatchObject({ error: { code: -32603 }, id: 2 })
   })
 
   it("aborts an unfinished local materialization as soon as stdin reaches EOF", async () => {
@@ -126,7 +170,7 @@ describe("Pippit stdio entrypoint", () => {
     }
   })
 
-  it("serves the completed local file for the whole plugin stdio lifecycle", async () => {
+  it("reads the completed local file through MCP resources and recovers it after stdio restart", async () => {
     const outputRoot = await mkdtemp(join(tmpdir(), "pippit-plugin-media-lifecycle-"))
     const input = new PassThrough()
     const output = new PassThrough()
@@ -140,11 +184,8 @@ describe("Pippit stdio entrypoint", () => {
       },
     })
     let stdout = ""
-    let resolveResponses: (() => void) | undefined
-    const responsesReady = new Promise<void>((resolveReady) => { resolveResponses = resolveReady })
     output.setEncoding("utf8").on("data", (chunk: string) => {
       stdout += chunk
-      if (stdout.trim().split("\n").length >= 3) resolveResponses?.()
     })
     const getDefinition = PIPPIT_RUNTIME_TOOL_DEFINITIONS.find(definition => definition.name === "pippit_get_video")
     if (getDefinition === undefined) throw new Error("Missing get-video definition in test.")
@@ -172,28 +213,53 @@ describe("Pippit stdio entrypoint", () => {
         }),
         "",
       ].join("\n"))
-      await Promise.race([
-        responsesReady,
-        new Promise((_, reject) => setTimeout(() => reject(new Error("stdio lifecycle response timeout")), 5_000)),
-      ])
-      const responses = stdout.trim().split("\n").map(line => JSON.parse(line) as {
+      await vi.waitFor(() => expect(stdout.trim().split("\n")).toHaveLength(3))
+      let responses = stdout.trim().split("\n").map(line => JSON.parse(line) as {
         id: number
-        result: { _meta?: Record<string, unknown> }
+        result: { contents?: Array<{ blob?: string }>; _meta?: Record<string, unknown> }
       })
       const previews = responses.find(response => response.id === 3)?.result._meta?.["pippit/media"] as Array<{
         local_path: string
-        url: string
+        resource_uri: string
       }>
       expect(previews).toHaveLength(1)
       expect(previews[0]?.local_path).toMatch(/pippit-video-[a-f0-9]{64}\.mp4$/u)
       expect(new Uint8Array(await readFile(previews[0]!.local_path))).toEqual(bytes)
-      const ranged = await fetch(previews[0]!.url, { headers: { range: "bytes=4-7" } })
-      expect(ranged.status).toBe(206)
-      expect(new Uint8Array(await ranged.arrayBuffer())).toEqual(bytes.slice(4))
+      const chunkUri = new URL(previews[0]!.resource_uri)
+      chunkUri.searchParams.set("length", "4")
+      chunkUri.searchParams.set("offset", "4")
+      input.write(`${JSON.stringify({
+        id: 4,
+        jsonrpc: "2.0",
+        method: "resources/read",
+        params: { uri: chunkUri.toString() },
+      })}\n`)
+      await vi.waitFor(() => expect(stdout.trim().split("\n")).toHaveLength(4))
+      responses = stdout.trim().split("\n").map(line => JSON.parse(line) as {
+        id: number
+        result: { contents?: Array<{ blob?: string }>; _meta?: Record<string, unknown> }
+      })
+      const chunk = responses.find(response => response.id === 4)?.result.contents?.[0]?.blob
+      expect(chunk).toBeDefined()
+      expect(new Uint8Array(Buffer.from(chunk ?? "", "base64"))).toEqual(bytes.slice(4))
       input.end()
       await running
-      await expect(fetch(previews[0]!.url)).rejects.toThrow()
       expect(new Uint8Array(await readFile(previews[0]!.local_path))).toEqual(bytes)
+
+      const shouldNotDownload = vi.fn(async () => { throw new Error("unexpected download") })
+      const restarted = createPippitWidgetMediaServer({
+        artifactRoot: outputRoot,
+        backend: { downloadVideo: shouldNotDownload },
+      })
+      try {
+        const recovered = await restarted.readResource(chunkUri.toString()) as {
+          contents?: Array<{ blob?: string }>
+        } | undefined
+        expect(new Uint8Array(Buffer.from(recovered?.contents?.[0]?.blob ?? "", "base64"))).toEqual(bytes.slice(4))
+        expect(shouldNotDownload).not.toHaveBeenCalled()
+      } finally {
+        await restarted.close()
+      }
     } finally {
       input.end()
       await running.catch(() => undefined)
@@ -233,10 +299,9 @@ describe("Pippit stdio entrypoint", () => {
             bytes: 123,
             filename: `pippit-video-${index}.mp4`,
             localPath: `/Movies/Pippit/pippit-video-${index}.mp4`,
-            url: `http://127.0.0.1:4321/media?token=${index}`,
+            resourceUri: `pippit-video://artifact/${String(index).padStart(64, "0")}`,
           }
         },
-        async previewUrl(_jobId, index) { return `http://127.0.0.1:4321/media?token=${index}` },
         async readResource(uri) {
           return uri === PIPPIT_WIDGET_URI
             ? { contents: [{ mimeType: "text/html;profile=mcp-app", text: "<main></main>", uri }] }
@@ -284,7 +349,7 @@ describe("Pippit stdio entrypoint", () => {
         index: 0,
         kind: "video",
         local_path: "/Movies/Pippit/pippit-video-0.mp4",
-        url: "http://127.0.0.1:4321/media?token=0",
+        resource_uri: `pippit-video://artifact/${"0".repeat(64)}`,
       },
     ])
     expect(JSON.stringify(callResult)).not.toContain("unsigned_urls")
@@ -313,7 +378,6 @@ describe("Pippit stdio entrypoint", () => {
         async close() {},
         async listResources() { return { resources: [] } },
         async preparePreview() { throw new Error("disk full") },
-        async previewUrl() { throw new Error("disk full") },
         async readResource() { return undefined },
       },
     })

@@ -143,7 +143,7 @@ export function adjustWidgetRegionFromKey(
   return { handled: true, region: next }
 }
 
-export const PIPPIT_WIDGET_URI = "ui://widget/pippit-video-job-v7.html"
+export const PIPPIT_WIDGET_URI = "ui://widget/pippit-video-job-v8.html"
 
 /**
  * A dependency-free MCP App. Business actions always call the shared MCP
@@ -699,11 +699,14 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       var adjustWidgetRegionFromKey = ${adjustWidgetRegionFromKey.toString()};
 
       var MAX_ANNOTATIONS = 20;
+      var MAX_LOCAL_PREVIEW_BYTES = 256 * 1024 * 1024;
+      var LOCAL_PREVIEW_CHUNK_BYTES = 1024 * 1024;
       var MAX_SEGMENT_MS = 30000;
       var protocolVersion = "2026-01-26";
       var nextId = 1;
       var pending = new Map();
       var protocolReady = false;
+      var serverResourcesAvailable = false;
       var serverToolsAvailable = false;
       var hostContext = {};
       var activeJobId;
@@ -711,7 +714,10 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       var activeStatus = "pending";
       var sourceJobId;
       var sourceIndex = 0;
+      var activePreviewMedia;
       var previewUrl;
+      var previewObjectUrl;
+      var previewLoadGeneration = 0;
       var previewLoading = false;
       var previewLoadKind;
       var previewRetryCount = 0;
@@ -814,6 +820,121 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           return window.openai.callTool(name, args);
         }
         return Promise.reject(new Error("This host cannot call Pippit tools from the widget."));
+      }
+
+      function mediaIdentity(media) {
+        if (media && typeof media.resource_uri === "string") return media.resource_uri;
+        return media && typeof media.url === "string" ? media.url : undefined;
+      }
+
+      function resourceChunkUri(resourceUri, offset, length) {
+        var url = new URL(resourceUri);
+        url.search = "";
+        url.searchParams.set("length", String(length));
+        url.searchParams.set("offset", String(offset));
+        return url.toString();
+      }
+
+      function decodeResourceChunk(value) {
+        if (typeof value !== "string" || value === "") throw new Error("The local video chunk is missing.");
+        var binary = window.atob(value);
+        var bytes = new Uint8Array(binary.length);
+        for (var index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+        return bytes;
+      }
+
+      function revokePreviewObjectUrl() {
+        if (!previewObjectUrl) return;
+        URL.revokeObjectURL(previewObjectUrl);
+        previewObjectUrl = undefined;
+      }
+
+      async function loadLocalResourcePreview(media, generation) {
+        var totalBytes = Number(media.bytes);
+        if (!Number.isSafeInteger(totalBytes) || totalBytes < 1) {
+          throw new Error("The local video size is unavailable.");
+        }
+        if (totalBytes > MAX_LOCAL_PREVIEW_BYTES) {
+          throw new Error("The local video is too large for an inline preview.");
+        }
+        if (!serverResourcesAvailable) {
+          throw new Error("This host cannot read local MCP media resources.");
+        }
+        var chunks = [];
+        var offset = 0;
+        while (offset < totalBytes) {
+          if (destroyed || generation !== previewLoadGeneration) return;
+          var expectedBytes = Math.min(LOCAL_PREVIEW_CHUNK_BYTES, totalBytes - offset);
+          var uri = resourceChunkUri(media.resource_uri, offset, expectedBytes);
+          var result = await request("resources/read", { uri: uri });
+          var content = result && Array.isArray(result.contents) ? result.contents[0] : undefined;
+          if (!content || content.uri !== uri || content.mimeType !== "video/mp4") {
+            throw new Error("The local video resource response is invalid.");
+          }
+          var chunkMeta = content._meta && typeof content._meta === "object"
+            ? content._meta["pippit/chunk"]
+            : undefined;
+          var expectedComplete = offset + expectedBytes === totalBytes;
+          if (
+            !chunkMeta ||
+            chunkMeta.offset !== offset ||
+            chunkMeta.bytes !== expectedBytes ||
+            chunkMeta.total_bytes !== totalBytes ||
+            chunkMeta.complete !== expectedComplete
+          ) {
+            throw new Error("The local video resource metadata is invalid.");
+          }
+          var bytes = decodeResourceChunk(content.blob);
+          if (bytes.byteLength !== expectedBytes) {
+            throw new Error("The local video resource was truncated.");
+          }
+          chunks.push(bytes);
+          offset += bytes.byteLength;
+        }
+        if (destroyed || generation !== previewLoadGeneration) return;
+        var objectUrl = URL.createObjectURL(new Blob(chunks, { type: "video/mp4" }));
+        revokePreviewObjectUrl();
+        previewObjectUrl = objectUrl;
+        videoElement.src = objectUrl;
+        videoElement.load();
+        filmstripGeneration += 1;
+        void renderFilmstrip(objectUrl, filmstripGeneration);
+      }
+
+      function retryLocalPreview() {
+        if (
+          !activeJobId ||
+          !activePreviewMedia ||
+          typeof activePreviewMedia.resource_uri !== "string" ||
+          !protocolReady ||
+          !serverResourcesAvailable ||
+          previewRetryCount >= 1
+        ) return false;
+        previewRetryCount += 1;
+        mediaMessageElement.textContent = "Reconnecting to the local video…";
+        mediaMessageElement.hidden = false;
+        window.clearTimeout(previewRetryTimer);
+        previewRetryTimer = window.setTimeout(function () {
+          previewRetryTimer = undefined;
+          if (destroyed) return;
+          setPreview({ id: activeJobId }, activePreviewMedia);
+        }, 500);
+        return true;
+      }
+
+      function localPreviewFailed() {
+        previewLoading = false;
+        previewLoadKind = undefined;
+        draftBeforeMediaRefresh = undefined;
+        clearPreviewRenewal();
+        revokePreviewObjectUrl();
+        if (!retryLocalPreview()) {
+          mediaMessageElement.textContent = localFileElement.hidden
+            ? "The local video preview could not be loaded."
+            : "The player could not load this file, but the MP4 is saved locally.";
+          mediaMessageElement.hidden = false;
+        }
+        updateSubmitState();
       }
 
       function findJob(value, depth) {
@@ -1406,6 +1527,8 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
 
       function setPreview(job, media) {
         var nextIndex = typeof media.index === "number" ? media.index : 0;
+        var nextIdentity = mediaIdentity(media);
+        if (!nextIdentity) return;
         var expiresAtMs = previewExpirationMs(media);
         if (Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now() + 5000) {
           clearPreviewRenewal();
@@ -1423,7 +1546,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           initializedSourceDraft,
           job.id,
           nextIndex,
-          media.url
+          nextIdentity
         );
         awaitingPreview = false;
         clearPollTimer();
@@ -1441,12 +1564,18 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           localFileElement.removeAttribute("title");
           localFileElement.hidden = true;
         }
-        if (updateKind === "unchanged") return;
+        if (updateKind === "unchanged") {
+          var resourceReady = typeof media.resource_uri === "string" && Boolean(previewObjectUrl);
+          var networkReady = typeof media.url === "string" && videoElement.getAttribute("src") === media.url;
+          if (resourceReady || networkReady) return;
+          updateKind = initializedSourceDraft ? "renewed-url" : "new-source";
+        }
 
         draftBeforeMediaRefresh = updateKind === "renewed-url" ? draftSnapshot() : undefined;
         sourceJobId = job.id;
         sourceIndex = nextIndex;
-        previewUrl = media.url;
+        activePreviewMedia = media;
+        previewUrl = nextIdentity;
         previewLoadKind = updateKind;
         previewLoading = true;
         if (updateKind === "new-source") {
@@ -1454,11 +1583,32 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           initializedSourceDraft = false;
           clearDraftForNewSource();
         }
-        videoElement.src = media.url;
-        videoElement.load();
-        schedulePreviewRenewal(expiresAtMs);
-        filmstripGeneration += 1;
-        void renderFilmstrip(media.url, filmstripGeneration);
+        previewLoadGeneration += 1;
+        var generation = previewLoadGeneration;
+        if (typeof media.resource_uri === "string") {
+          clearPreviewRenewal();
+          videoElement.pause();
+          videoElement.removeAttribute("src");
+          videoElement.load();
+          revokePreviewObjectUrl();
+          mediaMessageElement.textContent = "Loading the saved local video…";
+          mediaMessageElement.hidden = false;
+          if (!protocolReady) {
+            pendingPreviewRetry = true;
+            showLoading("completed");
+          } else {
+            void loadLocalResourcePreview(media, generation).catch(function () {
+              if (!destroyed && generation === previewLoadGeneration) localPreviewFailed();
+            });
+          }
+        } else {
+          revokePreviewObjectUrl();
+          videoElement.src = media.url;
+          videoElement.load();
+          schedulePreviewRenewal(expiresAtMs);
+          filmstripGeneration += 1;
+          void renderFilmstrip(media.url, filmstripGeneration);
+        }
         updateSubmitState();
       }
 
@@ -1472,7 +1622,9 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         activeModel = typeof job.model === "string" ? job.model : activeModel;
         activeStatus = typeof job.status === "string" ? job.status : "pending";
         var preview = media.find(function (item) {
-          return item && item.kind === "video" && typeof item.url === "string";
+          return item && item.kind === "video" && (
+            typeof item.resource_uri === "string" || typeof item.url === "string"
+          );
         });
         awaitingPreview = activeStatus === "completed" && !preview;
         if (jobIsRunning(activeStatus) || awaitingPreview) {
@@ -1582,6 +1734,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
 
       function teardown() {
         destroyed = true;
+        previewLoadGeneration += 1;
         if (resizeObserver) resizeObserver.disconnect();
         window.clearTimeout(fallbackTimer);
         clearPollTimer();
@@ -1597,6 +1750,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         videoElement.pause();
         videoElement.removeAttribute("src");
         videoElement.load();
+        revokePreviewObjectUrl();
       }
 
       window.addEventListener("message", function (event) {
@@ -1628,19 +1782,23 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       window.addEventListener("openai:set_globals", useOpenAiInitialResult, { passive: true });
       videoElement.addEventListener("loadedmetadata", handleLoadedMetadata);
       videoElement.addEventListener("error", function () {
+        if (activePreviewMedia && typeof activePreviewMedia.resource_uri === "string") {
+          localPreviewFailed();
+          return;
+        }
         previewLoading = false;
         previewLoadKind = undefined;
         draftBeforeMediaRefresh = undefined;
         clearPreviewRenewal();
-        if (activeJobId && previewUrl && previewRetryCount < 1) {
+        if (activeJobId && activePreviewMedia && typeof activePreviewMedia.url === "string" && previewRetryCount < 1) {
           previewRetryCount += 1;
           mediaMessageElement.textContent = "Retrying the local video…";
           mediaMessageElement.hidden = false;
           window.clearTimeout(previewRetryTimer);
           previewRetryTimer = window.setTimeout(function () {
             previewRetryTimer = undefined;
-            if (destroyed || !previewUrl) return;
-            videoElement.src = previewUrl;
+            if (destroyed || !activePreviewMedia || typeof activePreviewMedia.url !== "string") return;
+            videoElement.src = activePreviewMedia.url;
             videoElement.load();
           }, 500);
         } else {
@@ -1744,7 +1902,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       fallbackTimer = window.setTimeout(useOpenAiInitialResult, 1200);
       request("ui/initialize", {
         protocolVersion: protocolVersion,
-        appInfo: { name: "pippit-video-editor", title: "Pippit video editor", version: "0.2.6" },
+        appInfo: { name: "pippit-video-editor", title: "Pippit video editor", version: "0.2.7" },
         appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] }
       }).then(function (result) {
         protocolReady = true;
@@ -1753,11 +1911,16 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           ? result.hostCapabilities
           : {};
         hostContext = result && result.hostContext && typeof result.hostContext === "object" ? result.hostContext : {};
+        serverResourcesAvailable = Boolean(capabilities.serverResources);
         serverToolsAvailable = Boolean(capabilities.serverTools);
         post({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
         if (pendingPreviewRetry) {
           pendingPreviewRetry = false;
-          void refresh(false);
+          if (activeJobId && activePreviewMedia && typeof activePreviewMedia.resource_uri === "string") {
+            setPreview({ id: activeJobId }, activePreviewMedia);
+          } else {
+            void refresh(false);
+          }
         }
         schedulePoll(0);
         if (typeof ResizeObserver === "function") {

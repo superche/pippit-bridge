@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
   createPippitWidgetMediaServer,
+  type PippitWidgetMediaServer,
 } from "../src/widget-media.ts"
 import { PIPPIT_WIDGET_URI } from "../src/widget.ts"
 
@@ -22,13 +23,52 @@ async function artifactFiles(root: string): Promise<string[]> {
   return entries.filter(entry => entry.isFile()).map(entry => join(root, entry.name))
 }
 
+async function readResourceBytes(
+  media: Pick<PippitWidgetMediaServer, "readResource">,
+  resourceUri: string,
+  totalBytes: number,
+  chunkBytes = 3,
+): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = []
+  for (let offset = 0; offset < totalBytes; offset += chunkBytes) {
+    const expectedBytes = Math.min(chunkBytes, totalBytes - offset)
+    const uri = new URL(resourceUri)
+    uri.searchParams.set("length", String(expectedBytes))
+    uri.searchParams.set("offset", String(offset))
+    const result = await media.readResource(uri.toString()) as {
+      contents?: Array<{
+        _meta?: { "pippit/chunk"?: Record<string, unknown> }
+        blob?: string
+        mimeType?: string
+        uri?: string
+      }>
+    } | undefined
+    const content = result?.contents?.[0]
+    expect(content).toMatchObject({
+      _meta: {
+        "pippit/chunk": {
+          bytes: expectedBytes,
+          complete: offset + expectedBytes === totalBytes,
+          offset,
+          total_bytes: totalBytes,
+        },
+      },
+      mimeType: "video/mp4",
+      uri: uri.toString(),
+    })
+    if (content?.blob === undefined) throw new Error("Missing media resource blob.")
+    chunks.push(Buffer.from(content.blob, "base64"))
+  }
+  return new Uint8Array(Buffer.concat(chunks))
+}
+
 afterEach(async () => {
   await Promise.all([...cleanupRoots].map(async root => rm(root, { force: true, recursive: true })))
   cleanupRoots.clear()
 })
 
 describe("Pippit widget media server", () => {
-  it("downloads a complete artifact before issuing a signed loopback URL, then serves local Range", async () => {
+  it("downloads a complete artifact before issuing a stable local resource, then reads private chunks", async () => {
     const root = await artifactRoot()
     const bytes = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112])
     const downloadVideo = vi.fn(async (_jobId: string, _options?: { readonly index?: number; readonly signal?: AbortSignal }) => new Response(bytes, {
@@ -37,8 +77,7 @@ describe("Pippit widget media server", () => {
     const media = createPippitWidgetMediaServer({ artifactRoot: root, backend: { downloadVideo } })
     try {
       const preview = await media.preparePreview("job_123", 2)
-      const url = preview.url
-      expect(new URL(url).hostname).toBe("127.0.0.1")
+      expect(preview.resourceUri).toMatch(/^pippit-video:\/\/artifact\/[a-f0-9]{64}$/u)
       expect(preview.localPath).toBe(join(root, preview.filename))
       expect(preview.bytes).toBe(bytes.byteLength)
       expect(downloadVideo).toHaveBeenCalledOnce()
@@ -54,22 +93,15 @@ describe("Pippit widget media server", () => {
       if (resource === undefined) throw new Error("Missing widget resource in test.")
       const metadata = (resource.contents as Array<{ _meta?: Record<string, unknown> }>)[0]?._meta
       expect((metadata?.ui as { csp?: { resourceDomains?: string[] } } | undefined)?.csp?.resourceDomains).toEqual([
-        new URL(url).origin,
+        "blob:",
       ])
-
-      const response = await fetch(url, { headers: { range: "bytes=0-3" } })
-      expect(response.status).toBe(206)
-      expect(response.headers.get("content-type")).toBe("video/mp4")
-      expect(response.headers.get("content-range")).toBe(`bytes 0-3/${bytes.byteLength}`)
-      expect(response.headers.get("cache-control")).toBe("private, no-store")
-      expect(response.headers.get("access-control-allow-origin")).toBe("*")
-      expect(response.headers.get("cross-origin-resource-policy")).toBe("cross-origin")
-      expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes.slice(0, 4))
-      const head = await fetch(url, { method: "HEAD" })
-      expect(head.status).toBe(200)
-      expect(head.headers.get("accept-ranges")).toBe("bytes")
-      expect(head.headers.get("content-length")).toBe(String(bytes.byteLength))
-      expect((await head.arrayBuffer()).byteLength).toBe(0)
+      await expect(media.listResourceTemplates?.()).resolves.toMatchObject({
+        resourceTemplates: [{
+          mimeType: "video/mp4",
+          uriTemplate: "pippit-video://artifact/{artifact_id}{?length,offset}",
+        }],
+      })
+      expect(await readResourceBytes(media, preview.resourceUri, bytes.byteLength)).toEqual(bytes)
       expect(downloadVideo).toHaveBeenCalledOnce()
     } finally {
       await media.close()
@@ -84,16 +116,15 @@ describe("Pippit widget media server", () => {
       return new Response(bytes, { headers: { "content-type": "video/mp4" } })
     })
     const first = createPippitWidgetMediaServer({ artifactRoot: root, backend: { downloadVideo } })
-    const urls = await Promise.all(Array.from({ length: 20 }, async () => first.previewUrl("job_shared", 0)))
-    expect(new Set(urls).size).toBe(1)
+    const previews = await Promise.all(Array.from({ length: 20 }, async () => first.preparePreview("job_shared", 0)))
+    expect(new Set(previews.map(preview => preview.resourceUri)).size).toBe(1)
     expect(downloadVideo).toHaveBeenCalledOnce()
     await first.close()
 
     const shouldNotDownload = vi.fn(async () => { throw new Error("unexpected download") })
     const restarted = createPippitWidgetMediaServer({ artifactRoot: root, backend: { downloadVideo: shouldNotDownload } })
     try {
-      const response = await fetch(await restarted.previewUrl("job_shared", 0))
-      expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes)
+      expect(await readResourceBytes(restarted, previews[0]!.resourceUri, bytes.byteLength)).toEqual(bytes)
       expect(shouldNotDownload).not.toHaveBeenCalled()
       expect(await artifactFiles(root)).toHaveLength(1)
     } finally {
@@ -101,7 +132,7 @@ describe("Pippit widget media server", () => {
     }
   })
 
-  it("waits for the full local download before resolving previewUrl", async () => {
+  it("waits for the full local download before resolving the preview resource", async () => {
     const root = await artifactRoot()
     let finish: (() => void) | undefined
     const body = new ReadableStream<Uint8Array>({
@@ -119,86 +150,31 @@ describe("Pippit widget media server", () => {
     })
     try {
       let resolved = false
-      const preview = media.previewUrl("job_stream", 0).then((url) => {
+      const preview = media.preparePreview("job_stream", 0).then((prepared) => {
         resolved = true
-        return url
+        return prepared
       })
       await new Promise(resolveDelay => setTimeout(resolveDelay, 10))
       expect(resolved).toBe(false)
       finish?.()
-      const response = await fetch(await preview)
-      expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3, 4]))
+      expect(await readResourceBytes(media, (await preview).resourceUri, 4)).toEqual(new Uint8Array([1, 2, 3, 4]))
     } finally {
       await media.close()
     }
   })
 
-  it("supports open-ended and suffix ranges and rejects malformed or unsatisfiable ranges", async () => {
-    const root = await artifactRoot()
-    const bytes = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7])
-    const media = createPippitWidgetMediaServer({
-      artifactRoot: root,
-      backend: { async downloadVideo() { return new Response(bytes, { headers: { "content-type": "video/mp4" } }) } },
-    })
-    try {
-      const url = await media.previewUrl("job_ranges", 0)
-      const openEnded = await fetch(url, { headers: { range: "bytes=3-" } })
-      expect(openEnded.status).toBe(206)
-      expect(openEnded.headers.get("content-range")).toBe("bytes 3-7/8")
-      expect(new Uint8Array(await openEnded.arrayBuffer())).toEqual(bytes.slice(3))
-
-      const suffix = await fetch(url, { headers: { range: "bytes=-3" } })
-      expect(suffix.status).toBe(206)
-      expect(suffix.headers.get("content-range")).toBe("bytes 5-7/8")
-      expect(new Uint8Array(await suffix.arrayBuffer())).toEqual(bytes.slice(5))
-
-      for (const range of ["bytes=9-", "bytes=4-2", "bytes=0-1,3-4", "items=0-1"]) {
-        const invalid = await fetch(url, { headers: { range } })
-        expect(invalid.status).toBe(416)
-        expect(invalid.headers.get("content-range")).toBe("bytes */8")
-      }
-    } finally {
-      await media.close()
-    }
-  })
-
-  it("keeps plugin-lifecycle capabilities stable and rejects tampering without touching the artifact backend", async () => {
-    const root = await artifactRoot()
-    let now = 1_000_000
-    const downloadVideo = vi.fn(async () => new Response("video", { headers: { "content-type": "video/mp4" } }))
-    const media = createPippitWidgetMediaServer({
-      artifactRoot: root,
-      backend: { downloadVideo },
-      now: () => now,
-      signingKey: new Uint8Array(32).fill(7),
-    })
-    try {
-      const url = await media.previewUrl("job_123", 0)
-      expect(downloadVideo).toHaveBeenCalledOnce()
-      const tampered = new URL(url)
-      tampered.searchParams.set("token", `${tampered.searchParams.get("token")}x`)
-      expect((await fetch(tampered)).status).toBe(401)
-      now += 24 * 60 * 60 * 1_000
-      expect((await fetch(url)).status).toBe(200)
-      expect(downloadVideo).toHaveBeenCalledOnce()
-    } finally {
-      await media.close()
-    }
-  })
-
-  it("reuses one stable URL and does not download the same local file twice", async () => {
+  it("reuses one stable resource identity and does not download the same local file twice", async () => {
     const root = await artifactRoot()
     const downloadVideo = vi.fn(async () => new Response("video", { headers: { "content-type": "video/mp4" } }))
     const media = createPippitWidgetMediaServer({
       artifactRoot: root,
       backend: { downloadVideo },
-      now: () => 1_000_000,
-      signingKey: new Uint8Array(32).fill(9),
     })
     try {
-      const first = await media.previewUrl("job_123", 0)
-      const reused = await media.previewUrl("job_123", 0)
-      expect(reused).toBe(first)
+      const first = await media.preparePreview("job_123", 0)
+      const reused = await media.preparePreview("job_123", 0)
+      expect(reused.resourceUri).toBe(first.resourceUri)
+      expect(reused.localPath).toBe(first.localPath)
       expect(downloadVideo).toHaveBeenCalledOnce()
     } finally {
       await media.close()
@@ -219,7 +195,7 @@ describe("Pippit widget media server", () => {
         maxArtifactBytes: index === 1 ? 4 : 1024,
       })
       try {
-        await expect(media.previewUrl(`job_bad_${index}`, 0)).rejects.toThrow()
+        await expect(media.preparePreview(`job_bad_${index}`, 0)).rejects.toThrow()
         expect(await artifactFiles(root)).toEqual([])
       } finally {
         await media.close()
@@ -227,47 +203,69 @@ describe("Pippit widget media server", () => {
     }
   })
 
-  it("closes the loopback listener but keeps the persistent local artifact", async () => {
+  it("rejects malformed, oversized, and out-of-bounds local resource reads", async () => {
+    const root = await artifactRoot()
+    const bytes = new Uint8Array([1, 2, 3, 4, 5, 6])
+    const media = createPippitWidgetMediaServer({
+      artifactRoot: root,
+      backend: { async downloadVideo() { return new Response(bytes, { headers: { "content-type": "video/mp4" } }) } },
+      maxResourceChunkBytes: 4,
+    })
+    try {
+      const preview = await media.preparePreview("job_resource_validation", 0)
+      const malformed = [
+        "pippit-video://artifact/not-a-hash?length=1&offset=0",
+        `${preview.resourceUri}?length=1&length=1&offset=0`,
+        `${preview.resourceUri}?length=1`,
+        `${preview.resourceUri}?length=0&offset=0`,
+        `${preview.resourceUri}?length=5&offset=0`,
+        `${preview.resourceUri}?length=1&offset=-1`,
+        `${preview.resourceUri}?length=1&offset=${bytes.byteLength}`,
+        preview.resourceUri.replace("pippit-video:", "file:"),
+      ]
+      for (const uri of malformed) expect(await media.readResource(uri)).toBeUndefined()
+      expect(await readResourceBytes(media, preview.resourceUri, bytes.byteLength, 4)).toEqual(bytes)
+    } finally {
+      await media.close()
+    }
+  })
+
+  it("keeps oversized inline previews as ordinary local files but refuses to serialize them", async () => {
+    const root = await artifactRoot()
+    const bytes = new Uint8Array([1, 2, 3, 4, 5])
+    const media = createPippitWidgetMediaServer({
+      artifactRoot: root,
+      backend: { async downloadVideo() { return new Response(bytes, { headers: { "content-type": "video/mp4" } }) } },
+      maxArtifactBytes: bytes.byteLength,
+      maxInlinePreviewBytes: bytes.byteLength - 1,
+    })
+    try {
+      const preview = await media.preparePreview("job_inline_limit", 0)
+      expect(new Uint8Array(await readFile(preview.localPath))).toEqual(bytes)
+      const uri = new URL(preview.resourceUri)
+      uri.searchParams.set("length", "1")
+      uri.searchParams.set("offset", "0")
+      await expect(media.readResource(uri.toString())).rejects.toThrow(/unsafe/u)
+      expect(new Uint8Array(await readFile(preview.localPath))).toEqual(bytes)
+    } finally {
+      await media.close()
+    }
+  })
+
+  it("closes resource access but keeps the persistent local artifact", async () => {
     const root = await artifactRoot()
     const media = createPippitWidgetMediaServer({
       artifactRoot: root,
       backend: { async downloadVideo() { return new Response("video", { headers: { "content-type": "video/mp4" } }) } },
     })
-    const url = await media.previewUrl("job_123", 0)
+    const preview = await media.preparePreview("job_123", 0)
     const filesBeforeClose = await artifactFiles(root)
     await media.close()
-    await expect(fetch(url)).rejects.toThrow()
+    const chunkUri = new URL(preview.resourceUri)
+    chunkUri.searchParams.set("length", "1")
+    chunkUri.searchParams.set("offset", "0")
+    await expect(media.readResource(chunkUri.toString())).rejects.toThrow(/closed/u)
     expect(await artifactFiles(root)).toEqual(filesBeforeClose)
-  })
-
-  it("answers private-network preflight requests from the plugin listener", async () => {
-    const root = await artifactRoot()
-    const media = createPippitWidgetMediaServer({
-      artifactRoot: root,
-      backend: {
-        async downloadVideo() {
-          return new Response("video", { headers: { "content-type": "video/mp4" } })
-        },
-      },
-    })
-    try {
-      const url = await media.previewUrl("job_pna", 0)
-      const response = await fetch(url, {
-        headers: {
-          "access-control-request-headers": "range",
-          "access-control-request-method": "GET",
-          "access-control-request-private-network": "true",
-          origin: "https://chatgpt.com",
-        },
-        method: "OPTIONS",
-      })
-      expect(response.status).toBe(204)
-      expect(response.headers.get("access-control-allow-private-network")).toBe("true")
-      expect(response.headers.get("access-control-allow-headers")).toContain("range")
-      expect(response.headers.get("vary")).toContain("Access-Control-Request-Private-Network")
-    } finally {
-      await media.close()
-    }
   })
 
   it("does not change permissions on an existing safe user output directory", async () => {

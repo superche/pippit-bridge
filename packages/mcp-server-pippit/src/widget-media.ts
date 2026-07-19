@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import { constants } from "node:fs"
 import {
   chmod,
@@ -9,8 +9,6 @@ import {
   unlink,
   type FileHandle,
 } from "node:fs/promises"
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
-import type { AddressInfo } from "node:net"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
 
 import type { PippitVideoDownloadOptions } from "./contracts.ts"
@@ -21,7 +19,11 @@ import {
 } from "./widget-protocol.ts"
 
 const DEFAULT_MAX_ARTIFACT_BYTES = 1024 * 1024 * 1024
+const DEFAULT_MAX_INLINE_PREVIEW_BYTES = 256 * 1024 * 1024
+const DEFAULT_MAX_RESOURCE_CHUNK_BYTES = 1024 * 1024
 const ARTIFACT_ID_PATTERN = /^[a-f0-9]{64}$/u
+const ARTIFACT_RESOURCE_HOST = "artifact"
+const ARTIFACT_RESOURCE_PROTOCOL = "pippit-video:"
 
 export interface PippitWidgetMediaBackend {
   downloadVideo(jobId: string, options?: PippitVideoDownloadOptions): Promise<Response>
@@ -30,36 +32,21 @@ export interface PippitWidgetMediaBackend {
 export interface PippitWidgetMediaServer extends PippitMcpResourceProvider {
   close(): Promise<void>
   preparePreview(jobId: string, index: number): Promise<PippitPreparedWidgetMedia>
-  previewUrl(jobId: string, index: number): Promise<string>
 }
 
 export interface PippitPreparedWidgetMedia {
   readonly bytes: number
   readonly filename: string
   readonly localPath: string
-  readonly url: string
+  readonly resourceUri: string
 }
 
 export interface PippitWidgetMediaServerOptions {
   readonly artifactRoot: string | (() => Promise<string>)
   readonly backend: PippitWidgetMediaBackend
   readonly maxArtifactBytes?: number
-  readonly now?: () => number
-  readonly signingKey?: Uint8Array
-}
-
-export interface PippitWidgetMediaRequestOptions {
-  readonly artifactRoot: string
-  readonly expectedOrigin: string
-  readonly now?: () => number
-  readonly signingKey: Uint8Array
-}
-
-interface MediaTokenPayload {
-  readonly artifactId: string
-  readonly expiresAt?: number
-  readonly nonce?: string
-  readonly version?: 2
+  readonly maxInlinePreviewBytes?: number
+  readonly maxResourceChunkBytes?: number
 }
 
 interface CachedArtifact {
@@ -69,62 +56,10 @@ interface CachedArtifact {
   readonly size: number
 }
 
-interface ByteRange {
-  readonly end: number
-  readonly start: number
-}
-
-function json(response: ServerResponse, statusCode: number, body: unknown): void {
-  const value = JSON.stringify(body)
-  response.statusCode = statusCode
-  response.setHeader("access-control-allow-origin", "*")
-  response.setHeader("access-control-allow-private-network", "true")
-  response.setHeader("access-control-expose-headers", "accept-ranges, content-length, content-range")
-  response.setHeader("cache-control", "no-store")
-  response.setHeader("content-length", Buffer.byteLength(value))
-  response.setHeader("content-type", "application/json; charset=utf-8")
-  response.setHeader("vary", "Access-Control-Request-Headers, Access-Control-Request-Method, Access-Control-Request-Private-Network, Origin")
-  response.end(value)
-}
-
-function tokenSignature(key: Uint8Array, encodedPayload: string): Buffer {
-  return createHmac("sha256", key).update(encodedPayload).digest()
-}
-
-function decodeToken(key: Uint8Array, token: string, now: () => number): MediaTokenPayload {
-  const separator = token.lastIndexOf(".")
-  if (separator <= 0 || separator === token.length - 1) throw new Error("invalid token")
-  const encodedPayload = token.slice(0, separator)
-  const suppliedSignature = Buffer.from(token.slice(separator + 1), "base64url")
-  const expectedSignature = tokenSignature(key, encodedPayload)
-  if (
-    suppliedSignature.byteLength !== expectedSignature.byteLength ||
-    !timingSafeEqual(suppliedSignature, expectedSignature)
-  ) {
-    throw new Error("invalid token")
-  }
-  const parsed = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as unknown
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid token")
-  const payload = parsed as Record<string, unknown>
-  if (typeof payload.artifactId !== "string" || !ARTIFACT_ID_PATTERN.test(payload.artifactId)) {
-    throw new Error("invalid token")
-  }
-  if (payload.version === 2) {
-    if (payload.expiresAt !== undefined || payload.nonce !== undefined) throw new Error("invalid token")
-    return { artifactId: payload.artifactId, version: 2 }
-  }
-  if (
-    typeof payload.nonce !== "string" ||
-    !/^[A-Za-z0-9_-]{16}$/u.test(payload.nonce) ||
-    typeof payload.expiresAt !== "number" ||
-    !Number.isSafeInteger(payload.expiresAt) ||
-    payload.expiresAt <= Math.floor(now() / 1_000)
-  ) throw new Error("invalid token")
-  return {
-    artifactId: payload.artifactId,
-    expiresAt: payload.expiresAt,
-    nonce: payload.nonce,
-  }
+interface ArtifactResourceRequest {
+  readonly artifactId: string
+  readonly length: number
+  readonly offset: number
 }
 
 function playableContentType(value: string | null): boolean {
@@ -140,6 +75,113 @@ function artifactId(jobId: string, index: number): string {
 
 function artifactPath(root: string, id: string): string {
   return join(root, `pippit-video-${id}.mp4`)
+}
+
+function artifactResourceUri(id: string): string {
+  return `${ARTIFACT_RESOURCE_PROTOCOL}//${ARTIFACT_RESOURCE_HOST}/${id}`
+}
+
+function parseArtifactResourceUri(uri: string, maxChunkBytes: number): ArtifactResourceRequest | undefined {
+  let parsed: URL
+  try {
+    parsed = new URL(uri)
+  } catch {
+    return undefined
+  }
+  if (
+    parsed.protocol !== ARTIFACT_RESOURCE_PROTOCOL ||
+    parsed.hostname !== ARTIFACT_RESOURCE_HOST ||
+    parsed.port !== "" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.hash !== ""
+  ) return undefined
+  const resourceArtifactId = parsed.pathname.slice(1)
+  if (
+    !ARTIFACT_ID_PATTERN.test(resourceArtifactId) ||
+    parsed.pathname !== `/${resourceArtifactId}`
+  ) return undefined
+  const keys = [...parsed.searchParams.keys()]
+  if (
+    keys.length !== 2 ||
+    new Set(keys).size !== 2 ||
+    !keys.includes("length") ||
+    !keys.includes("offset")
+  ) return undefined
+  const length = Number(parsed.searchParams.get("length"))
+  const offset = Number(parsed.searchParams.get("offset"))
+  if (
+    !Number.isSafeInteger(length) ||
+    !Number.isSafeInteger(offset) ||
+    length < 1 ||
+    length > maxChunkBytes ||
+    offset < 0
+  ) return undefined
+  return { artifactId: resourceArtifactId, length, offset }
+}
+
+async function readArtifactResource(
+  uri: string,
+  resolveRoot: () => Promise<string>,
+  maxReadableBytes: number,
+  maxChunkBytes: number,
+): Promise<Readonly<Record<string, unknown>> | undefined> {
+  const request = parseArtifactResourceUri(uri, maxChunkBytes)
+  if (request === undefined) return undefined
+  const root = await resolveRoot()
+  let handle: FileHandle
+  try {
+    handle = await open(artifactPath(root, request.artifactId), constants.O_RDONLY | constants.O_NOFOLLOW)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+    throw error
+  }
+  try {
+    const stats = await handle.stat()
+    if (
+      !stats.isFile() ||
+      stats.size <= 0 ||
+      stats.size > maxReadableBytes ||
+      (process.platform !== "win32" && (stats.mode & 0o077) !== 0)
+    ) {
+      throw new Error("The local Pippit video artifact is unsafe.")
+    }
+    if (request.offset >= stats.size) return undefined
+    const requestedBytes = Math.min(request.length, stats.size - request.offset)
+    const buffer = Buffer.allocUnsafe(requestedBytes)
+    let bytesRead = 0
+    while (bytesRead < requestedBytes) {
+      const next = await handle.read(
+        buffer,
+        bytesRead,
+        requestedBytes - bytesRead,
+        request.offset + bytesRead,
+      )
+      if (next.bytesRead === 0) {
+        throw new Error("The local Pippit video artifact changed while being read.")
+      }
+      bytesRead += next.bytesRead
+    }
+    return {
+      contents: [
+        {
+          _meta: {
+            "pippit/chunk": {
+              bytes: bytesRead,
+              complete: request.offset + bytesRead === stats.size,
+              offset: request.offset,
+              total_bytes: stats.size,
+            },
+          },
+          blob: buffer.toString("base64"),
+          mimeType: "video/mp4",
+          uri,
+        },
+      ],
+    }
+  } finally {
+    await handle.close()
+  }
 }
 
 async function ensurePrivateDirectory(path: string): Promise<void> {
@@ -291,181 +333,28 @@ async function downloadArtifact(input: {
   }
 }
 
-function parseRange(value: string | undefined, size: number): ByteRange | undefined | null {
-  if (value === undefined) return undefined
-  const match = /^bytes=(\d*)-(\d*)$/u.exec(value.trim())
-  if (match === null || (match[1] === "" && match[2] === "")) return null
-  if (match[1] === "") {
-    const suffix = Number(match[2])
-    if (!Number.isSafeInteger(suffix) || suffix <= 0) return null
-    return { end: size - 1, start: Math.max(0, size - suffix) }
-  }
-  const start = Number(match[1])
-  const requestedEnd = match[2] === "" ? size - 1 : Number(match[2])
-  if (
-    !Number.isSafeInteger(start) ||
-    !Number.isSafeInteger(requestedEnd) ||
-    start < 0 ||
-    requestedEnd < start ||
-    start >= size
-  ) {
-    return null
-  }
-  return { end: Math.min(size - 1, requestedEnd), start }
-}
-
-async function serveArtifact(
-  request: IncomingMessage,
-  response: ServerResponse,
-  payload: MediaTokenPayload,
-  root: string,
-  now: () => number,
-): Promise<void> {
-  const path = artifactPath(root, payload.artifactId)
-  let handle: FileHandle
-  try {
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
-  } catch (error) {
-    const status = (error as NodeJS.ErrnoException).code === "ENOENT" ? 404 : 500
-    json(response, status, { error: status === 404 ? "The local video artifact was not found." : "The local video artifact is unavailable." })
-    return
-  }
-
-  try {
-    const stats = await handle.stat()
-    if (!stats.isFile() || stats.size <= 0 || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) {
-      json(response, 500, { error: "The local video artifact is unsafe." })
-      return
-    }
-    const range = parseRange(request.headers.range, stats.size)
-    if (range === null) {
-      response.statusCode = 416
-      response.setHeader("accept-ranges", "bytes")
-      response.setHeader("access-control-allow-origin", "*")
-      response.setHeader("access-control-allow-private-network", "true")
-      response.setHeader("access-control-expose-headers", "accept-ranges, content-length, content-range")
-      response.setHeader("cache-control", "no-store")
-      response.setHeader("content-range", `bytes */${stats.size}`)
-      response.setHeader("vary", "Access-Control-Request-Headers, Access-Control-Request-Method, Access-Control-Request-Private-Network, Origin")
-      response.end()
-      return
-    }
-    const start = range?.start ?? 0
-    const end = range?.end ?? stats.size - 1
-    const contentLength = end - start + 1
-    response.statusCode = range === undefined ? 200 : 206
-    response.setHeader("accept-ranges", "bytes")
-    response.setHeader("access-control-allow-origin", "*")
-    response.setHeader("access-control-allow-private-network", "true")
-    response.setHeader("access-control-expose-headers", "accept-ranges, content-length, content-range")
-    response.setHeader(
-      "cache-control",
-      payload.version === 2
-        ? "private, no-store"
-        : `private, max-age=${Math.max(0, (payload.expiresAt ?? 0) - Math.floor(now() / 1_000))}`,
-    )
-    response.setHeader("content-length", contentLength)
-    response.setHeader("content-type", "video/mp4")
-    response.setHeader("cross-origin-resource-policy", "cross-origin")
-    response.setHeader("timing-allow-origin", "*")
-    response.setHeader("vary", "Access-Control-Request-Headers, Access-Control-Request-Method, Access-Control-Request-Private-Network, Origin")
-    response.setHeader("x-content-type-options", "nosniff")
-    if (range !== undefined) response.setHeader("content-range", `bytes ${start}-${end}/${stats.size}`)
-    if (request.method === "HEAD") {
-      response.end()
-      return
-    }
-    const stream = handle.createReadStream({ autoClose: false, end, start })
-    stream.once("error", () => {
-      if (!response.writableEnded) response.destroy()
-    })
-    response.once("close", () => stream.destroy())
-    await new Promise<void>((resolveStream) => {
-      stream.once("close", resolveStream)
-      stream.pipe(response)
-    })
-  } finally {
-    await handle.close().catch(() => undefined)
-  }
-}
-
-export async function handlePippitWidgetMediaRequest(
-  request: IncomingMessage,
-  response: ServerResponse,
-  options: PippitWidgetMediaRequestOptions,
-): Promise<void> {
-  const now = options.now ?? Date.now
-  let expectedOrigin: URL
-  try {
-    expectedOrigin = new URL(options.expectedOrigin)
-  } catch {
-    json(response, 500, { error: "The media server origin is invalid." })
-    return
-  }
-  if (
-    expectedOrigin.protocol !== "http:" ||
-    expectedOrigin.hostname !== "127.0.0.1" ||
-    expectedOrigin.username !== "" ||
-    expectedOrigin.password !== "" ||
-    expectedOrigin.pathname !== "/" ||
-    expectedOrigin.search !== "" ||
-    expectedOrigin.hash !== "" ||
-    request.headers.host !== expectedOrigin.host
-  ) {
-    json(response, 403, { error: "The media request Host is not allowed." })
-    return
-  }
-  if (request.method === "OPTIONS") {
-    response.statusCode = 204
-    response.setHeader("access-control-allow-headers", "range")
-    response.setHeader("access-control-allow-methods", "GET, HEAD, OPTIONS")
-    response.setHeader("access-control-allow-origin", "*")
-    response.setHeader("access-control-allow-private-network", "true")
-    response.setHeader("access-control-expose-headers", "accept-ranges, content-length, content-range")
-    response.setHeader("cache-control", "no-store")
-    response.setHeader("vary", "Access-Control-Request-Headers, Access-Control-Request-Method, Access-Control-Request-Private-Network, Origin")
-    response.end()
-    return
-  }
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    response.setHeader("allow", "GET, HEAD, OPTIONS")
-    json(response, 405, { error: "Method not allowed." })
-    return
-  }
-  const url = new URL(request.url ?? "/", expectedOrigin)
-  if (url.pathname !== "/media") {
-    json(response, 404, { error: "Not found." })
-    return
-  }
-  const token = url.searchParams.get("token")
-  if (token === null || token === "") {
-    json(response, 400, { error: "A media token is required." })
-    return
-  }
-  let payload: MediaTokenPayload
-  try {
-    payload = decodeToken(options.signingKey, token, now)
-  } catch {
-    json(response, 401, { error: "The media token is invalid or expired." })
-    return
-  }
-  await serveArtifact(request, response, payload, options.artifactRoot, now)
-}
-
 export function createPippitWidgetMediaServer(
   options: PippitWidgetMediaServerOptions,
 ): PippitWidgetMediaServer {
-  const now = options.now ?? Date.now
   const maxArtifactBytes = options.maxArtifactBytes ?? DEFAULT_MAX_ARTIFACT_BYTES
+  const maxInlinePreviewBytes = options.maxInlinePreviewBytes ?? Math.min(
+    DEFAULT_MAX_INLINE_PREVIEW_BYTES,
+    maxArtifactBytes,
+  )
+  const maxResourceChunkBytes = options.maxResourceChunkBytes ?? DEFAULT_MAX_RESOURCE_CHUNK_BYTES
   if (!Number.isSafeInteger(maxArtifactBytes) || maxArtifactBytes < 1) {
     throw new Error("Widget media artifact limit must be a positive integer.")
   }
-  const signingKey = options.signingKey ?? randomBytes(32)
-  if (signingKey.byteLength < 32) throw new Error("Widget media signing key must contain at least 32 bytes.")
-
-  let origin: string | undefined
-  let server: Server | undefined
-  let startPromise: Promise<string> | undefined
+  if (!Number.isSafeInteger(maxResourceChunkBytes) || maxResourceChunkBytes < 1) {
+    throw new Error("Widget media resource chunk limit must be a positive integer.")
+  }
+  if (
+    !Number.isSafeInteger(maxInlinePreviewBytes) ||
+    maxInlinePreviewBytes < 1 ||
+    maxInlinePreviewBytes > maxArtifactBytes
+  ) {
+    throw new Error("Widget inline preview limit must be a positive integer no larger than the artifact limit.")
+  }
   let rootPromise: Promise<string> | undefined
   let closePromise: Promise<void> | undefined
   let closed = false
@@ -518,54 +407,13 @@ export function createPippitWidgetMediaServer(
     return await active
   }
 
-  const start = async (): Promise<string> => {
-    if (closed) throw new Error("The widget media server is closed.")
-    if (origin !== undefined) return origin
-    startPromise ??= new Promise<string>((resolveStart, reject) => {
-      const listener = createServer((request, response) => {
-        void (async () => {
-          if (origin === undefined) throw new Error("The media server has not started.")
-          await handlePippitWidgetMediaRequest(request, response, {
-            artifactRoot: await resolveArtifactRoot(),
-            expectedOrigin: origin,
-            now,
-            signingKey,
-          })
-        })().catch(() => {
-          if (!response.headersSent) json(response, 500, { error: "The media server failed." })
-          else if (!response.writableEnded) response.end()
-        })
-      })
-      listener.once("error", reject)
-      listener.listen(0, "127.0.0.1", () => {
-        listener.removeListener("error", reject)
-        const address = listener.address() as AddressInfo
-        server = listener
-        origin = `http://127.0.0.1:${address.port}`
-        listener.unref()
-        resolveStart(origin)
-      })
-    }).catch((error: unknown) => {
-      startPromise = undefined
-      throw error
-    })
-    return await startPromise
-  }
-
   const preparePreview = async (jobId: string, index: number): Promise<PippitPreparedWidgetMedia> => {
     const cached = await ensureArtifact(jobId, index)
-    const activeOrigin = await start()
-    if (closed) throw new Error("The widget media server is closed.")
-    const payload: MediaTokenPayload = { artifactId: cached.artifactId, version: 2 }
-    const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url")
-    const signature = tokenSignature(signingKey, encodedPayload).toString("base64url")
-    const url = new URL("/media", activeOrigin)
-    url.searchParams.set("token", `${encodedPayload}.${signature}`)
     return {
       bytes: cached.size,
       filename: cached.filename,
       localPath: cached.path,
-      url: url.toString(),
+      resourceUri: artifactResourceUri(cached.artifactId),
     }
   }
 
@@ -575,32 +423,35 @@ export function createPippitWidgetMediaServer(
       closePromise ??= (async () => {
         for (const controller of downloadControllers) controller.abort()
         await Promise.allSettled(downloads.values())
-        await startPromise?.catch(() => undefined)
-        const active = server
-        server = undefined
-        origin = undefined
-        if (active === undefined) return
-        await new Promise<void>((resolveClose, reject) => {
-          active.close((error) => {
-            if (error === undefined) resolveClose()
-            else reject(error)
-          })
-          active.closeAllConnections()
-        })
       })()
       await closePromise
     },
     async listResources() {
       return pippitWidgetListResources()
     },
-    preparePreview,
-    async previewUrl(jobId, index) {
-      return (await preparePreview(jobId, index)).url
+    async listResourceTemplates() {
+      return {
+        resourceTemplates: [
+          {
+            description: "Read a bounded chunk from a private local Pippit MP4 artifact.",
+            mimeType: "video/mp4",
+            name: "Pippit local video chunk",
+            uriTemplate: "pippit-video://artifact/{artifact_id}{?length,offset}",
+          },
+        ],
+      }
     },
+    preparePreview,
     async readResource(uri) {
-      const activeOrigin = await start()
       if (closed) throw new Error("The widget media server is closed.")
-      return pippitWidgetReadResource(uri, { origin: activeOrigin })
+      const widgetResource = pippitWidgetReadResource(uri)
+      if (widgetResource !== undefined) return widgetResource
+      return await readArtifactResource(
+        uri,
+        resolveArtifactRoot,
+        maxInlinePreviewBytes,
+        maxResourceChunkBytes,
+      )
     },
   }
 }

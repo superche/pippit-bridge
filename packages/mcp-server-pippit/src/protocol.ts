@@ -1,7 +1,7 @@
 import type { PippitMcpCallToolResult, PippitToolRuntime } from "./tools.ts"
 
 export const PIPPIT_MCP_PROTOCOL_VERSION = "2025-11-25"
-export const PIPPIT_MCP_SERVER_INFO = { name: "pippit-video", version: "0.2.6" } as const
+export const PIPPIT_MCP_SERVER_INFO = { name: "pippit-video", version: "0.2.7" } as const
 
 const SUPPORTED_PROTOCOL_VERSIONS = new Set(["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"])
 
@@ -49,6 +49,7 @@ export interface PippitMcpMessageHandler {
 
 export interface PippitMcpResourceProvider {
   listResources(): Promise<Readonly<Record<string, unknown>>>
+  listResourceTemplates?(): Promise<Readonly<Record<string, unknown>>>
   readResource(uri: string): Promise<Readonly<Record<string, unknown>> | undefined>
 }
 
@@ -102,7 +103,9 @@ export function createPippitMcpMessageHandler(
         return success(id, resource)
       }
       if (message.method === "resources/templates/list" && resources !== undefined) {
-        return success(id, { resourceTemplates: [] })
+        return success(id, resources.listResourceTemplates === undefined
+          ? { resourceTemplates: [] }
+          : await resources.listResourceTemplates())
       }
       if (message.method === "tools/call") {
         if (!isRecord(message.params) || typeof message.params.name !== "string") {

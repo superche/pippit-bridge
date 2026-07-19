@@ -9,7 +9,7 @@ Use the bundled `pippit_*` tools as the only capability layer. The Codex plugin 
 
 ## Configuration boundary
 
-On a local Codex plugin, stdio MCP, or local ChatGPT App install, do not ask the user to configure internal facade credentials. Installation and MCP discovery are side-effect free. On the first actual `pippit_*` tool call, the shared MCP layer idempotently creates or reconnects to one user-level, loopback-only Pippit Facade runtime. Its internal runtime, management, encryption, job-signing, and ChatGPT media-signing keys stay in private user state outside the plugin cache and project directory. Codex/stdio local preview URLs instead use a process-random capability key that is never persisted.
+On a local Codex plugin, stdio MCP, or local ChatGPT App install, do not ask the user to configure internal facade credentials. Installation and MCP discovery are side-effect free. On the first actual `pippit_*` tool call, the shared MCP layer idempotently creates or reconnects to one user-level, loopback-only Pippit Facade runtime. Its internal runtime, management, encryption, job-signing, and ChatGPT media-signing keys stay in private user state outside the plugin cache and project directory. Codex/stdio previews use the host-proxied MCP resource bridge and do not expose a loopback or upstream media URL.
 
 An operator may instead configure an external facade by setting both `PIPPIT_FACADE_BASE_URL` and `PIPPIT_FACADE_API_KEY`. If either one is configured without the other, do not fall back to the local runtime; report the configuration error. `PIPPIT_FACADE_MANAGEMENT_API_KEY` remains optional in external mode and controls whether the account-management tools are available.
 
@@ -24,7 +24,7 @@ External mode also reads:
 
 In local mode, every completed output is first saved as an ordinary MP4 under `~/Movies/Pippit` on macOS or `~/Videos/Pippit` on other platforms. `PIPPIT_MCP_OUTPUT_ROOT` overrides this location. `PIPPIT_BRIDGE_HOME` is only a test/advanced isolation override; when it is set, outputs stay beneath that isolated root. Never suggest placing outputs in a temporary directory, plugin cache, or project checkout.
 
-The Codex plugin/stdio process owns one loopback HTTP media server for its whole stdin lifecycle. It serves only the completed local MP4, supports HEAD and byte ranges, and closes when the plugin process reaches EOF. It never gives the widget an upstream or remote signed media URL. The local file remains after the listener closes.
+For Codex/stdio, the widget reads bounded chunks of the completed MP4 through standard MCP Apps `resources/read`, reconstructs a sandbox-local `blob:` URL, and revokes that URL when the widget changes source or closes. The stable resource identity is derived from the job and output index, so a new stdio process can reopen the same ordinary local file without a stale port. Neither an upstream signed URL nor a local filesystem path is assigned directly to the player.
 
 ## Workflow
 
@@ -32,7 +32,7 @@ The Codex plugin/stdio process owns one loopback HTTP media server for its whole
 2. Use `pippit_switch_access_key` to select the account for new jobs. Switching never changes the credential embedded in an existing job id. Before `pippit_delete_access_key`, show the selected masked account and get explicit confirmation; local deletion does not revoke the AK on the Pippit website.
 3. Call `pippit_list_video_models` when the model or its supported settings are not already known.
 4. Call `pippit_generate_video` once with a new, stable `idempotency_key`. It submits a job and returns immediately; it does not wait for generation to finish.
-5. Save the returned job `id`, then poll `pippit_get_video` until the job reaches a terminal state. A completed `pippit_get_video` first materializes every output as a regular local MP4, then automatically opens the shared video preview and segment-edit widget through the plugin-lifecycle loopback server. Report the local path when it helps the user find the result.
+5. Save the returned job `id`, then poll `pippit_get_video` until the job reaches a terminal state. A completed `pippit_get_video` first materializes every output as a regular local MP4, then automatically opens the shared video preview and segment-edit widget through the MCP Apps local resource bridge. Report the local path when it helps the user find the result.
 6. Call `pippit_download_video` only when the user asks for an additional copy with a chosen relative file name/path. The job must be `completed`; use a new relative `output_path` beneath the configured output root. Existing files are never overwritten. Do not use this tool as a prerequisite for normal playback or initial local persistence.
 
 ## Segment editing

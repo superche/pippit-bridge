@@ -1,6 +1,6 @@
 {
   "name": "pippit-video",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Manage Pippit accounts and create, inspect, locally save, preview, and edit video jobs through one MCP server.",
   "author": {
     "name": "superche"
@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "Pippit Video",
     "shortDescription": "Manage accounts and create or edit Pippit video",
-    "longDescription": "Use the bundled Pippit MCP server to securely enroll and select facade-managed Access Keys, list video models, submit asynchronous generation or segment-edit jobs, automatically save completed MP4 files, and preview them through a plugin-lifecycle local server.",
+    "longDescription": "Use the bundled Pippit MCP server to securely enroll and select facade-managed Access Keys, list video models, submit asynchronous generation or segment-edit jobs, automatically save completed MP4 files, and preview them through the MCP Apps local resource bridge.",
     "developerName": "superche",
     "category": "Creativity",
     "capabilities": [
