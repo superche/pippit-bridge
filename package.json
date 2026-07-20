@@ -29,7 +29,7 @@
     "predev:chatgpt-app": "npm run build:libs",
     "dev:chatgpt-app": "node --env-file=.env --watch --import tsx apps/chatgpt-app/src/server.ts",
     "dev:mcp": "node --env-file=.env packages/mcp-server-pippit/src/stdio.ts",
-    "build": "npm run build:libs && npm run build -w @pippit-bridge/openrouter-facade && npm run build -w @pippit-bridge/opencode-provider && npm run build -w @pippit-bridge/chatgpt-app",
+    "build": "npm run build:libs && npm run build -w @pippit-bridge/openrouter-facade && npm run build -w @pippit-bridge/opencode-plugin && npm run build -w @pippit-bridge/chatgpt-app",
     "start": "node apps/openrouter-facade/dist/server.js",
     "start:chatgpt-app": "node apps/chatgpt-app/dist/server.js",
     "pretypecheck": "npm run build:libs",
@@ -44,6 +44,7 @@
   "devDependencies": {
     "@types/node": "^24.10.1",
     "esbuild": "^0.28.1",
+    "opencode-ai": "1.18.3",
     "oxlint": "^1.32.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",

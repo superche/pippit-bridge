@@ -1,11 +1,6 @@
 import { randomBytes } from "node:crypto"
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
 import type { AddressInfo } from "node:net"
-import type {
-  PippitAccessKeyCredential,
-  PippitAccessKeyEnrollment,
-  PippitAccessKeySelection,
-} from "./contracts.ts"
 
 const DEFAULT_BODY_LIMIT_BYTES = 8 * 1024
 const DEFAULT_MAX_SESSIONS = 128
@@ -53,8 +48,17 @@ export interface PippitEnrollmentManagementBackend {
   addAccessKey(
     input: { readonly accessKey: string; readonly accountName: string },
     signal?: AbortSignal,
-  ): Promise<PippitAccessKeyCredential>
-  switchAccessKey(credentialId: string, signal?: AbortSignal): Promise<PippitAccessKeySelection>
+  ): Promise<{ readonly credential_id: string }>
+  switchAccessKey(
+    credentialId: string,
+    signal?: AbortSignal,
+  ): Promise<{ readonly credential_id: string }>
+}
+
+export interface PippitAccessKeyEnrollment {
+  readonly account_name: string
+  readonly enrollment_url: string
+  readonly expires_at: string
 }
 
 export interface PippitAccessKeyEnrollmentBackend {
@@ -272,7 +276,10 @@ export class PippitAccessKeyEnrollmentServer implements PippitAccessKeyEnrollmen
       return
     }
     const requestOrigin = request.headers.origin
-    if (requestOrigin !== undefined && requestOrigin !== this.#origin) {
+    const invalidOrigin = request.method === "POST"
+      ? requestOrigin !== this.#origin
+      : requestOrigin !== undefined && requestOrigin !== this.#origin
+    if (invalidOrigin) {
       sendHtml(
         response,
         403,

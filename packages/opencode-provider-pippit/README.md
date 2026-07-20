@@ -1,77 +1,74 @@
-# @pippit-bridge/opencode-provider
+# @pippit-bridge/opencode-plugin
 
-OpenCode plugin for Pippit (小云雀) video generation. It uses OpenCode's standard plugin surfaces:
+Pippit（小云雀）的 OpenCode custom-tool plugin，提供：
 
-- `auth` hook for `/connect` and `opencode auth login`
-- `pippit_manage_access_keys` for multi-account configuration, listing, switching, and deletion
-- `pippit_generate_video` and `pippit_get_video` native tools
-- the shared Pippit model catalog from this monorepo
+- `pippit_manage_access_keys`：通过一次性 localhost password form 配置、脱敏列出、切换和删除本地账号；
+- `pippit_generate_video`：上传参考素材并提交异步视频任务；
+- `pippit_get_video`：查询任务并安全下载结果；
+- 共享的 Pippit 视频模型目录与异常恢复幂等账本。
 
-This plugin is a single-user local integration. Its global keyring and idempotency ledger belong to the current OpenCode user state; they are not tenant-isolated or synchronized across machines.
+这是单用户、local-first 的插件。账号库与幂等账本属于当前 OpenCode 用户，不做租户隔离或跨机器同步。
 
-Pippit's current public API is an asynchronous media API, not an AI SDK language model. The package therefore does not pretend that a video model implements OpenCode's `LanguageModelV3` contract.
+## 重要架构边界
 
-## Install
+这个包不是 LLM provider。Pippit 的公开 API 是异步媒体 API，不实现 OpenCode 的语言模型 contract。因此插件：
 
-Install the package into the global OpenCode config:
+- 不返回 `auth` 或 `provider` hook；
+- 不注册 `config.provider.pippit`；
+- 不写入 `models: {}`；
+- 不占用 OpenCode `/connect` auth slot；
+- 不影响宿主默认模型的发现与选择。
+
+## 安装
 
 ```bash
-opencode plugin @pippit-bridge/opencode-provider --global
+opencode plugin @pippit-bridge/opencode-plugin --global
 ```
 
-Or add it to the global or project OpenCode config:
+或写入 OpenCode 配置：
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@pippit-bridge/opencode-provider"]
+  "plugin": ["@pippit-bridge/opencode-plugin"]
 }
 ```
 
-Ask OpenCode to configure a named Pippit account. `pippit_manage_access_keys` with `operation: "configure"` returns `https://xyq.jianying.com` and tells the user to sign in to the target account and issue an AK from the top of the page. The tool never accepts the AK itself. After issuance, run `/connect`, select `Pippit`, and paste the AK into OpenCode's hidden password prompt. The pending configure operation supplies the non-secret local account name; `/connect` only handles the secret.
+## 配置 Access Key
 
-OpenCode 1.18.3 stores only one credential per provider ID. To preserve older accounts when `/connect` imports another key, this plugin keeps a global keyring at `<OpenCode state>/pippit/access-keys.json`; it is outside every project/worktree, uses a `0700` directory and `0600` atomically replaced file, and is plaintext under the same local-user threat boundary as OpenCode's `auth.json`. The plugin does not read cookies, watch the clipboard, or accept raw AKs through normal tool arguments.
-
-`opencode auth logout pippit` only clears OpenCode's single import slot. Use `pippit_manage_access_keys delete` to remove an AK from the multi-account keyring, and revoke it at the top-of-page AK management entry on the Pippit website when it must become invalid immediately.
-
-Use `pippit_manage_access_keys` with:
-
-- `operation: "list"` to return only account IDs, user-defined names, masked AKs, and active state.
-- `operation: "switch"` plus `account_id` or `account_name` to select the account for new runs.
-- `operation: "delete"` plus `account_id` or `account_name` to delete a local AK. Switch away before deleting an active account when other accounts remain. The result reports how many saved run bindings are affected. Local deletion does not revoke the key on the Pippit website.
-
-For CI or a short-lived isolated environment, `PIPPIT_ACCESS_KEY` is also supported. It overrides the selected local account for new or otherwise unbound operations; all management results report the override instead of claiming the local selection is effective. A persisted managed-account run binding takes precedence when polling an existing run, so a later environment change cannot silently cross account scope.
-
-## Use
-
-Ask OpenCode to generate a Pippit video. The plugin asks on every potentially billable submission and separately before downloading into the worktree; neither permission can be permanently allowed. The API origin is pinned to the official Pippit origin. HTTP(S) references receive private-network and media-signature checks. Local references and output directories are constrained to the current worktree, and repeated downloads choose a collision-safe filename without overwriting existing files.
-
-Every managed-account submission attempts to pin `run_id + thread_id` to the account used for submission. Switching accounts affects new runs; polling an existing bound run resolves its original account. If persistence fails after the upstream submission succeeds, the generation result is still returned with `account_binding_persisted: false`, a do-not-retry warning, and the `account_id` that can be supplied to a later get operation. If the bound account has been deleted, polling fails closed instead of silently using another AK.
-
-The generation tool accepts an optional caller-chosen `idempotency_key` only for abnormal recovery. Without it, every invocation is a new submission. With it, the private HMAC-authenticated ledger at `<OpenCode state>/pippit/idempotency-v1.json` can replay the recorded run after restart; changed payloads or accounts conflict, and a crash after the paid submission boundary becomes `indeterminate` instead of auto-retrying. See [the durable idempotency contract](../../docs/idempotency.md).
-
-The default output directory is `.pippit/outputs`.
-
-## Website one-click binding
-
-When Pippit exposes the device-authorization contract described in `docs/opencode-ak-binding.md`, enable it with plugin options:
+调用 `pippit_manage_access_keys`：
 
 ```json
-{
-  "plugin": [
-    [
-      "@pippit-bridge/opencode-provider",
-      {
-        "deviceAuthorization": {
-          "authorizationURL": "https://xyq.jianying.com/developer/ak/device_authorization",
-          "tokenURL": "https://xyq.jianying.com/developer/ak/token",
-          "clientID": "pippit-opencode",
-          "scope": "asset.upload video.generate video.read"
-        }
-      }
-    ]
-  ]
-}
+{ "operation": "configure", "account_name": "工作账号" }
 ```
 
-The browser only receives a short-lived device grant. The Access Key is returned to the waiting plugin over HTTPS, then imported into the same global multi-account keyring; it is never placed in a redirect URL.
+工具只返回高熵、短时、单次使用的 `http://127.0.0.1:<port>/enroll/<token>`。在浏览器打开链接，通过 password input 提交官网签发的 AK。AK 直接写入 `<OpenCode state>/pippit/access-keys.json`，不会进入聊天、普通工具参数、URL query 或日志。
+
+loopback 服务只监听 `127.0.0.1`，校验 Host 与同源 Origin，拒绝 `Origin: null` 和跨域提交，限制 body 大小，并在 POST 开始时消费 token 以阻止重放。页面使用 `Cache-Control: no-store`、CSP、`Referrer-Policy: strict-origin` 与禁止嵌入响应头。
+
+账号库父目录使用 `0700`，文件使用 `0600` 并原子替换。它与 OpenCode 本地 `auth.json` 处于相同的“同 UID 可读”威胁边界，不冒充系统 keychain。旧版 v1 auth-slot 状态会在下一次写入时迁移为不含 sentinel、pending marker 的 v2。
+
+其他操作：
+
+- `list`：只返回账号 ID、本地名称、脱敏 AK 与 active 状态；
+- `switch`：选择新任务使用的账号；
+- `delete`：删除本地 AK；这不等于在官网撤销 AK。
+
+CI 或短期隔离环境可设置 `PIPPIT_ACCESS_KEY`。它覆盖新任务的 active 账号，但不会改写历史任务的账号绑定。
+
+## 生成与异常恢复
+
+插件在可能计费的提交前请求权限，并在写入 worktree 前单独请求下载权限。API origin 固定为 Pippit 官方 origin；远端参考素材执行公共网络与媒体签名检查，本地输入和输出均限制在当前 worktree。
+
+`idempotency_key` 是可选的异常恢复键，不会转发到 Facade 或 Pippit API。未传时每次调用都是新提交；传入时使用 `<OpenCode state>/pippit/idempotency-v1.json` 做 HMAC 认证的跨重启恢复。参见 [持久化幂等设计](../../docs/idempotency.md)。
+
+## 本地未发布包验证
+
+在仓库根目录执行。发布包的运行入口是自包含 bundle；只有 OpenCode 宿主 API 保持 external，因此不依赖尚未发布的本仓库 core/MCP 构建：
+
+```bash
+npm pack -w @pippit-bridge/opencode-plugin
+opencode plugin /absolute/path/to/pippit-bridge-opencode-plugin-0.1.2.tgz --global
+```
+
+当前修复在明确确认前不会发布到 npm。

@@ -2,7 +2,7 @@
 
 ## Product scope and non-goals
 
-Pippit Bridge is a **single-user, local-first plugin architecture**. Its primary product surfaces are the Codex `pippit-video` plugin and `opencode-provider-pippit`. The generic MCP package, loopback Facade and local ChatGPT developer app support the same user on one trusted host; they are not a hosted multi-tenant control plane.
+Pippit Bridge is a **single-user, local-first plugin architecture**. Its primary product surfaces are the Codex `pippit-video` plugin and `@pippit-bridge/opencode-plugin`. The generic MCP package, loopback Facade and local ChatGPT developer app support the same user on one trusted host; they are not a hosted multi-tenant control plane.
 
 This positioning makes a private user-level file store, one active local Facade daemon and single-writer locks deliberate choices. Multi-user OAuth, tenant isolation, horizontally scaled Facade replicas, distributed locks, shared remote persistence and cross-machine state synchronization are explicit non-goals unless the product scope changes. Documentation may describe what a future public ChatGPT deployment would require, but those requirements are not acceptance criteria for the current project.
 
@@ -33,8 +33,9 @@ apps/chatgpt-app ------------------------+
   |-- Apps SDK regeneration widget       |
   `-- short-lived signed media proxy     |
 
-packages/opencode-provider-pippit -------+  (@pippit-bridge/opencode-provider)
-  |-- OpenCode AuthHook
+packages/opencode-provider-pippit -------+  (@pippit-bridge/opencode-plugin)
+  |-- custom tools only; no LLM provider/auth hook
+  |-- reuses MCP package loopback enrollment server
   |-- global multi-account AK keyring
   |-- pippit_manage_access_keys
   |-- pippit_generate_video
@@ -97,20 +98,16 @@ The stable `pippit_edit_video_segment` contract carries `source_job_id`, output 
 
 An Apps SDK registration creates a real identifier beginning with `plugin_asdk_app`. The repository therefore keeps only `apps/chatgpt-app/.app.json.example`. Until a real ID exists, the Codex plugin manifest must not claim an `apps` component. After registration, a real `packages/mcp-server-pippit/.app.json` may be created and the manifest may point `apps` at it; placeholder IDs are not a distributable integration.
 
-## OpenCode direct-provider boundary
+## OpenCode custom-tool plugin boundary
 
-OpenCode currently loads model providers as AI SDK `LanguageModelV3`. Pippit's asynchronous video endpoint does not implement that contract. The OpenCode adapter therefore uses documented plugin surfaces instead of advertising a fake language model:
+OpenCode currently loads model providers as AI SDK `LanguageModelV3`. Pippit's asynchronous video endpoint does not implement that contract. The OpenCode adapter is therefore a custom-tool plugin, not a provider. It must not add `config.provider.pippit`, return an `auth`/`provider` hook, or occupy an OpenCode credential slot:
 
 ```text
-OpenCode /connect
-  -> plugin auth.provider = pippit
-  -> OpenCode hidden password prompt
-  -> plugin global keyring (multiple named accounts + active pointer)
-
 agent
   -> pippit_manage_access_keys
-  -> configure: official website link + top-of-page issuance instructions
-  -> list / switch / delete (never returns or accepts a raw AK)
+  -> configure: one-time 127.0.0.1 password-form URL
+  -> browser same-origin POST directly into plugin global keyring
+  -> list / switch / delete (never returns or accepts a raw AK as a tool argument)
 
 agent
   -> pippit_generate_video (permission ask)
@@ -119,11 +116,11 @@ agent
   -> checked download inside current worktree
 ```
 
-Direct mode does not use the facade's Management API Key, Facade API Key, BYOK store, or signed job id. OpenCode 1.18.3 exposes one credential slot per provider, so `/connect` remains the secret-input/import channel while the plugin owns a global, non-project keyring for multiple named accounts. The keyring uses a `0700` directory, a `0600` atomically replaced plaintext file, masked public summaries, and an explicit active pointer. It shares OpenCode `auth.json`'s same-UID plaintext threat boundary; it is not the encrypted server BYOK store.
+Direct mode does not use the facade's Management API Key, Facade API Key, BYOK store, signed job id, OpenCode `/connect`, or OpenCode `auth.json`. The shared MCP enrollment server binds only `127.0.0.1`, issues bounded high-entropy one-time links, requires the actual loopback Host and same-origin Origin, consumes tokens before asynchronous persistence, limits request bodies, and never logs or echoes raw AKs. The plugin keyring uses a `0700` directory, a `0600` atomically replaced plaintext file, masked public summaries, and an explicit active pointer. It has the same local same-UID threat boundary as OpenCode state, but it is not the encrypted server BYOK store or a system keychain.
 
 Each managed-account submission persists upstream `thread_id + run_id` with the `account_id` used at submission. A later switch or environment override only changes new work; a saved binding wins when polling. If binding persistence fails after a successful upstream submission, the tool returns the run instead of turning it into a retryable failure, marks `account_binding_persisted: false`, and returns the explicit `account_id` recovery selector. Polling fails closed if its bound account was deleted instead of silently crossing account scope. Local inputs are realpath-confined to the worktree; remote inputs and generated outputs use the shared public-network checks.
 
-Pippit AK binding has two states: the always-available OpenCode masked API prompt, and an RFC 8628 device flow that is only exposed when official same-origin website endpoints are configured. See [opencode-ak-binding.md](./opencode-ak-binding.md).
+Because the plugin contributes no provider filter, an OpenCode 1.18.3 `session.prompt` that omits `model` continues to resolve the host's default LLM. The package pins OpenCode 1.18.3 as a development integration dependency and regression-tests its resolved config. See [opencode-ak-binding.md](./opencode-ak-binding.md).
 
 ## Control plane and runtime flow
 

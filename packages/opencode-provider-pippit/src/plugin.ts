@@ -5,10 +5,13 @@ import {
   type IdempotencyStore,
   VIDEO_MODELS,
 } from "@pippit-bridge/core"
+import {
+  createPippitAccessKeyEnrollmentServer,
+  type PippitAccessKeyEnrollmentBackend,
+} from "@pippit-bridge/mcp-server"
 import { PippitApiError, PippitClient } from "@pippit-bridge/sdk"
 import {
   tool,
-  type Config,
   type Hooks,
   type Plugin,
   type PluginInput,
@@ -20,16 +23,10 @@ import {
   LazyPippitAccountStore,
   PippitAccountManager,
   normalizeAccountName,
-  storedAuthFingerprint,
   type PippitAccountSelector,
   type PippitAccountSummary,
 } from "./account-store.js"
-import { PIPPIT_MANAGED_AUTH_SENTINEL } from "./access-key.js"
-import {
-  createPippitAuthHook,
-  PippitCredentialSource,
-  type PippitRuntimeCredential,
-} from "./auth.js"
+import { PippitCredentialSource, type PippitRuntimeCredential } from "./auth.js"
 import {
   PIPPIT_MAX_WAIT_SECONDS,
   PippitVideoService,
@@ -38,38 +35,15 @@ import {
 import {
   PIPPIT_ACCESS_KEY_ENV,
   PIPPIT_ACCESS_KEY_PAGE,
-  PIPPIT_PROVIDER_ID,
   parsePluginOptions,
 } from "./options.js"
 import { LazyOpenCodeIdempotencyStore } from "./idempotency.js"
 
-type MutableProviderConfig = {
-  env?: string[]
-  models?: Record<string, unknown>
-  name?: string
-}
-
 export interface PippitPluginDependencies {
   readonly accounts?: PippitAccountManager
+  readonly enrollment?: PippitAccessKeyEnrollmentBackend
   readonly idempotency?: IdempotencyStore
   readonly videos?: Pick<PippitVideoService, "generate" | "get">
-}
-
-function registerProviderConfig(config: Config): void {
-  config.provider ??= {}
-  const providers = config.provider as Record<string, MutableProviderConfig>
-  const provider = providers[PIPPIT_PROVIDER_ID]
-  if (provider === undefined) {
-    providers[PIPPIT_PROVIDER_ID] = {
-      env: [PIPPIT_ACCESS_KEY_ENV],
-      models: {},
-      name: "Pippit (小云雀 media tools)",
-    }
-    return
-  }
-  provider.env ??= [PIPPIT_ACCESS_KEY_ENV]
-  provider.models ??= {}
-  provider.name ??= "Pippit (小云雀 media tools)"
 }
 
 function accountOutput(account: PippitAccountSummary): Record<string, unknown> {
@@ -180,42 +154,8 @@ function assertNoAccountSelector(input: {
   }
 }
 
-async function scrubMatchingOpenCodeCredential(
-  input: PluginInput,
-  credentials: PippitCredentialSource,
-  deletedFingerprint: string,
-): Promise<boolean> {
-  const auth = await credentials.currentStoredAuth()
-  if (storedAuthFingerprint(auth) !== deletedFingerprint) return false
-  const response = await input.client.auth.set({
-    body: {
-      key: PIPPIT_MANAGED_AUTH_SENTINEL,
-      metadata: { managed_account_store: "v1" },
-      type: "api",
-    },
-    path: { id: PIPPIT_PROVIDER_ID },
-  })
-  if (response.error !== undefined) {
-    throw new Error(
-      "OpenCode could not scrub this credential from its import slot. The local Pippit account was preserved; retry delete.",
-    )
-  }
-  return true
-}
-
 function environmentOverride(credentials: PippitCredentialSource): string | null {
   return credentials.hasEnvironmentOverride() ? PIPPIT_ACCESS_KEY_ENV : null
-}
-
-async function synchronizeOpenCodeCredential(
-  input: PluginInput,
-  credentials: PippitCredentialSource,
-): Promise<void> {
-  const response = await input.client.provider.list()
-  if (response.error !== undefined) {
-    throw new Error("OpenCode could not synchronize the current Pippit credential before configuration.")
-  }
-  await credentials.reconcileStoredAuth()
 }
 
 async function initializePippitPlugin(
@@ -225,6 +165,20 @@ async function initializePippitPlugin(
 ): Promise<Hooks> {
   const options = parsePluginOptions(rawOptions)
   const accounts = dependencies.accounts ?? createDefaultAccountManager(input)
+  const enrollment =
+    dependencies.enrollment ??
+    createPippitAccessKeyEnrollmentServer({
+      managementClient: {
+        async addAccessKey({ accessKey, accountName }) {
+          const account = await accounts.addAccount(accountName, accessKey)
+          return { credential_id: account.id }
+        },
+        async switchAccessKey(credentialId) {
+          const account = await accounts.switchAccount({ accountId: credentialId })
+          return { credential_id: account.id }
+        },
+      },
+    })
   const idempotency = dependencies.idempotency ?? createDefaultIdempotencyStore(input)
   const credentials = new PippitCredentialSource(accounts)
   const pippit = new PippitClient({ baseUrl: options.baseURL, timeoutMs: options.requestTimeoutMs })
@@ -261,14 +215,11 @@ async function initializePippitPlugin(
     .strict()
 
   return {
-    auth: createPippitAuthHook(credentials, options.deviceAuthorization, {
-      requestTimeoutMs: options.requestTimeoutMs,
-    }),
-    config: async (config) => registerProviderConfig(config),
+    dispose: async () => enrollment.close(),
     tool: {
       pippit_manage_access_keys: tool({
         description:
-          "Configure, list, switch, or delete locally saved Pippit Access Keys for multiple accounts. Never put a raw Access Key in this tool; configuration uses OpenCode's hidden /connect password prompt.",
+          "Configure, list, switch, or delete locally saved Pippit Access Keys for multiple accounts. Never put a raw Access Key in this tool; configure returns a one-time localhost password form.",
         args: {
           account_id: schema
             .string()
@@ -295,11 +246,12 @@ async function initializePippitPlugin(
             }
             const accountName = normalizeAccountName(args.account_name)
             const override = environmentOverride(credentials)
-            await synchronizeOpenCodeCredential(input, credentials)
-            await accounts.beginConfiguration(accountName, await credentials.currentStoredAuth())
+            const created = await enrollment.createEnrollment(accountName)
             return {
               metadata: {
                 account_name: accountName,
+                enrollment_url: created.enrollment_url,
+                expires_at: created.expires_at,
                 environment_override: override,
                 official_url: PIPPIT_ACCESS_KEY_PAGE,
                 status: "action_required",
@@ -309,26 +261,27 @@ async function initializePippitPlugin(
                   status: "action_required",
                   operation: "configure",
                   account_name: accountName,
+                  enrollment_url: created.enrollment_url,
+                  expires_at: created.expires_at,
                   environment_override: override,
                   official_url: PIPPIT_ACCESS_KEY_PAGE,
                   message:
-                    "请打开小云雀官网，登录要绑定的账号，并在页面顶部签发 AK。签发后回到 OpenCode，运行 /connect，选择 Pippit，再通过密码输入框粘贴新 AK。不要把 AK 发送到聊天里。",
+                    "请在浏览器中打开一次性 localhost 录入链接，通过密码框提交 AK。AK 仅写入插件私有账号库，不会进入聊天、工具参数或日志。",
                   ...(override === null
                     ? {}
                     : {
                         environment_override_message: `${PIPPIT_ACCESS_KEY_ENV} is set and will keep overriding the selected local account for new runs until it is unset.`,
                       }),
                   next_steps: [
-                    `打开 ${PIPPIT_ACCESS_KEY_PAGE}`,
-                    "登录目标小云雀账号，在页面顶部签发 AK",
-                    "回到 OpenCode 运行 /connect，选择 Pippit",
-                    "在隐藏的密码输入框粘贴 AK",
+                    `如尚无 AK，打开 ${PIPPIT_ACCESS_KEY_PAGE} 登录目标账号并签发`,
+                    `在浏览器打开 ${created.enrollment_url}`,
+                    "在本机页面的密码输入框粘贴 AK 并保存",
                   ],
                 },
                 null,
                 2,
               ),
-              title: "Pippit AK · waiting for /connect",
+              title: "Pippit AK · localhost enrollment",
             }
           }
 
@@ -348,7 +301,6 @@ async function initializePippitPlugin(
                   operation: "list",
                   active_account_id: listed.activeAccountId ?? null,
                   environment_override: override,
-                  pending_account_name: listed.pendingAccountName ?? null,
                   accounts: listed.accounts.map(accountOutput),
                 },
                 null,
@@ -401,11 +353,6 @@ async function initializePippitPlugin(
             }
           }
 
-          const scrubbed = await scrubMatchingOpenCodeCredential(
-            input,
-            credentials,
-            inspection.fingerprint,
-          )
           const deleted = await accounts.deleteAccount({ accountId: inspection.account.id })
           const override = environmentOverride(credentials)
           const boundRunMessage =
@@ -422,7 +369,6 @@ async function initializePippitPlugin(
               account_name: deleted.account.name,
               bound_run_count: deleted.boundRunCount,
               environment_override: override,
-              opencode_import_scrubbed: scrubbed,
             },
             output: JSON.stringify(
               {
@@ -431,7 +377,6 @@ async function initializePippitPlugin(
                 bound_run_count: deleted.boundRunCount,
                 deleted_account: accountOutput(deleted.account),
                 environment_override: override,
-                opencode_import_scrubbed: scrubbed,
                 official_url: PIPPIT_ACCESS_KEY_PAGE,
                 message: `已删除本地保存的 AK；这不等于在小云雀官网撤销 AK。如需立即失效，请同时前往官网顶部的 AK 管理入口撤销。${boundRunMessage}${overrideMessage}`,
               },

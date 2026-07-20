@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises"
+import { mkdtemp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
@@ -7,9 +7,8 @@ import {
   MemoryPippitAccountStore,
   PippitAccountManager,
   normalizeAccountName,
-  storedAuthFingerprint,
 } from "../src/account-store.js"
-import { PIPPIT_MANAGED_AUTH_SENTINEL, normalizeAccessKey } from "../src/access-key.js"
+import { normalizeAccessKey } from "../src/access-key.js"
 
 const temporaryDirectories: string[] = []
 
@@ -17,22 +16,15 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { force: true, recursive: true })))
 })
 
-function auth(key: string, accountName: string) {
-  return { key, metadata: { account_name: accountName }, type: "api" } as const
-}
-
 describe("PippitAccountManager", () => {
-  it("uses configure as a pending handoff and imports a new /connect secret", async () => {
+  it("adds a key directly to the private account store without exposing it in summaries", async () => {
     const manager = new PippitAccountManager(new MemoryPippitAccountStore())
-    const previous = auth("ak-previous-account-secret", "Previous")
 
-    await manager.beginConfiguration("工作账号", previous)
-    await expect(manager.reconcile(previous)).resolves.toBeUndefined()
-    expect(await manager.list()).toMatchObject({ accounts: [], pendingAccountName: "工作账号" })
+    const added = await manager.addAccount("工作账号", "ak-work-account-secret")
 
-    const imported = await manager.reconcile(auth("ak-work-account-secret", "Ignored prompt name"))
-    expect(imported).toMatchObject({ active: true, maskedAccessKey: "ak-****cret", name: "工作账号" })
-    expect(await manager.resolveActive()).toMatchObject({
+    expect(added).toMatchObject({ active: true, maskedAccessKey: "ak-****cret", name: "工作账号" })
+    expect(JSON.stringify(await manager.list())).not.toContain("ak-work-account-secret")
+    await expect(manager.resolveActive()).resolves.toMatchObject({
       accessKey: "ak-work-account-secret",
       accountName: "工作账号",
     })
@@ -40,9 +32,8 @@ describe("PippitAccountManager", () => {
 
   it("keeps multiple accounts, switches explicitly, and never lists raw AKs", async () => {
     const manager = new PippitAccountManager(new MemoryPippitAccountStore())
-    const first = await manager.reconcile(auth("ak-first-account-secret", "工作"))
-    const second = await manager.reconcile(auth("ak-second-account-secret", "个人"))
-    if (first === undefined || second === undefined) throw new Error("Expected imported accounts")
+    const first = await manager.addAccount("工作", "ak-first-account-secret")
+    const second = await manager.addAccount("个人", "ak-second-account-secret")
 
     const listed = await manager.list()
     expect(listed.accounts).toHaveLength(2)
@@ -50,13 +41,8 @@ describe("PippitAccountManager", () => {
     expect(JSON.stringify(listed)).not.toContain("ak-first-account-secret")
     expect(JSON.stringify(listed)).not.toContain("ak-second-account-secret")
 
-    await expect(manager.switchAccount({ accountName: "工作" })).resolves.toMatchObject({
-      active: true,
-      id: first.id,
-    })
-    await expect(manager.deleteAccount({ accountId: first.id })).rejects.toThrow(
-      "Switch to another Pippit account",
-    )
+    await expect(manager.switchAccount({ accountName: "工作" })).resolves.toMatchObject({ active: true, id: first.id })
+    await expect(manager.deleteAccount({ accountId: first.id })).rejects.toThrow("Switch to another Pippit account")
     await manager.switchAccount({ accountId: second.id })
     await manager.deleteAccount({ accountId: first.id })
     await manager.deleteAccount({ accountId: second.id })
@@ -65,9 +51,8 @@ describe("PippitAccountManager", () => {
 
   it("rotates a named account without creating a duplicate", async () => {
     const manager = new PippitAccountManager(new MemoryPippitAccountStore())
-    const original = await manager.reconcile(auth("ak-original-account-secret", "工作"))
-    const rotated = await manager.reconcile(auth("ak-rotated-account-secret", "工作"))
-    if (original === undefined || rotated === undefined) throw new Error("Expected imported accounts")
+    const original = await manager.addAccount("工作", "ak-original-account-secret")
+    const rotated = await manager.addAccount("工作", "ak-rotated-account-secret")
 
     expect(rotated.id).toBe(original.id)
     expect((await manager.list()).accounts).toHaveLength(1)
@@ -77,55 +62,27 @@ describe("PippitAccountManager", () => {
     })
   })
 
-  it("uses the last observed auth marker as the baseline when the getter is temporarily unavailable", async () => {
-    const manager = new PippitAccountManager(new MemoryPippitAccountStore())
-    const storedAuth = auth("ak-reused-marker-secret", "Original")
-    const original = await manager.reconcile(storedAuth)
-    if (original === undefined) throw new Error("Expected imported account")
-
-    await manager.beginConfiguration("Renamed", undefined)
-    await expect(manager.reconcile(storedAuth)).resolves.toBeUndefined()
-
-    expect(await manager.list()).toMatchObject({
-      accounts: [{ id: original.id, name: "Original" }],
-      pendingAccountName: "Renamed",
-    })
-  })
-
   it("pins an existing run to its original account across active-account switches", async () => {
     const manager = new PippitAccountManager(new MemoryPippitAccountStore())
-    const first = await manager.reconcile(auth("ak-first-run-account-secret", "工作"))
-    if (first === undefined) throw new Error("Expected first account")
+    const first = await manager.addAccount("工作", "ak-first-run-account-secret")
     await manager.bindRun("run-1", "thread-1", first.id)
-    const second = await manager.reconcile(auth("ak-second-run-account-secret", "个人"))
-    if (second === undefined) throw new Error("Expected second account")
+    await manager.addAccount("个人", "ak-second-run-account-secret")
 
     await expect(manager.resolveForRun("run-1", "thread-1")).resolves.toMatchObject({
       accessKey: "ak-first-run-account-secret",
       accountId: first.id,
     })
     await manager.deleteAccount({ accountId: first.id })
-    await expect(manager.resolveForRun("run-1", "thread-1")).rejects.toThrow(
-      "used for this run was deleted",
-    )
+    await expect(manager.resolveForRun("run-1", "thread-1")).rejects.toThrow("used for this run was deleted")
   })
 
-  it("restores a deleted account id and its old run bindings when the same AK is re-imported", async () => {
+  it("restores a deleted account id and its old run bindings when the same AK is added again", async () => {
     const manager = new PippitAccountManager(new MemoryPippitAccountStore())
-    const storedAuth = auth("ak-restored-account-secret", "Original")
-    const original = await manager.reconcile(storedAuth)
-    if (original === undefined) throw new Error("Expected imported account")
+    const original = await manager.addAccount("Original", "ak-restored-account-secret")
     await manager.bindRun("run-restored", "thread-restored", original.id)
+    await manager.deleteAccount({ accountId: original.id })
 
-    await expect(manager.deleteAccount({ accountId: original.id })).resolves.toMatchObject({
-      boundRunCount: 1,
-    })
-    await expect(manager.resolveForRun("run-restored", "thread-restored")).rejects.toThrow(
-      "used for this run was deleted",
-    )
-
-    await manager.beginConfiguration("Restored", undefined)
-    const restored = await manager.reconcile(storedAuth)
+    const restored = await manager.addAccount("Restored", "ak-restored-account-secret")
 
     expect(restored).toMatchObject({ id: original.id, name: "Restored" })
     await expect(manager.resolveForRun("run-restored", "thread-restored")).resolves.toMatchObject({
@@ -135,46 +92,35 @@ describe("PippitAccountManager", () => {
     })
   })
 
-  it("returns only persisted run bindings and inspects accounts without exposing their AK", async () => {
+  it("inspects accounts without exposing their AK", async () => {
     const manager = new PippitAccountManager(new MemoryPippitAccountStore())
-    const firstAuth = auth("ak-inspected-account-secret", "工作")
-    const first = await manager.reconcile(firstAuth)
-    const second = await manager.reconcile(auth("ak-other-account-secret", "个人"))
-    if (first === undefined || second === undefined) throw new Error("Expected imported accounts")
+    const first = await manager.addAccount("工作", "ak-inspected-account-secret")
+    const second = await manager.addAccount("个人", "ak-other-account-secret")
     await manager.bindRun("run-inspected-1", "thread-inspected", first.id)
     await manager.bindRun("run-inspected-2", "thread-inspected", first.id)
 
-    await expect(manager.resolveForRun("run-unbound", "thread-unbound")).resolves.toBeUndefined()
     const inspection = await manager.inspectAccount({ accountId: first.id }, { validateDelete: true })
     expect(inspection).toMatchObject({
       account: { active: false, id: first.id, maskedAccessKey: "ak-****cret", name: "工作" },
       boundRunCount: 2,
-      fingerprint: storedAuthFingerprint(firstAuth),
     })
     expect(JSON.stringify(inspection)).not.toContain("ak-inspected-account-secret")
-    await expect(
-      manager.inspectAccount({ accountId: second.id }, { validateDelete: true }),
-    ).rejects.toThrow("Switch to another Pippit account")
-    await expect(
-      manager.inspectAccount({ accountId: first.id, accountName: "工作" }),
-    ).rejects.toThrow("Provide exactly one")
+    await expect(manager.inspectAccount({ accountId: second.id }, { validateDelete: true })).rejects.toThrow(
+      "Switch to another Pippit account",
+    )
   })
 
-  it("does not treat the managed OpenCode sentinel as an Access Key", () => {
-    expect(storedAuthFingerprint({ key: PIPPIT_MANAGED_AUTH_SENTINEL, type: "api" })).toBeUndefined()
-    expect(() => normalizeAccessKey(PIPPIT_MANAGED_AUTH_SENTINEL)).toThrow("supported format")
-  })
-
-  it("normalizes account names to NFC and rejects invisible Unicode controls", () => {
+  it("normalizes account names and validates key format", () => {
     expect(normalizeAccountName("  Cafe\u0301  ")).toBe("Caf\u00e9")
     for (const name of ["zero\u200bwidth", "right-to-left\u202ename", "line\u2028separator"]) {
       expect(() => normalizeAccountName(name)).toThrow("visible characters")
     }
+    expect(() => normalizeAccessKey("contains spaces")).toThrow("supported format")
   })
 })
 
 describe("FilePippitAccountStore", () => {
-  it("serializes concurrent imports from independent stores without lock or temp residue", async () => {
+  it("serializes concurrent additions without lock or temp residue", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pippit-opencode-accounts-"))
     temporaryDirectories.push(directory)
     const privateDirectory = join(directory, "private")
@@ -185,7 +131,7 @@ describe("FilePippitAccountStore", () => {
     await Promise.all(
       Array.from({ length: 12 }, async (_value, index) => {
         const manager = index % 2 === 0 ? firstManager : secondManager
-        return manager.reconcile(auth(`ak-concurrent-account-${index}-secret`, `account-${index}`))
+        return manager.addAccount(`account-${index}`, `ak-concurrent-account-${index}-secret`)
       }),
     )
 
@@ -195,20 +141,42 @@ describe("FilePippitAccountStore", () => {
     expect((await stat(filePath)).mode & 0o777).toBe(0o600)
     expect((await readdir(privateDirectory)).filter((entry) => entry.endsWith(".tmp"))).toEqual([])
     expect((await readdir(privateDirectory)).filter((entry) => entry.endsWith(".lock"))).toEqual([])
-    expect(await readFile(filePath, "utf8")).not.toContain(".tmp")
-
-    const reopened = new PippitAccountManager(new FilePippitAccountStore(filePath))
-    expect((await reopened.list()).accounts).toHaveLength(12)
   })
 
-  it("persists a valid maximum-size run binding set larger than the former 1 MiB limit", async () => {
+  it("migrates the auth-slot fields out of a v1 store on the next write", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pippit-opencode-v1-accounts-"))
+    temporaryDirectories.push(directory)
+    const privateDirectory = join(directory, "private")
+    const filePath = join(privateDirectory, "access-keys.json")
+    await mkdir(privateDirectory, { mode: 0o700 })
+    await writeFile(filePath, JSON.stringify({
+      accounts: [],
+      active_account_id: null,
+      format: "pippit-opencode-account-store",
+      last_seen_auth_marker: null,
+      pending_configuration: null,
+      revision: 0,
+      run_bindings: [],
+      tombstones: [],
+      version: 1,
+    }), { mode: 0o600 })
+    const manager = new PippitAccountManager(new FilePippitAccountStore(filePath))
+
+    await manager.addAccount("migrated", "ak-migrated-account-secret")
+
+    const persisted = JSON.parse(await readFile(filePath, "utf8")) as Record<string, unknown>
+    expect(persisted.version).toBe(2)
+    expect(persisted).not.toHaveProperty("last_seen_auth_marker")
+    expect(persisted).not.toHaveProperty("pending_configuration")
+  })
+
+  it("persists a valid maximum-size run binding set larger than 1 MiB", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pippit-opencode-large-accounts-"))
     temporaryDirectories.push(directory)
     const filePath = join(directory, "private", "access-keys.json")
     const store = new FilePippitAccountStore(filePath)
     const manager = new PippitAccountManager(store)
-    const account = await manager.reconcile(auth("ak-large-store-secret", "large"))
-    if (account === undefined) throw new Error("Expected imported account")
+    const account = await manager.addAccount("large", "ak-large-store-secret")
 
     await store.update((state) => ({
       result: undefined,

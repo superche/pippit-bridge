@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { MemoryIdempotencyStore, VIDEO_MODELS } from "@pippit-bridge/core"
-import type { Config } from "@opencode-ai/plugin"
 import { MemoryPippitAccountStore, PippitAccountManager } from "../src/account-store.js"
-import { PIPPIT_MANAGED_AUTH_SENTINEL } from "../src/access-key.js"
 import pluginModule from "../src/index.js"
 import { createPippitPlugin, PippitPlugin } from "../src/plugin.js"
 
@@ -17,39 +15,22 @@ function accepts(schema: unknown, value: unknown): boolean {
 
 describe("Pippit OpenCode plugin", () => {
   it("uses the current PluginModule format with a stable plugin id", () => {
-    expect(pluginModule.id).toBe("pippit.opencode-provider")
+    expect(pluginModule.id).toBe("pippit.opencode-plugin")
     expect(pluginModule.server).toBe(PippitPlugin)
   })
 
-  it("registers auth and media tools without advertising a fake language model", async () => {
+  it("registers only custom tools and never contributes LLM provider or auth hooks", async () => {
     const hooks = await PippitPlugin({} as never)
-    const config = {} as Config
 
-    await hooks.config?.(config)
-
-    expect(hooks.auth?.provider).toBe("pippit")
+    expect(hooks).not.toHaveProperty("auth")
+    expect(hooks).not.toHaveProperty("config")
+    expect(hooks).not.toHaveProperty("provider")
     expect(Object.keys(hooks.tool ?? {})).toEqual([
       "pippit_manage_access_keys",
       "pippit_generate_video",
       "pippit_get_video",
     ])
     expect(hooks.tool?.pippit_manage_access_keys?.args).not.toHaveProperty("access_key")
-    expect(config.provider?.pippit).toMatchObject({
-      env: ["PIPPIT_ACCESS_KEY"],
-      models: {},
-      name: "Pippit (小云雀 media tools)",
-    })
-  })
-
-  it("only exposes website one-click auth when official endpoints are configured", async () => {
-    const hooks = await PippitPlugin({} as never, {
-      deviceAuthorization: {
-        authorizationURL: "https://xyq.jianying.com/developer/ak/device_authorization",
-        tokenURL: "https://xyq.jianying.com/developer/ak/token",
-      },
-    })
-
-    expect(hooks.auth?.methods.map((method) => method.type)).toEqual(["oauth", "api"])
   })
 
   it("derives geometry choices from the shared model catalog", async () => {
@@ -69,118 +50,66 @@ describe("Pippit OpenCode plugin", () => {
 
   it("configures, lists, switches, and deletes multiple accounts without exposing raw AKs", async () => {
     const accounts = new PippitAccountManager(new MemoryPippitAccountStore())
-    const setAuth = vi.fn(async () => ({ data: true }))
-    const hooks = await createPippitPlugin({ accounts })({
-      client: { auth: { set: setAuth }, provider: { list: vi.fn(async () => ({ data: {} })) } },
-    } as never)
+    const enrollment = {
+      close: vi.fn(async () => undefined),
+      createEnrollment: vi.fn(async (accountName: string) => ({
+        account_name: accountName,
+        enrollment_url: `http://127.0.0.1:43210/enroll/${"a".repeat(43)}`,
+        expires_at: "2026-07-20T12:00:00.000Z",
+      })),
+    }
+    const hooks = await createPippitPlugin({ accounts, enrollment })({} as never)
     const manage = hooks.tool?.pippit_manage_access_keys?.execute
     if (manage === undefined) throw new Error("Expected the Pippit access-key management tool")
     const context = { ask: vi.fn(async () => undefined), metadata: vi.fn() }
+    try {
+      for (const [accountName, accessKey] of [
+        ["工作", "ak-work-account-secret"],
+        ["个人", "ak-personal-account-secret"],
+      ] as const) {
+        const configured = await manage({ account_name: accountName, operation: "configure" }, context as never)
+        const output = JSON.parse(typeof configured === "string" ? configured : configured.output) as {
+          enrollment_url: string
+        }
+        expect(output.enrollment_url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/enroll\//u)
+        expect(JSON.stringify(configured)).not.toContain(accessKey)
+        await accounts.addAccount(accountName, accessKey)
+      }
 
-    const firstAuth = {
-      key: "ak-work-account-secret",
-      type: "api",
-    } as const
-    const secondAuth = {
-      key: "ak-personal-account-secret",
-      type: "api",
-    } as const
-    await manage({ account_name: "工作", operation: "configure" }, context as never)
-    await hooks.auth?.loader?.(async () => firstAuth, {} as never)
-    await manage({ account_name: "个人", operation: "configure" }, context as never)
-    await hooks.auth?.loader?.(async () => secondAuth, {} as never)
+      vi.stubEnv("PIPPIT_ACCESS_KEY", "ak-ci-override-never-returned")
+      const listed = await manage({ operation: "list" }, context as never)
+      const serializedList = JSON.stringify(listed)
+      expect(serializedList).toContain("工作")
+      expect(serializedList).toContain("个人")
+      expect(serializedList).not.toContain("ak-work-account-secret")
+      expect(serializedList).not.toContain("ak-personal-account-secret")
+      expect(serializedList).not.toContain("ak-ci-override-never-returned")
 
-    vi.stubEnv("PIPPIT_ACCESS_KEY", "ak-ci-override-never-returned")
-    const configure = await manage(
-      { account_name: "新账号", operation: "configure" },
-      context as never,
-    )
-    expect(JSON.stringify(configure)).toContain("https://xyq.jianying.com")
-    expect(JSON.stringify(configure)).toContain("页面顶部签发 AK")
-    expect(JSON.stringify(configure)).toContain("/connect")
-    expect(JSON.stringify(configure)).toContain("PIPPIT_ACCESS_KEY")
-
-    const listed = await manage({ operation: "list" }, context as never)
-    const serializedList = JSON.stringify(listed)
-    expect(serializedList).toContain("工作")
-    expect(serializedList).toContain("个人")
-    expect(serializedList).not.toContain(firstAuth.key)
-    expect(serializedList).not.toContain(secondAuth.key)
-    expect(serializedList).not.toContain("ak-ci-override-never-returned")
-    expect(serializedList).toContain("PIPPIT_ACCESS_KEY")
-
-    const accountList = await accounts.list()
-    const work = accountList.accounts.find((account) => account.name === "工作")
-    const personal = accountList.accounts.find((account) => account.name === "个人")
-    if (work === undefined || personal === undefined) throw new Error("Expected two accounts")
-    const switched = await manage({ account_id: work.id, operation: "switch" }, context as never)
-    const deleted = await manage({ account_id: personal.id, operation: "delete" }, context as never)
-    expect(JSON.parse(typeof switched === "string" ? switched : switched.output)).toMatchObject({
-      active_account: { account_id: work.id, active: true },
-      environment_override: "PIPPIT_ACCESS_KEY",
-    })
-    expect(JSON.parse(typeof deleted === "string" ? deleted : deleted.output)).toMatchObject({
-      bound_run_count: 0,
-      deleted_account: { account_id: personal.id, active: false },
-      environment_override: "PIPPIT_ACCESS_KEY",
-      official_url: "https://xyq.jianying.com",
-    })
-    expect(JSON.stringify(deleted)).not.toContain(secondAuth.key)
-    expect(JSON.stringify(deleted)).not.toContain("ak-ci-override-never-returned")
-    await expect(accounts.resolveActive()).resolves.toMatchObject({ accountId: work.id })
-    expect(context.ask).toHaveBeenCalledTimes(2)
-    expect(setAuth).toHaveBeenCalledWith({
-      body: {
-        key: PIPPIT_MANAGED_AUTH_SENTINEL,
-        metadata: { managed_account_store: "v1" },
-        type: "api",
-      },
-      path: { id: "pippit" },
-    })
-  })
-
-  it("synchronizes an existing OpenCode credential before starting a pending configuration", async () => {
-    const accounts = new PippitAccountManager(new MemoryPippitAccountStore())
-    const existingAuth = { key: "ak-existing-before-manager", type: "api" } as const
-    let loadExisting: (() => Promise<void>) | undefined
-    const providerList = vi.fn(async () => {
-      await loadExisting?.()
-      return { data: {} }
-    })
-    const hooks = await createPippitPlugin({ accounts })({
-      client: { provider: { list: providerList } },
-    } as never)
-    loadExisting = async () => {
-      await hooks.auth?.loader?.(async () => existingAuth, {} as never)
+      const accountList = await accounts.list()
+      const work = accountList.accounts.find((account) => account.name === "工作")
+      const personal = accountList.accounts.find((account) => account.name === "个人")
+      if (work === undefined || personal === undefined) throw new Error("Expected two accounts")
+      const switched = await manage({ account_id: work.id, operation: "switch" }, context as never)
+      const deleted = await manage({ account_id: personal.id, operation: "delete" }, context as never)
+      expect(JSON.parse(typeof switched === "string" ? switched : switched.output)).toMatchObject({
+        active_account: { account_id: work.id, active: true },
+        environment_override: "PIPPIT_ACCESS_KEY",
+      })
+      expect(JSON.parse(typeof deleted === "string" ? deleted : deleted.output)).toMatchObject({
+        deleted_account: { account_id: personal.id, active: false },
+      })
+      expect(context.ask).toHaveBeenCalledTimes(2)
+      expect(enrollment.createEnrollment).toHaveBeenCalledTimes(2)
+    } finally {
+      await hooks.dispose?.()
+      expect(enrollment.close).toHaveBeenCalledOnce()
     }
-    const manage = hooks.tool?.pippit_manage_access_keys?.execute
-    if (manage === undefined) throw new Error("Expected the Pippit access-key management tool")
-
-    await manage(
-      { account_name: "新账号", operation: "configure" },
-      { ask: vi.fn(), metadata: vi.fn() } as never,
-    )
-
-    expect(providerList).toHaveBeenCalledTimes(1)
-    const listed = await accounts.list()
-    expect(listed.accounts).toHaveLength(1)
-    expect(listed.pendingAccountName).toBe("新账号")
-    expect(JSON.stringify(listed)).not.toContain(existingAuth.key)
   })
 
-  it("validates account selectors before permission and preserves the account when auth scrub fails", async () => {
+  it("validates account selectors before permission without reading or writing OpenCode auth", async () => {
     const accounts = new PippitAccountManager(new MemoryPippitAccountStore())
-    const storedAuth = { key: "ak-preserved-after-scrub-error", type: "api" } as const
-    await accounts.beginConfiguration("工作", undefined)
-    const account = await accounts.reconcile(storedAuth)
-    if (account === undefined) throw new Error("Expected a managed account")
-    const hooks = await createPippitPlugin({ accounts })({
-      client: {
-        auth: { set: vi.fn(async () => ({ error: { message: "write failed" } })) },
-        provider: { list: vi.fn(async () => ({ data: {} })) },
-      },
-    } as never)
-    await hooks.auth?.loader?.(async () => storedAuth, {} as never)
+    const account = await accounts.addAccount("工作", "ak-private-account-secret")
+    const hooks = await createPippitPlugin({ accounts })({ client: {} } as never)
     const manage = hooks.tool?.pippit_manage_access_keys?.execute
     if (manage === undefined) throw new Error("Expected the Pippit access-key management tool")
     const ask = vi.fn(async () => undefined)
@@ -194,17 +123,13 @@ describe("Pippit OpenCode plugin", () => {
     ).rejects.toThrow("visible characters")
     expect(ask).not.toHaveBeenCalled()
 
-    await expect(
-      manage({ account_id: account.id, operation: "delete" }, context as never),
-    ).rejects.toThrow("local Pippit account was preserved")
-    await expect(accounts.resolveActive()).resolves.toMatchObject({ accountId: account.id })
+    await expect(manage({ account_id: account.id, operation: "delete" }, context as never)).resolves.toBeDefined()
+    await expect(accounts.resolveActive()).resolves.toBeUndefined()
   })
 
   it("returns a successful paid submission even when local account binding persistence fails", async () => {
     const accounts = new PippitAccountManager(new MemoryPippitAccountStore())
-    await accounts.beginConfiguration("工作", undefined)
-    const account = await accounts.reconcile({ key: "ak-billing-safe-secret", type: "api" })
-    if (account === undefined) throw new Error("Expected a managed account")
+    const account = await accounts.addAccount("工作", "ak-billing-safe-secret")
     vi.spyOn(accounts, "bindRun").mockRejectedValueOnce(new Error("disk full"))
     const generate = vi.fn(async () => ({
       model: "pippit/seedance-2.0",
@@ -253,8 +178,7 @@ describe("Pippit OpenCode plugin", () => {
 
   it("replays OpenCode generation by idempotency key and conflicts before a changed submission", async () => {
     const accounts = new PippitAccountManager(new MemoryPippitAccountStore())
-    await accounts.beginConfiguration("工作", undefined)
-    await accounts.reconcile({ key: "ak-idempotency-test", type: "api" })
+    await accounts.addAccount("工作", "ak-idempotency-test")
     const generate = vi.fn(async () => ({
       model: "pippit/seedance-2.0",
       runId: "run-idempotent",
@@ -288,8 +212,7 @@ describe("Pippit OpenCode plugin", () => {
     const first = await execute(args, context)
     const replay = await execute(args, context)
     await expect(execute({ ...args, prompt: "changed request" }, context)).rejects.toThrow("different Pippit request")
-    await accounts.beginConfiguration("个人", undefined)
-    await accounts.reconcile({ key: "ak-idempotency-second-account", type: "api" })
+    await accounts.addAccount("个人", "ak-idempotency-second-account")
     await expect(execute(args, context)).rejects.toThrow("different Pippit request")
 
     expect(generate).toHaveBeenCalledTimes(1)

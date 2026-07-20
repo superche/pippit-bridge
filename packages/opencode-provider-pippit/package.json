@@ -1,7 +1,7 @@
 {
-  "name": "@pippit-bridge/opencode-provider",
-  "version": "0.1.1",
-  "description": "OpenCode auth and native video tools for Pippit (小云雀)",
+  "name": "@pippit-bridge/opencode-plugin",
+  "version": "0.1.2",
+  "description": "OpenCode custom video tools and private Access Key enrollment for Pippit (小云雀)",
   "type": "module",
   "license": "MIT",
   "sideEffects": false,
@@ -19,7 +19,7 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/plugin.mjs"
     }
   },
   "keywords": [
@@ -29,16 +29,19 @@
     "video-generation"
   ],
   "scripts": {
-    "build": "tsc -b tsconfig.build.json --force",
-    "prepack": "npm run build -w @pippit-bridge/core && npm run build -w @pippit-bridge/sdk && npm run build",
-    "pretest": "npm run build -w @pippit-bridge/core && npm run build -w @pippit-bridge/sdk",
-    "pretypecheck": "npm run build -w @pippit-bridge/core && npm run build -w @pippit-bridge/sdk",
+    "build": "tsc -b tsconfig.build.json --force && esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --legal-comments=none --external:@opencode-ai/plugin --outfile=dist/plugin.mjs",
+    "prepack": "npm run build -w @pippit-bridge/core && npm run build -w @pippit-bridge/sdk && npm run build -w @pippit-bridge/mcp-server && npm run build",
+    "pretest": "npm run build -w @pippit-bridge/core && npm run build -w @pippit-bridge/sdk && npm run build -w @pippit-bridge/mcp-server && npm run build",
+    "pretypecheck": "npm run build -w @pippit-bridge/core && npm run build -w @pippit-bridge/sdk && npm run build -w @pippit-bridge/mcp-server",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --configLoader native"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.18.3",
+    "@opencode-ai/plugin": "^1.18.3"
+  },
+  "devDependencies": {
     "@pippit-bridge/core": "0.1.0",
+    "@pippit-bridge/mcp-server": "0.2.13",
     "@pippit-bridge/sdk": "0.1.0",
     "zod": "^4.1.12"
   }
