@@ -1,7 +1,7 @@
 import type { PippitMcpCallToolResult, PippitToolRuntime } from "./tools.ts"
 
 export const PIPPIT_MCP_PROTOCOL_VERSION = "2025-11-25"
-export const PIPPIT_MCP_SERVER_INFO = { name: "pippit-video", version: "0.2.14" } as const
+export const PIPPIT_MCP_SERVER_INFO = { name: "pippit-video", version: "0.2.15" } as const
 
 const SUPPORTED_PROTOCOL_VERSIONS = new Set(["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"])
 

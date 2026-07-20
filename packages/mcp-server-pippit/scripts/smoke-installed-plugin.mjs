@@ -10,7 +10,7 @@ if (entryArgument === undefined) {
 if (!isAbsolute(entryArgument)) throw new Error("The plugin entry path must be absolute.")
 const entryPath = resolve(entryArgument)
 const pluginManifest = JSON.parse(await readFile(join(dirname(entryPath), ".codex-plugin", "plugin.json"), "utf8"))
-if (pluginManifest.version !== "0.2.14") throw new Error("The packaged Codex plugin manifest version is unexpected.")
+if (pluginManifest.version !== "0.2.15") throw new Error("The packaged Codex plugin manifest version is unexpected.")
 
 const dataRoot = await mkdtemp(join(tmpdir(), "pippit-packed-runtime-"))
 await rm(dataRoot, { force: true, recursive: true })
@@ -44,7 +44,7 @@ try {
     request(3, "resources/list"),
     request(4, "resources/read", { uri: "ui://widget/pippit-video-job-v13.html" }),
     request(5, "tools/call", { arguments: {}, name: "pippit_list_access_keys" }),
-    request(6, "resources/read", { uri: "ui://widget/pippit-image-result-v2.html" }),
+    request(6, "resources/read", { uri: "ui://widget/pippit-image-result-v3.html" }),
   ]
   const run = await new Promise((resolveRun, rejectRun) => {
     const child = spawn(process.execPath, [entryPath], {
@@ -89,7 +89,7 @@ try {
   const widgetResource = responses.find((response) => response.id === 4)?.result?.contents?.[0]
   const toolCall = responses.find((response) => response.id === 5)?.result
   const imageWidgetResource = responses.find((response) => response.id === 6)?.result?.contents?.[0]
-  if (responses.find((response) => response.id === 1)?.result?.serverInfo?.version !== "0.2.14") {
+  if (responses.find((response) => response.id === 1)?.result?.serverInfo?.version !== "0.2.15") {
     throw new Error("The packaged MCP server version is unexpected.")
   }
   const expectedTools = [
@@ -130,7 +130,7 @@ try {
   }
   if (
     !listedResources.some((resource) => resource.uri === "ui://widget/pippit-video-job-v13.html") ||
-    !listedResources.some((resource) => resource.uri === "ui://widget/pippit-image-result-v2.html") ||
+    !listedResources.some((resource) => resource.uri === "ui://widget/pippit-image-result-v3.html") ||
     widgetResource?.mimeType !== "text/html;profile=mcp-app" ||
     !widgetResource?.text?.includes("pippit-video-editor") ||
     !widgetResource?.text?.includes("function newAnnotationId()") ||
@@ -141,8 +141,8 @@ try {
     throw new Error("The packaged MCP widget resource is incomplete.")
   }
   if (
-    imageTool?._meta?.ui?.resourceUri !== "ui://widget/pippit-image-result-v2.html" ||
-    imageTool?._meta?.["openai/outputTemplate"] !== "ui://widget/pippit-image-result-v2.html" ||
+    imageTool?._meta?.ui?.resourceUri !== "ui://widget/pippit-image-result-v3.html" ||
+    imageTool?._meta?.["openai/outputTemplate"] !== "ui://widget/pippit-image-result-v3.html" ||
     imageWidgetResource?.mimeType !== "text/html;profile=mcp-app" ||
     !imageWidgetResource?.text?.includes("function resultImages(rawResult)") ||
     !imageWidgetResource?.text?.includes("function infinityPoint(step)") ||
@@ -175,7 +175,7 @@ try {
 
   process.stdout.write(`${JSON.stringify({
     account_count: toolCall?.structuredContent?.data?.length ?? 0,
-    server_version: "0.2.14",
+    server_version: "0.2.15",
     tool_count: tools.length,
     widget_resource: true,
   })}\n`)

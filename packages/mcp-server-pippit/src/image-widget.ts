@@ -1,4 +1,4 @@
-export const PIPPIT_IMAGE_WIDGET_URI = "ui://widget/pippit-image-result-v2.html"
+export const PIPPIT_IMAGE_WIDGET_URI = "ui://widget/pippit-image-result-v3.html"
 
 export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
 <html lang="en">
@@ -186,15 +186,42 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
           resource_uri: value.resource_uri
         };
       }
+      function parseJsonValue(value) {
+        if (typeof value !== "string") return value;
+        try { return JSON.parse(value); } catch (_error) { return value; }
+      }
       function normalizeResult(value) {
-        var current = value;
+        var current = parseJsonValue(value);
         for (var depth = 0; depth < 3; depth += 1) {
           if (!current || typeof current !== "object") break;
-          if (current.result && typeof current.result === "object") current = current.result;
-          else if (current.toolResult && typeof current.toolResult === "object") current = current.toolResult;
+          if (Array.isArray(current)) return { content: current };
+          var nested = parseJsonValue(
+            current.mcp_tool_result || current.mcpToolResult || current.call_tool_result ||
+            current.callToolResult || current.toolResult || current.result
+          );
+          if (nested && typeof nested === "object") current = nested;
           else break;
         }
         return current && typeof current === "object" ? current : {};
+      }
+      function openAiToolResult(globals) {
+        var source = globals && typeof globals === "object" ? globals : window.openai;
+        if (!source) return undefined;
+        var output = parseJsonValue(source.toolOutput);
+        var metadata = parseJsonValue(source.toolResponseMetadata);
+        var metadataResult = normalizeResult(metadata);
+        var hasEnvelope = metadataResult && typeof metadataResult === "object" && (
+          metadataResult.structuredContent !== undefined || Array.isArray(metadataResult.content) ||
+          metadataResult._meta !== undefined
+        );
+        if (output === undefined && !hasEnvelope) return undefined;
+        return {
+          content: hasEnvelope && Array.isArray(metadataResult.content) ? metadataResult.content : [],
+          structuredContent: output !== undefined ? output : metadataResult.structuredContent,
+          _meta: hasEnvelope && metadataResult._meta && typeof metadataResult._meta === "object"
+            ? metadataResult._meta
+            : {}
+        };
       }
       function resultImages(rawResult) {
         var result = normalizeResult(rawResult);
@@ -313,13 +340,10 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
         if (loadedCount === 0) showTerminal("The saved local image could not be loaded.");
         else showResults(loadedCount);
       }
-      function useOpenAiResult() {
-        if (!window.openai) return;
-        if (window.openai.toolResponseMetadata === undefined && window.openai.toolOutput === undefined) return;
-        void render({
-          _meta: window.openai.toolResponseMetadata || {},
-          structuredContent: window.openai.toolOutput
-        });
+      function useOpenAiResult(event) {
+        var globals = event && event.detail && event.detail.globals;
+        var result = openAiToolResult(globals);
+        if (result !== undefined) void render(result);
       }
 
       window.addEventListener("message", function (event) {
@@ -348,7 +372,7 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
       window.setTimeout(useOpenAiResult, 600);
       request("ui/initialize", {
         appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
-        appInfo: { name: "pippit-image-result", title: "Pippit image result", version: "0.2.14" },
+        appInfo: { name: "pippit-image-result", title: "Pippit image result", version: "0.2.15" },
         protocolVersion: protocolVersion
       }).then(function (result) {
         protocolReady = true;

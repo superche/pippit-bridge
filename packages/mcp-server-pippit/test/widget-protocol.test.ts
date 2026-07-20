@@ -123,11 +123,153 @@ describe("Pippit widget protocol", () => {
 
   it("lets the image widget recover structured local previews and uses the Infinity Run loader", () => {
     expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("structured.images")
-    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("current.result")
-    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("current.toolResult")
+    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("current.mcp_tool_result")
+    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("current.call_tool_result")
+    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("event.detail.globals")
+    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("if (output === undefined && !hasEnvelope) return undefined")
     expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("infinityPoint")
     expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("repeat(5, 8px)")
     expect(PIPPIT_IMAGE_WIDGET_HTML).not.toContain("0 images")
+  })
+
+  it("renders a local image from the Codex tool response metadata envelope", async () => {
+    type Listener = (event: Readonly<Record<string, unknown>>) => void
+    class FakeElement {
+      readonly children: FakeElement[] = []
+      readonly listeners = new Map<string, Listener>()
+      readonly style: Record<string, string> = {}
+      className = ""
+      download = ""
+      hidden = false
+      href = ""
+      textContent = ""
+
+      addEventListener(type: string, listener: Listener): void {
+        this.listeners.set(type, listener)
+      }
+
+      append(...children: FakeElement[]): void {
+        this.children.push(...children)
+      }
+
+      appendChild(child: FakeElement): FakeElement {
+        this.children.push(child)
+        return child
+      }
+
+      replaceChildren(): void {
+        this.children.length = 0
+      }
+
+      set src(_value: string) {
+        queueMicrotask(() => this.listeners.get("load")?.({}))
+      }
+    }
+
+    const elements = new Map([
+      "loading-view",
+      "loading-status",
+      "infinity-loader",
+      "result-header",
+      "summary",
+      "gallery",
+      "empty",
+    ].map((id) => [id, new FakeElement()]))
+    const listeners = new Map<string, Listener[]>()
+    const callTool = vi.fn(async () => ({
+      structuredContent: {
+        blob: "aW1hZ2U=",
+        bytes: 5,
+        filename: "pippit-image-test.jpg",
+        mime_type: "image/jpeg",
+        resource_uri: `pippit-image://artifact/${"a".repeat(64)}.jpg`,
+      },
+    }))
+    const parent = {
+      postMessage(message: Readonly<Record<string, unknown>>): void {
+        if (message.method !== "ui/initialize") return
+        queueMicrotask(() => dispatch("message", {
+          data: {
+            id: message.id,
+            jsonrpc: "2.0",
+            result: { hostCapabilities: { serverResources: false, serverTools: false } },
+          },
+          source: parent,
+        }))
+      },
+    }
+    const windowValue = {
+      addEventListener(type: string, listener: Listener): void {
+        listeners.set(type, [...(listeners.get(type) ?? []), listener])
+      },
+      atob(value: string): string {
+        return Buffer.from(value, "base64").toString("binary")
+      },
+      clearInterval(): void {},
+      clearTimeout(): void {},
+      matchMedia(): { matches: boolean } {
+        return { matches: true }
+      },
+      openai: { callTool },
+      parent,
+      setInterval(): number {
+        return 1
+      },
+      setTimeout(): number {
+        return 1
+      },
+    }
+    function dispatch(type: string, event: Readonly<Record<string, unknown>>): void {
+      for (const listener of listeners.get(type) ?? []) listener(event)
+    }
+    const documentValue = {
+      createElement(): FakeElement {
+        return new FakeElement()
+      },
+      documentElement: { scrollHeight: 320, scrollWidth: 640 },
+      getElementById(id: string): FakeElement {
+        const element = elements.get(id)
+        if (element === undefined) throw new Error(`Missing fake element ${id}`)
+        return element
+      },
+    }
+    const script = /<script>([\s\S]*)<\/script>/u.exec(PIPPIT_IMAGE_WIDGET_HTML)?.[1]
+    if (script === undefined) throw new Error("Missing image widget script.")
+    const execute = new Function("window", "document", "URL", "Blob", "Uint8Array", script)
+    execute(
+      windowValue,
+      documentValue,
+      { createObjectURL: () => "blob:pippit-image", revokeObjectURL: () => undefined },
+      Blob,
+      Uint8Array,
+    )
+    const image = {
+      bytes: 5,
+      filename: "pippit-image-test.jpg",
+      kind: "image",
+      mime_type: "image/jpeg",
+      resource_uri: `pippit-image://artifact/${"a".repeat(64)}.jpg`,
+    }
+    dispatch("openai:set_globals", {
+      detail: {
+        globals: {
+          toolResponseMetadata: {
+            mcp_tool_result: {
+              _meta: { "pippit/images": [image] },
+              content: [],
+              structuredContent: { created: 1, images: [image], model: "pippit/seedream-5.0", usage: {} },
+            },
+            status: "completed",
+          },
+        },
+      },
+    })
+    await vi.waitFor(() => {
+      expect(elements.get("summary")?.textContent).toBe("1 image")
+    })
+    expect(callTool).toHaveBeenCalledWith("pippit_read_image", { resource_uri: image.resource_uri })
+    expect(elements.get("gallery")?.hidden).toBe(false)
+    expect(elements.get("empty")?.hidden).toBe(true)
   })
 
   it("projects completed outputs into widget-only signed media and removes facade URLs", async () => {
