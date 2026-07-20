@@ -15,6 +15,13 @@ import {
 
 function backend(overrides: Partial<PippitFacadeBackend> = {}): PippitFacadeBackend {
   return {
+    generateImage: async () => ({
+      created: 1,
+      data: [{ b64_json: "aW1hZ2U=" }],
+      model: "pippit/seedream-5.0",
+      usage: { cost: null, is_byok: true },
+    }),
+    listImageModels: async () => ({ data: [] }),
     downloadVideo: async () => new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "video/mp4" } }),
     editVideo: async () => ({ id: "edit-1", polling_url: "/api/v1/videos/edit-1", status: "pending" }),
     generateVideo: async () => ({ id: "job-1", polling_url: "/api/v1/videos/job-1", status: "pending" }),
@@ -27,6 +34,8 @@ function backend(overrides: Partial<PippitFacadeBackend> = {}): PippitFacadeBack
 describe("Pippit tool runtime", () => {
   it("publishes an exact-name canonical registry and hides management tools without management auth", () => {
     expect(PIPPIT_TOOL_DEFINITIONS.map((tool) => tool.name)).toEqual([
+      "pippit_list_image_models",
+      "pippit_generate_image",
       "pippit_list_video_models",
       "pippit_generate_video",
       "pippit_get_video",
@@ -77,6 +86,54 @@ describe("Pippit tool runtime", () => {
     await runtime.callTool("pippit_generate_video", request)
 
     expect(generateVideo).toHaveBeenCalledTimes(2)
+  })
+
+  it("validates Seedream settings and returns generated images as MCP image content", async () => {
+    const generateImage = vi.fn(async () => ({
+      created: 1_780_000_000,
+      data: [{ b64_json: "aW1hZ2U=", media_type: "image/jpeg" }],
+      model: "pippit/seedream-5.0-pro",
+      usage: { cost: null, is_byok: true },
+    }))
+    const runtime = createPippitToolRuntime({ client: backend({ generateImage }), outputRoot: "/tmp/pippit-test" })
+    const result = await runtime.callTool("pippit_generate_image", {
+      byok_id: "cred-1",
+      images: [{ image_url: { url: "https://example.test/reference.png" }, type: "image_url" }],
+      model: "pippit/seedream-5.0-pro",
+      n: 2,
+      prompt: "Create a premium product poster",
+      resolution: "4K",
+      thread_id: "thread-1",
+    })
+
+    expect(generateImage).toHaveBeenCalledWith({
+      input_references: [{ image_url: { url: "https://example.test/reference.png" }, type: "image_url" }],
+      model: "pippit/seedream-5.0-pro",
+      n: 2,
+      prompt: "Create a premium product poster",
+      provider: { options: { pippit: { byok_id: "cred-1", thread_id: "thread-1" } } },
+      resolution: "4K",
+    })
+    expect(result.content).toEqual([
+      {
+        text: "Generated 1 image with pippit/seedream-5.0-pro. The inline result card displays the images and provides Download original; do not regenerate when the user asks for the same file.",
+        type: "text",
+      },
+      { data: "aW1hZ2U=", mimeType: "image/jpeg", type: "image" },
+    ])
+    expect(result.structuredContent).toEqual({
+      created: 1_780_000_000,
+      images: [{ media_type: "image/jpeg" }],
+      model: "pippit/seedream-5.0-pro",
+      usage: { cost: null, is_byok: true },
+    })
+
+    await expect(runtime.callTool("pippit_generate_image", {
+      model: "pippit/seedream-5.0",
+      prompt: "invalid resolution",
+      resolution: "2K",
+    })).resolves.toMatchObject({ isError: true })
+    expect(generateImage).toHaveBeenCalledTimes(1)
   })
 
   it("replays an explicit recovery key from the MCP-owned durable store", async () => {
@@ -179,7 +236,7 @@ describe("Pippit tool runtime", () => {
       managementClient: management,
       outputRoot: "/tmp/pippit-test",
     })
-    expect(runtime.listTools()).toHaveLength(9)
+    expect(runtime.listTools()).toHaveLength(11)
     expect((await runtime.callTool("pippit_list_access_keys", {})).isError).toBeUndefined()
     expect((await runtime.callTool("pippit_add_access_key", { account_name: "personal" })).isError).toBeUndefined()
     expect(enrollmentServer.createEnrollment).toHaveBeenCalledWith("personal")

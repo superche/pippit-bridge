@@ -1,5 +1,10 @@
 import { z } from "zod"
-import type { FrameImage, InputReference, VideoGenerationRequest } from "../openrouter/contracts.js"
+import type {
+  FrameImage,
+  ImageGenerationRequest,
+  InputReference,
+  VideoGenerationRequest,
+} from "../openrouter/contracts.js"
 import type { PippitApi, PippitMediaReference } from "@pippit-bridge/sdk"
 import { ReferenceLoadError, type ReferenceKind, type ReferenceLoader } from "@pippit-bridge/core"
 
@@ -95,7 +100,9 @@ export interface PippitProviderOptions {
   readonly thread_id?: string
 }
 
-export function readPippitProviderOptions(request: VideoGenerationRequest): PippitProviderOptions {
+export function readPippitProviderOptions(
+  request: Pick<VideoGenerationRequest | ImageGenerationRequest, "provider">,
+): PippitProviderOptions {
   const value = request.provider?.options?.pippit
   if (value === undefined) return {}
   const parsed = pippitProviderOptionsSchema.parse(value)
@@ -103,6 +110,38 @@ export function readPippitProviderOptions(request: VideoGenerationRequest): Pipp
     ...(parsed.byok_id === undefined ? {} : { byok_id: parsed.byok_id }),
     ...(parsed.thread_id === undefined ? {} : { thread_id: parsed.thread_id }),
   }
+}
+
+export async function prepareImageReferences(input: {
+  readonly accessKey: string
+  readonly concurrency: number
+  readonly gate?: ReferenceWorkGate
+  readonly loader: ReferenceLoader
+  readonly maxTotalBytes?: number
+  readonly pippit: PippitApi
+  readonly request: ImageGenerationRequest
+  readonly signal?: AbortSignal
+}): Promise<readonly string[]> {
+  const references = input.request.input_references ?? []
+  const failureController = new AbortController()
+  const signal = input.signal
+    ? AbortSignal.any([input.signal, failureController.signal])
+    : failureController.signal
+  let totalBytes = 0
+
+  const uploaded = await mapWithConcurrency(references, input.concurrency, async (reference) => {
+    const upload = async (): Promise<string> => {
+      const file = await input.loader.load(reference.image_url.url, "image", signal)
+      totalBytes += file.bytes.byteLength
+      if (input.maxTotalBytes !== undefined && totalBytes > input.maxTotalBytes) {
+        throw new ReferenceLoadError("TOTAL_TOO_LARGE")
+      }
+      return (await input.pippit.uploadFile({ accessKey: input.accessKey, file, signal })).assetId
+    }
+    return input.gate ? input.gate.run(upload, signal) : upload()
+  }, () => failureController.abort())
+
+  return uploaded
 }
 
 function urlFromInputReference(reference: InputReference): string {

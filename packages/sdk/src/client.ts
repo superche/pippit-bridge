@@ -1,6 +1,7 @@
 import { PippitApiError, type PippitOperation } from "./errors.js"
 import {
   PIPPIT_RUN_STATES,
+  PIPPIT_IMAGE_AGENT_NAME,
   PIPPIT_VIDEO_AGENT_NAME,
   type PippitApi,
   type PippitClientConfig,
@@ -222,12 +223,41 @@ function validateSubmitRequest(
   value: PippitSubmitRunRequest,
   operation: PippitOperation,
 ): void {
+  if (!isRecord(value) || !isNonEmptyString(value.message) || !isOptionalNonEmptyString(value.thread_id)) {
+    throw new PippitApiError({ code: 'INVALID_INPUT', operation });
+  }
+
+  if ('general_agent_settings' in value) {
+    const assetIds = value.asset_ids
+    const settings = value.general_agent_settings
+    const imageCount = isRecord(settings) ? settings.generate_image_count : undefined
+    if (
+      (assetIds !== undefined &&
+        (!Array.isArray(assetIds) || assetIds.length > 9 || !assetIds.every(isNonEmptyString))) ||
+      !isRecord(settings) ||
+      (settings.image_model !== 'seedream_5.0' && settings.image_model !== 'seedream_5.0_pro') ||
+      (imageCount !== undefined &&
+        (typeof imageCount !== 'number' || !Number.isSafeInteger(imageCount) || imageCount <= 0))
+    ) {
+      throw new PippitApiError({ code: 'INVALID_INPUT', operation });
+    }
+    if (settings.image_model === 'seedream_5.0' && settings.resolution !== undefined) {
+      throw new PippitApiError({ code: 'INVALID_INPUT', operation });
+    }
+    if (
+      settings.image_model === 'seedream_5.0_pro' &&
+      settings.resolution !== undefined &&
+      !['1K', '2K', '4K'].includes(String(settings.resolution))
+    ) {
+      throw new PippitApiError({ code: 'INVALID_INPUT', operation });
+    }
+    return
+  }
+
   if (
-    !isRecord(value) ||
-    !isNonEmptyString(value.message) ||
+    !('video_part_tool_param' in value) ||
     !Array.isArray(value.asset_ids) ||
     !value.asset_ids.every(isNonEmptyString) ||
-    !isOptionalNonEmptyString(value.thread_id) ||
     !isRecord(value.video_part_tool_param)
   ) {
     throw new PippitApiError({ code: 'INVALID_INPUT', operation });
@@ -358,6 +388,9 @@ export class PippitClient implements PippitApi {
     const operation = 'submit_run';
     const accessKey = normalizeAccessKey(input.accessKey, operation);
     validateSubmitRequest(input.request, operation);
+    const agentName = 'general_agent_settings' in input.request
+      ? PIPPIT_IMAGE_AGENT_NAME
+      : PIPPIT_VIDEO_AGENT_NAME;
     const response = await this.requestJson(
       operation,
       '/api/biz/v1/skill/submit_run',
@@ -365,7 +398,7 @@ export class PippitClient implements PippitApi {
       {
         body: stringifyJson({
           ...input.request,
-          agent_name: PIPPIT_VIDEO_AGENT_NAME,
+          agent_name: agentName,
         }, operation),
         headers: { 'content-type': 'application/json' },
         method: 'POST',

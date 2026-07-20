@@ -29,6 +29,7 @@ function createHarness(overrides: {
   readonly allowedFacadeKeys?: readonly string[]
   readonly byokSeeds?: readonly ByokCredentialSeed[]
   readonly contentStreamIdleTimeoutMs?: number
+  readonly imageUrls?: readonly string[]
   readonly queryState?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
   readonly videoUrls?: readonly string[]
 } = {}) {
@@ -37,7 +38,7 @@ function createHarness(overrides: {
   let nextAsset = 0
   const pippit = {
     queryVideoResult: vi.fn<PippitApi["queryVideoResult"]>(async () => ({
-      imageUrls: [],
+      imageUrls: [...(overrides.imageUrls ?? [])],
       runState: overrides.queryState ?? 3,
       videoUrls: [...(overrides.videoUrls ?? ["https://cdn.test/result.mp4"])],
     })),
@@ -94,6 +95,97 @@ async function createVideo(app: ReturnType<typeof buildApp>, facadeKey = FACADE_
     url: "/api/v1/videos",
   })
 }
+
+describe("OpenRouter image generation", () => {
+  it("lists Seedream models and completes a Pro reference-image request", async () => {
+    const harness = createHarness({ imageUrls: ["https://cdn.test/generated.png"], videoUrls: [] })
+
+    const listed = await harness.app.inject({
+      headers: bearer(FACADE_KEY),
+      method: "GET",
+      url: "/api/v1/images/models",
+    })
+    expect(listed.statusCode).toBe(200)
+    expect(listed.json().data.map((model: { id: string }) => model.id)).toEqual([
+      "pippit/seedream-5.0",
+      "pippit/seedream-5.0-pro",
+    ])
+
+    const endpoints = await harness.app.inject({
+      headers: bearer(FACADE_KEY),
+      method: "GET",
+      url: "/api/v1/images/models/pippit/seedream-5.0-pro/endpoints",
+    })
+    expect(endpoints.json()).toMatchObject({
+      endpoints: [{
+        provider_slug: "pippit",
+        supported_parameters: { resolution: { type: "enum", values: ["1K", "2K", "4K"] } },
+        supports_streaming: false,
+      }],
+      id: "pippit/seedream-5.0-pro",
+    })
+
+    const generated = await harness.app.inject({
+      headers: bearer(FACADE_KEY),
+      method: "POST",
+      payload: {
+        input_references: [{
+          image_url: { url: "https://images.example.test/reference.png" },
+          type: "image_url",
+        }],
+        model: "pippit/seedream-5.0-pro",
+        n: 2,
+        prompt: "Create two premium product posters",
+        resolution: "4K",
+      },
+      url: "/api/v1/images",
+    })
+
+    expect(generated.statusCode).toBe(200)
+    expect(generated.json()).toEqual({
+      created: expect.any(Number),
+      data: [{ b64_json: "aW1hZ2U=", media_type: "image/test" }],
+      model: "pippit/seedream-5.0-pro",
+      usage: { cost: null, is_byok: true },
+    })
+    expect(harness.pippit.uploadFile).toHaveBeenCalledTimes(1)
+    expect(harness.loader.load.mock.calls).toEqual([
+      ["https://images.example.test/reference.png", "image", expect.any(AbortSignal)],
+      ["https://cdn.test/generated.png", "image", expect.any(AbortSignal)],
+    ])
+    const submitted = harness.submittedRequests.at(-1)
+    if (submitted === undefined || !("general_agent_settings" in submitted)) {
+      throw new Error("Expected an image submission")
+    }
+    expect(submitted).toEqual({
+      asset_ids: ["asset-1"],
+      general_agent_settings: {
+        generate_image_count: 2,
+        image_model: "seedream_5.0_pro",
+        resolution: "4K",
+      },
+      message: "Create two premium product posters",
+    })
+  })
+
+  it("rejects resolution for Seedream 5.0 before submitting upstream", async () => {
+    const harness = createHarness({ imageUrls: ["https://cdn.test/generated.png"] })
+    const response = await harness.app.inject({
+      headers: bearer(FACADE_KEY),
+      method: "POST",
+      payload: {
+        model: "pippit/seedream-5.0",
+        prompt: "A product poster",
+        resolution: "2K",
+      },
+      url: "/api/v1/images",
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error).toMatchObject({ param: "resolution" })
+    expect(response.json().error.message).toContain("resolution")
+    expect(harness.pippit.submitRun).not.toHaveBeenCalled()
+  })
+})
 
 describe("OpenRouter BYOK control plane", () => {
   it("requires a Management Key and keeps runtime and management credentials separate", async () => {
@@ -617,13 +709,16 @@ describe("OpenRouter video facade", () => {
     expect(harness.pippit.uploadFile).toHaveBeenCalledTimes(1)
     expect(harness.pippit.uploadFile.mock.calls[0]?.[0].accessKey).toBe(PIPPIT_ACCESS_KEY)
     const submitted = harness.submittedRequests.at(-1)
-    expect(submitted?.video_part_tool_param.duration_sec).toBe(13)
-    expect(submitted?.video_part_tool_param.videos).toEqual([{ pippit_asset_id: "asset-1" }])
-    expect(submitted?.asset_ids).toEqual(["asset-1"])
-    expect(submitted?.message).toBe(submitted?.video_part_tool_param.prompt)
-    expect(submitted?.message).toContain("Pippit reference-guided video regeneration instruction v1.")
-    expect(submitted?.message).toContain("The complete source video is attached as the only video reference.")
-    expect(JSON.parse(submitted?.message.split("\n").at(-1) ?? "null")).toEqual({
+    if (submitted === undefined || !("video_part_tool_param" in submitted)) {
+      throw new Error("Expected a video submission")
+    }
+    expect(submitted.video_part_tool_param.duration_sec).toBe(13)
+    expect(submitted.video_part_tool_param.videos).toEqual([{ pippit_asset_id: "asset-1" }])
+    expect(submitted.asset_ids).toEqual(["asset-1"])
+    expect(submitted.message).toBe(submitted.video_part_tool_param.prompt)
+    expect(submitted.message).toContain("Pippit reference-guided video regeneration instruction v1.")
+    expect(submitted.message).toContain("The complete source video is attached as the only video reference.")
+    expect(JSON.parse(submitted.message.split("\n").at(-1) ?? "null")).toEqual({
       annotations: [
         {
           at_ms: 67_000,

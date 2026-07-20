@@ -5,7 +5,12 @@ import {
   type PippitMcpCallToolResult,
 } from "../src/tools.ts"
 import {
+  PIPPIT_IMAGE_WIDGET_HTML,
+  PIPPIT_IMAGE_WIDGET_URI,
+} from "../src/image-widget.ts"
+import {
   PIPPIT_WIDGET_MIME_TYPE,
+  pippitWidgetListResources,
   pippitWidgetReadResource,
   projectPippitWidgetResult,
   withPippitWidgetTools,
@@ -25,6 +30,10 @@ function result(value: Readonly<Record<string, unknown>>): PippitMcpCallToolResu
 describe("Pippit widget protocol", () => {
   it("binds the shared app resource to generate, get, and edit tools", () => {
     const definitions = withPippitWidgetTools(PIPPIT_RUNTIME_TOOL_DEFINITIONS)
+    const imageMetadata = definitions.find((definition) => definition.name === "pippit_generate_image")?._meta
+    expect((imageMetadata?.ui as { resourceUri?: string } | undefined)?.resourceUri).toBe(PIPPIT_IMAGE_WIDGET_URI)
+    expect(imageMetadata?.["ui/resourceUri"]).toBe(PIPPIT_IMAGE_WIDGET_URI)
+    expect(imageMetadata?.["openai/outputTemplate"]).toBe(PIPPIT_IMAGE_WIDGET_URI)
     for (const name of ["pippit_generate_video", "pippit_get_video", "pippit_edit_video_segment"]) {
       const metadata = definitions.find((definition) => definition.name === name)?._meta
       expect((metadata?.ui as { resourceUri?: string } | undefined)?.resourceUri).toBe(PIPPIT_WIDGET_URI)
@@ -36,6 +45,31 @@ describe("Pippit widget protocol", () => {
     }
     expect(definitions.find((definition) => definition.name === "pippit_list_video_models")?._meta).toBeUndefined()
     expect(definitions.find((definition) => definition.name === "pippit_download_video")?._meta).toBeUndefined()
+  })
+
+  it("projects generated images into widget-only downloadable attachments", async () => {
+    const projected = await projectPippitWidgetResult({
+      content: [
+        { text: "Generated 1 image.", type: "text" },
+        { data: "aW1hZ2U=", mimeType: "image/jpeg", type: "image" },
+      ],
+      structuredContent: {
+        created: 1_780_000_000,
+        images: [{ media_type: "image/jpeg" }],
+        model: "pippit/seedream-5.0-pro",
+      },
+    })
+
+    expect(projected.content).toContainEqual({ data: "aW1hZ2U=", mimeType: "image/jpeg", type: "image" })
+    expect(projected._meta?.["pippit/images"]).toEqual([
+      {
+        data: "aW1hZ2U=",
+        filename: "pippit-image-1780000000-1.jpg",
+        index: 0,
+        kind: "image",
+        mime_type: "image/jpeg",
+      },
+    ])
   })
 
   it("projects completed outputs into widget-only signed media and removes facade URLs", async () => {
@@ -63,8 +97,9 @@ describe("Pippit widget protocol", () => {
       polling_url: "/api/v1/videos/job_123",
       status: "completed",
     })
-    expect(projected.content[0]?.text).not.toContain("unsigned_urls")
-    expect(projected.content[0]?.text).not.toContain("Bearer secret")
+    expect(projected.content[0]?.type).toBe("text")
+    expect(projected.content[0]?.type === "text" ? projected.content[0].text : "").not.toContain("unsigned_urls")
+    expect(projected.content[0]?.type === "text" ? projected.content[0].text : "").not.toContain("Bearer secret")
     expect(projected._meta?.["pippit/media"]).toEqual([
       {
         bytes: 100,
@@ -103,6 +138,19 @@ describe("Pippit widget protocol", () => {
   })
 
   it("returns a standard MCP App resource with blob media CSP and no loopback dependency", () => {
+    expect(pippitWidgetListResources()).toMatchObject({
+      resources: [
+        { mimeType: PIPPIT_WIDGET_MIME_TYPE, uri: PIPPIT_IMAGE_WIDGET_URI },
+        { mimeType: PIPPIT_WIDGET_MIME_TYPE, uri: PIPPIT_WIDGET_URI },
+      ],
+    })
+    const imageResource = pippitWidgetReadResource(PIPPIT_IMAGE_WIDGET_URI)
+    expect(imageResource).toMatchObject({
+      contents: [{ mimeType: PIPPIT_WIDGET_MIME_TYPE, text: PIPPIT_IMAGE_WIDGET_HTML, uri: PIPPIT_IMAGE_WIDGET_URI }],
+    })
+    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("Download original")
+    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("toolResponseMetadata")
+    expect(PIPPIT_IMAGE_WIDGET_HTML).not.toContain("http://127.0.0.1")
     const resource = pippitWidgetReadResource(PIPPIT_WIDGET_URI)
     expect(resource).toMatchObject({
       contents: [{ mimeType: PIPPIT_WIDGET_MIME_TYPE, text: PIPPIT_WIDGET_HTML, uri: PIPPIT_WIDGET_URI }],

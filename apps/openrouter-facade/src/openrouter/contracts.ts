@@ -35,6 +35,51 @@ export const frameImageSchema = imageUrlReferenceSchema.extend({
 
 const providerOptionsSchema = z.record(z.string(), z.record(z.string(), z.unknown()))
 
+const imageReferenceUrl = z.string().refine((value) => {
+  if (/^data:image\/(?:avif|bmp|gif|jpeg|png|webp);base64,/iu.test(value)) return true
+  try {
+    return /^https?:$/u.test(new URL(value).protocol)
+  } catch {
+    return false
+  }
+}, "Image references must use HTTP(S) or a supported base64 image data URL")
+
+export const imageGenerationReferenceSchema = z
+  .object({
+    image_url: z.object({ url: imageReferenceUrl }).strict(),
+    type: z.literal("image_url"),
+  })
+  .strict()
+
+export const imageGenerationRequestSchema = z
+  .object({
+    input_references: z.array(imageGenerationReferenceSchema).max(9).optional(),
+    model: z.string().trim().min(1).max(256),
+    n: z.number().int().min(1).max(10).default(1),
+    prompt: z.string().trim().min(1).max(20_000),
+    provider: z
+      .object({ options: providerOptionsSchema.optional() })
+      .strict()
+      .optional(),
+    resolution: z.enum(["1K", "2K", "4K"]).optional(),
+  })
+  .strict()
+
+export interface ImageGenerationData {
+  readonly b64_json: string
+  readonly media_type?: string
+}
+
+export interface ImageGenerationResponse {
+  readonly created: number
+  readonly data: readonly ImageGenerationData[]
+  readonly model: string
+  readonly usage: {
+    readonly cost: number | null
+    readonly is_byok: true
+  }
+}
+
 const normalizedCoordinateSchema = z.number().min(0).max(1)
 const normalizedExtentSchema = z.number().positive().max(1)
 
@@ -182,6 +227,8 @@ export const videoGenerationRequestSchema = z
 export type AudioUrlReference = z.infer<typeof audioUrlReferenceSchema>
 export type FrameImage = z.infer<typeof frameImageSchema>
 export type ImageUrlReference = z.infer<typeof imageUrlReferenceSchema>
+export type ImageGenerationReference = z.infer<typeof imageGenerationReferenceSchema>
+export type ImageGenerationRequest = z.infer<typeof imageGenerationRequestSchema>
 export type InputReference = z.infer<typeof inputReferenceSchema>
 export type VideoEditRequest = z.infer<typeof videoEditRequestSchema>
 export type VideoGenerationRequest = z.infer<typeof videoGenerationRequestSchema>

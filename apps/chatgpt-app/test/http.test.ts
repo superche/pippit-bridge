@@ -130,6 +130,8 @@ describe("ChatGPT App HTTP server", () => {
       result?: { tools?: Array<{ _meta?: Record<string, unknown>; name?: string; securitySchemes?: unknown }> }
     }
     expect(toolsBody.result?.tools?.map((tool) => tool.name)).toEqual([
+      CHATGPT_TOOL_NAMES.imageList,
+      CHATGPT_TOOL_NAMES.imageGenerate,
       CHATGPT_TOOL_NAMES.list,
       CHATGPT_TOOL_NAMES.generate,
       CHATGPT_TOOL_NAMES.get,

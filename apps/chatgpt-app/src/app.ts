@@ -13,6 +13,8 @@ import {
   type ListToolsResult,
 } from "@modelcontextprotocol/sdk/types.js"
 import {
+  PIPPIT_IMAGE_WIDGET_HTML,
+  PIPPIT_IMAGE_WIDGET_URI,
   PIPPIT_WIDGET_HTML,
   PIPPIT_WIDGET_URI,
   PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME,
@@ -22,6 +24,7 @@ import {
   createPersistentPippitWidgetLineageStore,
   createPippitToolRuntime,
   extractPippitWidgetJob,
+  pippitImageWidgetResourceMetadata,
   pippitWidgetResourceMetadata,
   projectPippitWidgetResult,
   type PippitMcpCallToolResult,
@@ -130,6 +133,35 @@ export const chatGptGenerateInputSchema = z
 
 export type ChatGptGenerateInput = z.infer<typeof chatGptGenerateInputSchema>
 
+export const CHATGPT_IMAGE_INPUT_SHAPE = {
+  byok_id: z.string().trim().min(1).max(256).optional(),
+  image_urls: z.array(httpUrl).max(9).optional(),
+  images: z.array(chatGptFileSchema).max(9).optional(),
+  model: z.enum(["pippit/seedream-5.0", "pippit/seedream-5.0-pro"]),
+  n: z.number().int().min(1).max(10).optional(),
+  prompt: z.string().trim().min(1).max(20_000),
+  resolution: z.enum(["1K", "2K", "4K"]).optional(),
+  thread_id: z.string().trim().min(1).max(8_192).optional(),
+}
+
+export const chatGptImageInputSchema = z
+  .object(CHATGPT_IMAGE_INPUT_SHAPE)
+  .strict()
+  .superRefine((input, context) => {
+    if (input.model === "pippit/seedream-5.0" && input.resolution !== undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "resolution must be omitted for pippit/seedream-5.0.",
+        path: ["resolution"],
+      })
+    }
+    if ((input.images?.length ?? 0) + (input.image_urls?.length ?? 0) > 9) {
+      context.addIssue({ code: "custom", message: "At most 9 reference images are supported.", path: ["images"] })
+    }
+  })
+
+export type ChatGptImageInput = z.infer<typeof chatGptImageInputSchema>
+
 const editRegionSchema = z
   .object({
     height: z.number().positive().max(1),
@@ -230,6 +262,23 @@ export const PIPPIT_MODEL_LIST_OUTPUT_SHAPE = {
   data: z.array(videoModelOutputSchema),
 }
 
+export const PIPPIT_IMAGE_MODEL_LIST_OUTPUT_SHAPE = {
+  data: z.array(z.object({
+    architecture: z.object({
+      input_modalities: z.array(z.string()),
+      output_modalities: z.array(z.string()),
+    }).strict(),
+    canonical_slug: z.string(),
+    created: z.number(),
+    description: z.string(),
+    endpoints: z.string(),
+    id: z.string(),
+    name: z.string(),
+    supported_parameters: z.record(z.string(), z.record(z.string(), z.unknown())),
+    supports_streaming: z.boolean(),
+  }).strict()),
+}
+
 export const PIPPIT_VIDEO_JOB_OUTPUT_SHAPE = {
   error: z.string().optional(),
   generation_id: z.string().nullable().optional(),
@@ -244,6 +293,13 @@ export const PIPPIT_VIDEO_JOB_OUTPUT_SHAPE = {
     })
     .strict()
     .optional(),
+}
+
+export const PIPPIT_IMAGE_OUTPUT_SHAPE = {
+  created: z.number().int().nonnegative(),
+  images: z.array(z.object({ media_type: z.string() }).strict()).min(1),
+  model: z.string(),
+  usage: z.object({ cost: z.number().nullable(), is_byok: z.boolean() }).strict(),
 }
 
 type RuntimeToolResult = PippitMcpCallToolResult
@@ -280,6 +336,8 @@ export interface ChatGptAppRuntime {
 }
 
 export const CHATGPT_TOOL_NAMES = {
+  imageList: "pippit_list_image_models",
+  imageGenerate: "pippit_generate_image",
   list: "pippit_list_video_models",
   generate: "pippit_generate_video",
   get: "pippit_get_video",
@@ -341,6 +399,22 @@ function normalizeGenerateInput(input: ChatGptGenerateInput): Record<string, unk
   }
 }
 
+function normalizeImageInput(input: ChatGptImageInput): Record<string, unknown> {
+  const images = [
+    ...(input.images ?? []).map((file) => ({ image_url: { url: file.download_url }, type: "image_url" })),
+    ...(input.image_urls ?? []).map((url) => ({ image_url: { url }, type: "image_url" })),
+  ]
+  return {
+    ...(input.byok_id === undefined ? {} : { byok_id: input.byok_id }),
+    ...(images.length === 0 ? {} : { images }),
+    model: input.model,
+    ...(input.n === undefined ? {} : { n: input.n }),
+    prompt: input.prompt,
+    ...(input.resolution === undefined ? {} : { resolution: input.resolution }),
+    ...(input.thread_id === undefined ? {} : { thread_id: input.thread_id }),
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
 }
@@ -363,16 +437,18 @@ async function decorateResult(
   ) as CallToolResult
 }
 
-function toolMetadata(invoking: string, invoked: string, widget: boolean): Record<string, unknown> {
+function toolMetadata(invoking: string, invoked: string, widget: boolean | string): Record<string, unknown> {
+  const resourceUri = typeof widget === "string" ? widget : widget ? PIPPIT_WIDGET_URI : undefined
   return {
     securitySchemes: NOAUTH_SECURITY_SCHEMES,
-    ...(widget
-      ? {
-          ui: { resourceUri: PIPPIT_WIDGET_URI, visibility: ["model", "app"] },
-          "openai/outputTemplate": PIPPIT_WIDGET_URI,
+    ...(resourceUri === undefined
+      ? {}
+      : {
+          ui: { resourceUri, visibility: ["model", "app"] },
+          "openai/outputTemplate": resourceUri,
           "openai/widgetAccessible": true,
         }
-      : {}),
+    ),
     "openai/toolInvocation/invoked": invoked,
     "openai/toolInvocation/invoking": invoking,
   }
@@ -468,6 +544,13 @@ function resourceMetadata(config: ChatGptAppConfig): Record<string, unknown> {
   ) as Record<string, unknown>
 }
 
+function imageResourceMetadata(config: ChatGptAppConfig): Record<string, unknown> {
+  const publicOrigin = config.publicBaseUrl === undefined ? undefined : new URL(config.publicBaseUrl).origin
+  return pippitImageWidgetResourceMetadata(
+    publicOrigin === undefined ? {} : { domain: publicOrigin, origin: publicOrigin },
+  ) as Record<string, unknown>
+}
+
 export function createChatGptAppMcpServer(options: ChatGptAppMcpOptions): {
   readonly client: PippitFacadeClientLike
   readonly mediaSigner?: MediaTokenSigner
@@ -476,10 +559,33 @@ export function createChatGptAppMcpServer(options: ChatGptAppMcpOptions): {
   const { config } = options
   const appRuntime = createChatGptAppRuntime(config, options.dependencies)
   const server = new McpServer({ name: "pippit-chatgpt-app", version: "0.2.13" })
+  const sharedImageList = sharedToolPresentation(CHATGPT_TOOL_NAMES.imageList)
+  const sharedImageGenerate = sharedToolPresentation(CHATGPT_TOOL_NAMES.imageGenerate)
   const sharedList = sharedToolPresentation(CHATGPT_TOOL_NAMES.list)
   const sharedGenerate = sharedToolPresentation(CHATGPT_TOOL_NAMES.generate)
   const sharedGet = sharedToolPresentation(CHATGPT_TOOL_NAMES.get)
   const sharedEdit = sharedToolPresentation(CHATGPT_TOOL_NAMES.edit)
+
+  registerAppResource(
+    server,
+    "Pippit image result widget",
+    PIPPIT_IMAGE_WIDGET_URI,
+    {
+      description: "Inline preview and original-file download for generated Pippit images.",
+      mimeType: RESOURCE_MIME_TYPE,
+      _meta: imageResourceMetadata(config),
+    },
+    async () => ({
+      contents: [
+        {
+          _meta: imageResourceMetadata(config),
+          mimeType: RESOURCE_MIME_TYPE,
+          text: PIPPIT_IMAGE_WIDGET_HTML,
+          uri: PIPPIT_IMAGE_WIDGET_URI,
+        },
+      ],
+    }),
+  )
 
   registerAppResource(
     server,
@@ -500,6 +606,48 @@ export function createChatGptAppMcpServer(options: ChatGptAppMcpOptions): {
         },
       ],
     }),
+  )
+
+  registerAppTool(
+    server,
+    CHATGPT_TOOL_NAMES.imageList,
+    withNoauthSecurity({
+      _meta: toolMetadata("Loading Pippit image models…", "Pippit image models loaded", false),
+      annotations: sharedImageList.annotations,
+      description: sharedImageList.description,
+      inputSchema: {},
+      outputSchema: PIPPIT_IMAGE_MODEL_LIST_OUTPUT_SHAPE,
+      title: sharedImageList.title,
+    }),
+    async () => decorateResult(
+      await appRuntime.runtime.callTool(CHATGPT_TOOL_NAMES.imageList, {}),
+      config,
+      appRuntime.mediaSigner,
+    ),
+  )
+
+  registerAppTool(
+    server,
+    CHATGPT_TOOL_NAMES.imageGenerate,
+    withNoauthSecurity({
+      _meta: {
+        ...toolMetadata("Generating Pippit images…", "Pippit images generated", PIPPIT_IMAGE_WIDGET_URI),
+        "openai/fileParams": ["images"],
+      },
+      annotations: sharedImageGenerate.annotations,
+      description: `${sharedImageGenerate.description} ChatGPT uploads bind to images; URL alternatives are also accepted.`,
+      inputSchema: CHATGPT_IMAGE_INPUT_SHAPE,
+      outputSchema: PIPPIT_IMAGE_OUTPUT_SHAPE,
+      title: sharedImageGenerate.title,
+    }),
+    async (rawInput) => {
+      const input = chatGptImageInputSchema.parse(rawInput)
+      return decorateResult(
+        await appRuntime.runtime.callTool(CHATGPT_TOOL_NAMES.imageGenerate, normalizeImageInput(input)),
+        config,
+        appRuntime.mediaSigner,
+      )
+    },
   )
 
   registerAppTool(

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 
 import {
   PIPPIT_DEFAULT_TIMEOUT_MS,
+  PIPPIT_IMAGE_AGENT_NAME,
   PIPPIT_VIDEO_AGENT_NAME,
   PippitApiError,
   PippitClient,
@@ -106,6 +107,48 @@ describe('PippitClient', () => {
       webThreadLink: 'https://xyq.jianying.com/thread/thread-1',
     });
   });
+
+  it('submits Seedream image runs with the Nest agent and model-specific resolution rules', async () => {
+    const fetchImpl = vi.fn<PippitFetch>(async (_url, init) => {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        agent_name: PIPPIT_IMAGE_AGENT_NAME,
+        asset_ids: ['asset-image'],
+        general_agent_settings: {
+          generate_image_count: 2,
+          image_model: 'seedream_5.0_pro',
+          resolution: '4K',
+        },
+        message: 'Create two product images',
+      })
+      return jsonResponse({
+        ret: '0',
+        data: { run: { run_id: 'image-run', thread_id: 'image-thread', state: 1 } },
+      })
+    })
+    const client = new PippitClient({ fetchImpl })
+
+    await expect(client.submitRun({
+      accessKey: 'ak-image',
+      request: {
+        asset_ids: ['asset-image'],
+        general_agent_settings: {
+          generate_image_count: 2,
+          image_model: 'seedream_5.0_pro',
+          resolution: '4K',
+        },
+        message: 'Create two product images',
+      },
+    })).resolves.toMatchObject({ run: { runId: 'image-run', threadId: 'image-thread' } })
+
+    await expect(client.submitRun({
+      accessKey: 'ak-image',
+      request: {
+        general_agent_settings: { image_model: 'seedream_5.0', resolution: '2K' },
+        message: 'This must fail locally',
+      },
+    })).rejects.toMatchObject({ code: 'INVALID_INPUT', operation: 'submit_run' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
 
   it('queries generated media and parses a structured failure reason', async () => {
     const fetchImpl = vi.fn<PippitFetch>(async (url, init) => {

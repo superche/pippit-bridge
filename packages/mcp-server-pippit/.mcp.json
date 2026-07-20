@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "pippit-video": {
-      "command": "node",
-      "args": ["./plugin-entry.mjs"],
+      "command": "/bin/sh",
+      "args": ["./plugin-entry.sh"],
       "cwd": ".",
       "tool_timeout_sec": 43200
     }

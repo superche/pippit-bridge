@@ -1,4 +1,5 @@
 export const PIPPIT_VIDEO_AGENT_NAME = "pippit_video_part_agent" as const
+export const PIPPIT_IMAGE_AGENT_NAME = "pippit_nest_agent" as const
 
 export const PIPPIT_RUN_STATES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
@@ -35,12 +36,30 @@ export interface PippitVideoPartToolParam {
 }
 
 /** The documented request body, excluding the fixed agent_name field. */
-export interface PippitSubmitRunRequest {
+export interface PippitVideoSubmitRunRequest {
   message: string;
   asset_ids: string[];
   video_part_tool_param: PippitVideoPartToolParam;
   thread_id?: string;
 }
+
+export type PippitImageModel = "seedream_5.0" | "seedream_5.0_pro"
+export type PippitImageResolution = "1K" | "2K" | "4K"
+
+export interface PippitGeneralAgentSettings {
+  image_model: PippitImageModel
+  generate_image_count?: number
+  resolution?: PippitImageResolution
+}
+
+export interface PippitImageSubmitRunRequest {
+  message: string
+  asset_ids?: string[]
+  general_agent_settings: PippitGeneralAgentSettings
+  thread_id?: string
+}
+
+export type PippitSubmitRunRequest = PippitVideoSubmitRunRequest | PippitImageSubmitRunRequest
 
 export interface PippitRun {
   runId: string;
@@ -76,6 +95,8 @@ export interface PippitVideoResult {
   imageUrls: string[];
   failReason?: PippitFailReason;
 }
+
+export type PippitGenerationResult = PippitVideoResult
 
 export interface PippitRequestOptions {
   accessKey: string;

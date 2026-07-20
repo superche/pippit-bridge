@@ -21,7 +21,7 @@ import { FileIdempotencyStore, type IdempotencyStore } from "@pippit-bridge/core
 
 export const PIPPIT_LOCAL_RUNTIME_SCHEMA_VERSION = 1
 // Advance only when the bundled daemon changes; the package/plugin version may move independently.
-export const PIPPIT_LOCAL_RUNTIME_VERSION = "0.2.5"
+export const PIPPIT_LOCAL_RUNTIME_VERSION = "0.2.6"
 
 const CONFIG_FILE_NAME = "runtime-secrets.json"
 const IDEMPOTENCY_SECRET_FILE_NAME = "secret-v1.json"

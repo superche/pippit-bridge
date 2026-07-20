@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import {
+  PIPPIT_IMAGE_WIDGET_URI,
   PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME,
   PIPPIT_TOOL_DEFINITIONS,
   PIPPIT_WIDGET_URI,
@@ -95,8 +96,22 @@ describe("Pippit ChatGPT MCP App", () => {
     const runtime: PippitToolRuntimeLike = {
       async callTool(name, args) {
         calls.push({ args, name })
-        if (name === CHATGPT_TOOL_NAMES.list) {
+        if (name === CHATGPT_TOOL_NAMES.list || name === CHATGPT_TOOL_NAMES.imageList) {
           return { content: [{ type: "text", text: "No models in this test." }], structuredContent: { data: [] } }
+        }
+        if (name === CHATGPT_TOOL_NAMES.imageGenerate) {
+          return {
+            content: [
+              { type: "text", text: "Generated one image." },
+              { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+            ],
+            structuredContent: {
+              created: 1_780_000_000,
+              images: [{ media_type: "image/png" }],
+              model: "pippit/seedream-5.0-pro",
+              usage: { cost: null, is_byok: true },
+            },
+          }
         }
         const requestedJobId = name === CHATGPT_TOOL_NAMES.get &&
           typeof args === "object" && args !== null &&
@@ -130,6 +145,8 @@ describe("Pippit ChatGPT MCP App", () => {
 
     const listed = await client.listTools()
     expect(listed.tools.map((tool) => tool.name)).toEqual([
+      CHATGPT_TOOL_NAMES.imageList,
+      CHATGPT_TOOL_NAMES.imageGenerate,
       CHATGPT_TOOL_NAMES.list,
       CHATGPT_TOOL_NAMES.generate,
       CHATGPT_TOOL_NAMES.get,
@@ -142,11 +159,19 @@ describe("Pippit ChatGPT MCP App", () => {
       expect(tool.outputSchema).toBeDefined()
     }
     const listTool = listed.tools.find((tool) => tool.name === CHATGPT_TOOL_NAMES.list)
+    const imageListTool = listed.tools.find((tool) => tool.name === CHATGPT_TOOL_NAMES.imageList)
+    const imageGenerateTool = listed.tools.find((tool) => tool.name === CHATGPT_TOOL_NAMES.imageGenerate)
     const generateTool = listed.tools.find((tool) => tool.name === CHATGPT_TOOL_NAMES.generate)
     const getTool = listed.tools.find((tool) => tool.name === CHATGPT_TOOL_NAMES.get)
     const editTool = listed.tools.find((tool) => tool.name === CHATGPT_TOOL_NAMES.edit)
     const resolveLatestTool = listed.tools.find((tool) => tool.name === PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME)
     expect(listTool?._meta?.ui).toBeUndefined()
+    expect(imageListTool?._meta?.ui).toBeUndefined()
+    expect((imageGenerateTool?._meta?.ui as { resourceUri?: string } | undefined)?.resourceUri)
+      .toBe(PIPPIT_IMAGE_WIDGET_URI)
+    expect(imageGenerateTool?._meta?.["openai/outputTemplate"]).toBe(PIPPIT_IMAGE_WIDGET_URI)
+    expect(imageGenerateTool?._meta?.["openai/widgetAccessible"]).toBe(true)
+    expect(imageGenerateTool?._meta?.["openai/fileParams"]).toEqual(["images"])
     expect(generateTool?.annotations?.openWorldHint).toBe(true)
     expect(generateTool?._meta?.["openai/fileParams"]).toEqual([
       "first_frame",
@@ -169,7 +194,7 @@ describe("Pippit ChatGPT MCP App", () => {
     expect(resolveLatestTool?._meta?.["openai/widgetAccessible"]).toBe(true)
     expect(resolveLatestTool?._meta?.["openai/outputTemplate"]).toBeUndefined()
 
-    for (const tool of [listTool, getTool, editTool]) {
+    for (const tool of [imageListTool, listTool, getTool, editTool]) {
       const shared = PIPPIT_TOOL_DEFINITIONS.find((definition) => definition.name === tool?.name)
       expect(shared).toBeDefined()
       expect(tool).toMatchObject({
@@ -178,13 +203,27 @@ describe("Pippit ChatGPT MCP App", () => {
         title: shared?.title,
       })
     }
+    const sharedImageGenerate = PIPPIT_TOOL_DEFINITIONS.find(
+      (definition) => definition.name === CHATGPT_TOOL_NAMES.imageGenerate,
+    )
+    expect(imageGenerateTool).toMatchObject({
+      annotations: sharedImageGenerate?.annotations,
+      title: sharedImageGenerate?.title,
+    })
+    expect(imageGenerateTool?.description).toContain(sharedImageGenerate?.description ?? "")
 
     const resources = await client.listResources()
     expect(resources.resources).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({ mimeType: "text/html;profile=mcp-app", uri: PIPPIT_IMAGE_WIDGET_URI }),
         expect.objectContaining({ mimeType: "text/html;profile=mcp-app", uri: PIPPIT_WIDGET_URI }),
       ]),
     )
+    const imageResource = await client.readResource({ uri: PIPPIT_IMAGE_WIDGET_URI })
+    expect(imageResource.contents[0]).toMatchObject({
+      mimeType: "text/html;profile=mcp-app",
+      uri: PIPPIT_IMAGE_WIDGET_URI,
+    })
     const resource = await client.readResource({ uri: PIPPIT_WIDGET_URI })
     expect(resource.contents[0]).toMatchObject({
       mimeType: "text/html;profile=mcp-app",
@@ -193,6 +232,46 @@ describe("Pippit ChatGPT MCP App", () => {
     expect((resource.contents[0]?._meta?.ui as { domain?: string } | undefined)?.domain).toBe(
       "https://apps.example.test",
     )
+
+    const imageGenerated = await client.callTool({
+      arguments: {
+        byok_id: "credential_1",
+        images: [{
+          download_url: "https://files.example.test/reference.png",
+          file_id: "file_image",
+          file_name: "reference.png",
+          mime_type: "image/png",
+        }],
+        model: "pippit/seedream-5.0-pro",
+        n: 1,
+        prompt: "Create a premium poster",
+        resolution: "4K",
+        thread_id: "thread_1",
+      },
+      name: CHATGPT_TOOL_NAMES.imageGenerate,
+    })
+    expect(calls.at(-1)).toEqual({
+      args: {
+        byok_id: "credential_1",
+        images: [{ image_url: { url: "https://files.example.test/reference.png" }, type: "image_url" }],
+        model: "pippit/seedream-5.0-pro",
+        n: 1,
+        prompt: "Create a premium poster",
+        resolution: "4K",
+        thread_id: "thread_1",
+      },
+      name: CHATGPT_TOOL_NAMES.imageGenerate,
+    })
+    expect(imageGenerated.content).toContainEqual({ type: "image", data: "aW1hZ2U=", mimeType: "image/png" })
+    expect(imageGenerated._meta?.["pippit/images"]).toEqual([
+      {
+        data: "aW1hZ2U=",
+        filename: "pippit-image-1780000000-1.png",
+        index: 0,
+        kind: "image",
+        mime_type: "image/png",
+      },
+    ])
 
     const generated = await client.callTool({
       arguments: {

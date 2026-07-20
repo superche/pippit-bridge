@@ -82,7 +82,7 @@ export function createPippitMcpMessageHandler(
             tools: { listChanged: false },
           },
           instructions:
-            "Use these tools only for Pippit video jobs through the configured facade. Never provide a raw Pippit Access Key.",
+            "Use these tools only for Pippit image and video generation through the configured facade. Never provide a raw Pippit Access Key.",
           protocolVersion,
           serverInfo: PIPPIT_MCP_SERVER_INFO,
         })

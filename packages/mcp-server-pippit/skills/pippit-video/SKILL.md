@@ -1,6 +1,6 @@
 ---
 name: pippit-video
-description: Use when the user wants to manage facade-backed Pippit accounts, list video models, submit generation or reference-guided regeneration jobs, inspect status, locally save and preview completed video, or create an additional named copy through Pippit Bridge.
+description: Use when the user wants to manage facade-backed Pippit accounts, generate Seedream images, or list, generate, inspect, save, preview, and regenerate Pippit video through Pippit Bridge.
 ---
 
 # Pippit Video
@@ -30,10 +30,11 @@ For Codex/stdio, the widget reads bounded chunks of the completed MP4 through st
 
 1. If no account is configured, call `pippit_add_access_key` with a non-secret account name, then have the user complete its loopback setup page. Use `pippit_list_access_keys` to confirm the masked account is active.
 2. Use `pippit_switch_access_key` to select the account for new jobs. Switching never changes the credential embedded in an existing job id. Before `pippit_delete_access_key`, show the selected masked account and get explicit confirmation; local deletion does not revoke the AK on the Pippit website.
-3. Call `pippit_list_video_models` when the model or its supported settings are not already known.
-4. Call `pippit_generate_video` once. Omit `idempotency_key` for an ordinary submission. Only when the user deliberately requests abnormal-recovery protection, choose and preserve a stable key before the first attempt; reuse that key only after an abnormal interruption and only with the exact same arguments. The tool submits a job and returns immediately; it does not wait for generation to finish.
-5. Save the returned job `id`, then poll `pippit_get_video` until the job reaches a terminal state. A completed `pippit_get_video` first materializes every output as a regular local MP4, then automatically opens the shared video preview and regeneration widget through the MCP Apps local resource bridge. The widget must not expose an absolute filesystem path; mention the configured output folder only when the user asks where files are saved.
-6. Call `pippit_download_video` only when the user asks for an additional copy with a chosen relative file name/path. The job must be `completed`; use a new relative `output_path` beneath the configured output root. Existing files are never overwritten. Do not use this tool as a prerequisite for normal playback or initial local persistence.
+3. For images, call `pippit_list_image_models` when needed, then call `pippit_generate_image`. Use `pippit/seedream-5.0` without `resolution`, or `pippit/seedream-5.0-pro` with optional `1K`, `2K`, or `4K`. Up to 9 reference images and `n=1..10` are accepted. Completed images appear in an inline result card with `Download original`; there is no image polling or separate download tool. If the user asks for the same image or file again, direct them to that existing download action and never regenerate it.
+4. For video, call `pippit_list_video_models` when the model or its supported settings are not already known.
+5. Call `pippit_generate_video` once. Omit `idempotency_key` for an ordinary submission. Only when the user deliberately requests abnormal-recovery protection, choose and preserve a stable key before the first attempt; reuse that key only after an abnormal interruption and only with the exact same arguments. The tool submits a job and returns immediately; it does not wait for generation to finish.
+6. Save the returned job `id`, then poll `pippit_get_video` until the job reaches a terminal state. A completed `pippit_get_video` first materializes every output as a regular local MP4, then automatically opens the shared video preview and regeneration widget through the MCP Apps local resource bridge. The widget must not expose an absolute filesystem path; mention the configured output folder only when the user asks where files are saved.
+7. Call `pippit_download_video` only when the user asks for an additional copy with a chosen relative file name/path. The job must be `completed`; use a new relative `output_path` beneath the configured output root. Existing files are never overwritten. Do not use this tool as a prerequisite for normal playback or initial local persistence.
 
 ## Reference-guided regeneration
 
@@ -47,4 +48,4 @@ All generation-related tool paths use a 12-hour internal timeout. After `Regener
 
 `frame_images` and `input_references` use HTTP(S) URLs that the facade resolves. A request containing frame images uses first/last-frame generation semantics. Never mix `frame_images` with `input_references` in one request.
 
-Do not claim text, standalone image, speech, transcription, or audio-generation support. Audio is accepted only as an input reference for a video request.
+Do not claim text, speech, transcription, or audio-generation support. Audio is accepted only as an input reference for a video request.

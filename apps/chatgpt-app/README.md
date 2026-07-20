@@ -40,7 +40,7 @@ Register the public `https://YOUR_HOST/mcp` endpoint in the ChatGPT developer co
 
 ## Tool contract
 
-The App projects exactly four tools from the shared MCP capability layer: list models, generate video, get video, and `pippit_edit_video_segment`. It does not duplicate the MCP runtime and does not expose its local-download or AK-management tools. Generate exposes ChatGPT top-level file parameters `first_frame`, `last_frame`, `images`, `videos`, and `audios`, marked through `_meta["openai/fileParams"]`. A file object contains required `file_id` and `download_url`, plus optional `mime_type` and `file_name`. URL-only alternatives are available as `first_frame_url`, `last_frame_url`, `image_urls`, `video_urls`, and `audio_urls`.
+The App projects six tools from the shared MCP capability layer: list/generate images, plus list/generate/get/regenerate video. It does not duplicate the MCP runtime and does not expose its local-download or AK-management tools. Image generation binds `images` as a ChatGPT file parameter and also accepts `image_urls`; completed images render in a dedicated result card with `Download original`, using the bytes from the original tool result rather than generating again. Video generation exposes `first_frame`, `last_frame`, `images`, `videos`, and `audios`, marked through `_meta["openai/fileParams"]`. A file object contains required `file_id` and `download_url`, plus optional `mime_type` and `file_name`.
 
 Every generate request requires `idempotency_key`. It deduplicates retries only within the lifetime of the running MCP server process; it is not a durable cross-restart guarantee.
 
