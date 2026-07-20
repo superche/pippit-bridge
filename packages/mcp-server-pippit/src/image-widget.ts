@@ -1,4 +1,4 @@
-export const PIPPIT_IMAGE_WIDGET_URI = "ui://widget/pippit-image-result-v1.html"
+export const PIPPIT_IMAGE_WIDGET_URI = "ui://widget/pippit-image-result-v2.html"
 
 export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
 <html lang="en">
@@ -348,7 +348,7 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
       window.setTimeout(useOpenAiResult, 600);
       request("ui/initialize", {
         appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
-        appInfo: { name: "pippit-image-result", title: "Pippit image result", version: "0.2.13" },
+        appInfo: { name: "pippit-image-result", title: "Pippit image result", version: "0.2.14" },
         protocolVersion: protocolVersion
       }).then(function (result) {
         protocolReady = true;

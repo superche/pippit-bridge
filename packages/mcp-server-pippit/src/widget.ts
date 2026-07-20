@@ -2273,7 +2273,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       fallbackTimer = window.setTimeout(useOpenAiInitialResult, 1200);
       request("ui/initialize", {
         protocolVersion: protocolVersion,
-        appInfo: { name: "pippit-video-editor", title: "Pippit video regeneration", version: "0.2.13" },
+        appInfo: { name: "pippit-video-editor", title: "Pippit video regeneration", version: "0.2.14" },
         appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] }
       }).then(function (result) {
         protocolReady = true;
