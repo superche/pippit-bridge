@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { PIPPIT_DEFAULT_TIMEOUT_MS } from "@pippit-bridge/sdk"
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u
 const KEY_HEX_PATTERN = /^[a-f0-9]{64}$/u
@@ -31,15 +32,15 @@ const envSchema = z.object({
   BYOK_ENCRYPTION_KEY_HEX: z.string().trim().toLowerCase().default(""),
   BYOK_MANAGEMENT_KEY_SHA256: z.string().trim().toLowerCase().default(""),
   BYOK_STORE_PATH: z.string().trim().min(1).default("./data/byok-credentials.json"),
-  CONTENT_STREAM_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+  CONTENT_STREAM_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(PIPPIT_DEFAULT_TIMEOUT_MS),
   FACADE_API_KEY_SHA256_ALLOWLIST: sha256Allowlist,
   HOST: z.string().min(1).default("127.0.0.1"),
   JOB_SIGNING_KEY_HEX: z.string().trim().toLowerCase().default(""),
   PIPPIT_BASE_URL: z.url().default("https://xyq.jianying.com"),
-  PIPPIT_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+  PIPPIT_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(PIPPIT_DEFAULT_TIMEOUT_MS),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
   PUBLIC_BASE_URL: optionalUrl,
-  REFERENCE_FETCH_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+  REFERENCE_FETCH_TIMEOUT_MS: z.coerce.number().int().positive().default(PIPPIT_DEFAULT_TIMEOUT_MS),
   REFERENCE_GLOBAL_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(1),
   REFERENCE_MAX_AUDIO_BYTES: z.coerce.number().int().positive().default(15 * 1024 * 1024),
   REFERENCE_MAX_IMAGE_BYTES: z.coerce.number().int().positive().default(30 * 1024 * 1024),

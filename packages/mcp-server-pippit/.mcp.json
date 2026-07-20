@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "pippit-video": {
+      "command": "node",
+      "args": ["./plugin-entry.mjs"],
+      "cwd": ".",
+      "tool_timeout_sec": 43200
+    }
+  }
+}

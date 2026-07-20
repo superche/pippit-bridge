@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto"
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto"
 import { chmod, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -21,6 +21,53 @@ async function temporaryStorePath(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "pippit-byok-store-"))
   temporaryDirectories.push(directory)
   return join(directory, "credentials.json")
+}
+
+async function rewriteAsLegacyEnvelopeWithoutActiveSelections(
+  filePath: string,
+  masterKey: Uint8Array,
+): Promise<void> {
+  const envelope = JSON.parse(await readFile(filePath, "utf8")) as {
+    ciphertext: string
+    format: "pippit-byok-store"
+    key_id: string
+    nonce: string
+    tag: string
+    version: 1
+  }
+  const aad = Buffer.from(
+    `${envelope.format}\u0000${envelope.version}\u0000${envelope.key_id}\u0000pippit-bridge`,
+    "utf8",
+  )
+  const decipher = createDecipheriv(
+    "aes-256-gcm",
+    masterKey,
+    Buffer.from(envelope.nonce, "base64url"),
+    { authTagLength: 16 },
+  )
+  decipher.setAAD(aad)
+  decipher.setAuthTag(Buffer.from(envelope.tag, "base64url"))
+  const plaintext = Buffer.concat([
+    decipher.update(Buffer.from(envelope.ciphertext, "base64url")),
+    decipher.final(),
+  ])
+  const state = JSON.parse(plaintext.toString("utf8")) as Record<string, unknown>
+  Reflect.deleteProperty(state, "active_selections")
+
+  const nonce = randomBytes(12)
+  const cipher = createCipheriv("aes-256-gcm", masterKey, nonce, { authTagLength: 16 })
+  cipher.setAAD(aad)
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(state), "utf8"), cipher.final()])
+  await writeFile(
+    filePath,
+    JSON.stringify({
+      ...envelope,
+      ciphertext: ciphertext.toString("base64url"),
+      nonce: nonce.toString("base64url"),
+      tag: cipher.getAuthTag().toString("base64url"),
+    }),
+    { mode: 0o600 },
+  )
 }
 
 describe("MemoryByokStore", () => {
@@ -132,6 +179,91 @@ describe("MemoryByokStore", () => {
     ).toEqual([])
   })
 
+  it("isolates active selections by caller, honors explicit selection, and fails closed", async () => {
+    const store = new MemoryByokStore()
+    const firstCallerHash = "a".repeat(64)
+    const secondCallerHash = "b".repeat(64)
+    const unselectedCallerHash = "c".repeat(64)
+    const allowedHashes = [firstCallerHash, secondCallerHash, unselectedCallerHash]
+    const first = await store.create({
+      allowed_api_key_hashes: allowedHashes,
+      key: "ak-first",
+      provider: "pippit",
+    })
+    const second = await store.create({
+      allowed_api_key_hashes: allowedHashes,
+      key: "ak-second",
+      provider: "pippit",
+    })
+
+    await store.setActiveSelection(firstCallerHash, first.id)
+    await store.setActiveSelection(secondCallerHash, second.id)
+    expect(await store.getActiveSelection(firstCallerHash)).toMatchObject({
+      credential_id: first.id,
+      facade_api_key_hash: firstCallerHash,
+    })
+    expect(
+      (
+        await store.resolveCandidates({
+          apiKeyHash: firstCallerHash,
+          model: "pippit/seedance-2.0",
+          workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
+        })
+      ).map((candidate) => candidate.credential.id),
+    ).toEqual([first.id])
+    expect(
+      (
+        await store.resolveCandidates({
+          apiKeyHash: secondCallerHash,
+          model: "pippit/seedance-2.0",
+          workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
+        })
+      ).map((candidate) => candidate.credential.id),
+    ).toEqual([second.id])
+    expect(
+      (
+        await store.resolveCandidates({
+          apiKeyHash: unselectedCallerHash,
+          model: "pippit/seedance-2.0",
+          workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
+        })
+      ).map((candidate) => candidate.credential.id),
+    ).toEqual([first.id, second.id])
+
+    const explicitlySelected = await store.resolveCandidates({
+      apiKeyHash: firstCallerHash,
+      credentialId: second.id,
+      model: "pippit/seedance-2.0",
+      workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
+    })
+    expect(explicitlySelected.map((candidate) => candidate.credential.id)).toEqual([second.id])
+
+    await store.update(first.id, { disabled: true })
+    expect(
+      await store.resolveCandidates({
+        apiKeyHash: firstCallerHash,
+        model: "pippit/seedance-2.0",
+        workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
+      }),
+    ).toEqual([])
+    await store.update(first.id, { disabled: false })
+    await expect(store.delete(first.id)).rejects.toMatchObject({
+      code: "ACTIVE_CREDENTIAL_DELETE_REQUIRES_SWITCH",
+    })
+    await store.setActiveSelection(firstCallerHash, second.id)
+    expect(await store.delete(first.id)).toBe(true)
+  })
+
+  it("clears a caller selection when deleting its only credential", async () => {
+    const store = new MemoryByokStore()
+    const callerHash = "d".repeat(64)
+    const credential = await store.create({ key: "ak-only", provider: "pippit" })
+    await store.setActiveSelection(callerHash, credential.id)
+
+    expect(await store.delete(credential.id)).toBe(true)
+    expect(await store.getActiveSelection(callerHash)).toBeUndefined()
+  })
+
   it("updates, deletes, enforces the capacity limit, and rejects use after close", async () => {
     const store = new MemoryByokStore({ maxCredentials: 1 })
     const credential = await store.create({ key: "ak-one", provider: "pippit" })
@@ -175,6 +307,8 @@ describe("FileByokStore", () => {
       name: "secret credential name",
       provider: "pippit",
     })
+    const callerHash = "a".repeat(64)
+    await store.setActiveSelection(callerHash, credential.id)
 
     const serialized = await readFile(filePath, "utf8")
     const envelope = JSON.parse(serialized) as Record<string, unknown>
@@ -188,11 +322,37 @@ describe("FileByokStore", () => {
 
     const reopened = await FileByokStore.open({ filePath, masterKey })
     expect(await reopened.get(credential.id)).toEqual(credential)
+    expect(await reopened.getActiveSelection(callerHash)).toMatchObject({
+      credential_id: credential.id,
+      facade_api_key_hash: callerHash,
+    })
     const [resolved] = await reopened.resolveCandidates({
       model: "pippit/seedance-2.0",
       workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
     })
     expect(resolved?.accessKey).toBe("ak-file-secret-sentinel")
+    await reopened.close()
+  })
+
+  it("opens a legacy encrypted store that has no active selection field", async () => {
+    const filePath = await temporaryStorePath()
+    const masterKey = randomBytes(32)
+    const store = await FileByokStore.open({ filePath, masterKey })
+    const credential = await store.create({ key: "ak-legacy", provider: "pippit" })
+    await store.close()
+    await rewriteAsLegacyEnvelopeWithoutActiveSelections(filePath, masterKey)
+
+    const reopened = await FileByokStore.open({ filePath, masterKey })
+    expect(await reopened.getActiveSelection("e".repeat(64))).toBeUndefined()
+    expect(await reopened.get(credential.id)).toEqual(credential)
+    expect(
+      (
+        await reopened.resolveCandidates({
+          model: "pippit/seedance-2.0",
+          workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
+        })
+      ).map((candidate) => candidate.accessKey),
+    ).toEqual(["ak-legacy"])
     await reopened.close()
   })
 

@@ -18,7 +18,7 @@ import {
 } from './types.js';
 
 export const PIPPIT_DEFAULT_BASE_URL = 'https://xyq.jianying.com';
-export const PIPPIT_DEFAULT_TIMEOUT_MS = 30_000;
+export const PIPPIT_DEFAULT_TIMEOUT_MS = 12 * 60 * 60 * 1_000;
 
 const ABORT_SENTINEL = Symbol('PIPPIT_REQUEST_ABORTED');
 

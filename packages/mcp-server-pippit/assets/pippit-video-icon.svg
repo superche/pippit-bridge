@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Pippit Video</title>
+  <rect width="64" height="64" rx="15" fill="#6D5EF7"/>
+  <path d="M18 16h18c8.8 0 16 7.2 16 16s-7.2 16-16 16H18V16Z" fill="#fff"/>
+  <path d="M27 25v14l13-7-13-7Z" fill="#5848D8"/>
+</svg>

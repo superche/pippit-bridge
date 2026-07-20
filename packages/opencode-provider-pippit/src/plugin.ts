@@ -24,7 +24,11 @@ import {
   PippitCredentialSource,
   type PippitRuntimeCredential,
 } from "./auth.js"
-import { PippitVideoService, type PippitToolResult } from "./generation.js"
+import {
+  PIPPIT_MAX_WAIT_SECONDS,
+  PippitVideoService,
+  type PippitToolResult,
+} from "./generation.js"
 import {
   PIPPIT_ACCESS_KEY_ENV,
   PIPPIT_ACCESS_KEY_PAGE,
@@ -410,7 +414,12 @@ async function initializePippitPlugin(
           duration: schema.number().int().min(1).max(3_600).optional(),
           first_frame: schema.string().min(1).optional(),
           last_frame: schema.string().min(1).optional(),
-          max_wait_seconds: schema.number().int().min(1).max(3_600).default(900),
+          max_wait_seconds: schema
+            .number()
+            .int()
+            .min(1)
+            .max(PIPPIT_MAX_WAIT_SECONDS)
+            .default(PIPPIT_MAX_WAIT_SECONDS),
           model: schema
             .string()
             .default("pippit/seedance-2.0")
@@ -510,7 +519,12 @@ async function initializePippitPlugin(
               "Explicit managed account for an unbound run. A saved run binding always wins and must match this value.",
             ),
           download: schema.boolean().default(true),
-          max_wait_seconds: schema.number().int().min(1).max(3_600).default(900),
+          max_wait_seconds: schema
+            .number()
+            .int()
+            .min(1)
+            .max(PIPPIT_MAX_WAIT_SECONDS)
+            .default(PIPPIT_MAX_WAIT_SECONDS),
           output_directory: schema.string().min(1).optional(),
           run_id: schema.string().min(1),
           thread_id: schema.string().min(1),

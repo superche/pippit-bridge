@@ -1,0 +1,20 @@
+{
+  "name": "pippit-bridge",
+  "interface": {
+    "displayName": "Pippit Bridge"
+  },
+  "plugins": [
+    {
+      "name": "pippit-video",
+      "source": {
+        "source": "local",
+        "path": "./packages/mcp-server-pippit"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Creativity"
+    }
+  ]
+}

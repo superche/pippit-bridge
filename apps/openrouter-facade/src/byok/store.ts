@@ -10,9 +10,11 @@ import { basename, dirname, isAbsolute, join } from "node:path"
 import { z } from "zod"
 import {
   ByokStoreError,
+  apiKeyHashSchema,
   byokCredentialCreateSchema,
   byokCredentialListQuerySchema,
   byokCredentialUpdateSchema,
+  type ByokActiveSelection,
   type ByokCredential,
   type ByokCredentialCreateInput,
   type ByokCredentialList,
@@ -34,6 +36,7 @@ const DEFAULT_KEY_ID = "v1"
 const DEFAULT_AAD_CONTEXT = "pippit-bridge"
 const DEFAULT_MAX_FILE_BYTES = 1024 * 1024
 const DEFAULT_MAX_CREDENTIALS = 100
+const MAX_ACTIVE_SELECTIONS = 100
 const GCM_NONCE_BYTES = 12
 const GCM_TAG_BYTES = 16
 const MAX_KEY_VERSIONS_PER_CREDENTIAL = 100
@@ -79,8 +82,16 @@ const storedCredentialSchema = z
       context.addIssue({ code: "custom", message: "The active key version does not exist" })
     }
   })
+const storedActiveSelectionSchema = z
+  .object({
+    credential_id: z.uuid(),
+    facade_api_key_hash: apiKeyHashSchema,
+    updated_at: z.iso.datetime(),
+  })
+  .strict()
 const storedStateSchema = z
   .object({
+    active_selections: z.array(storedActiveSelectionSchema).max(MAX_ACTIVE_SELECTIONS).default([]),
     credentials: z.array(storedCredentialSchema),
     revision: z.number().int().nonnegative(),
   })
@@ -89,6 +100,13 @@ const storedStateSchema = z
     const credentialIds = state.credentials.map((credential) => credential.id)
     if (new Set(credentialIds).size !== credentialIds.length) {
       context.addIssue({ code: "custom", message: "Credential ids must be unique" })
+    }
+    const selectedCallers = state.active_selections.map((selection) => selection.facade_api_key_hash)
+    if (new Set(selectedCallers).size !== selectedCallers.length) {
+      context.addIssue({ code: "custom", message: "Active BYOK selections must be unique per facade API key" })
+    }
+    if (state.active_selections.some((selection) => !credentialIds.includes(selection.credential_id))) {
+      context.addIssue({ code: "custom", message: "Active BYOK selections must reference existing credentials" })
     }
   })
 const envelopeSchema = z
@@ -144,7 +162,7 @@ class AsyncMutex {
 }
 
 function emptyState(): StoredState {
-  return { credentials: [], revision: 0 }
+  return { active_selections: [], credentials: [], revision: 0 }
 }
 
 function copyList(value: readonly string[] | null): string[] | null {
@@ -165,6 +183,14 @@ function publicCredential(credential: StoredCredential): ByokCredential {
     provider: credential.provider,
     sort_order: credential.sort_order,
     workspace_id: credential.workspace_id,
+  }
+}
+
+function publicSelection(selection: z.output<typeof storedActiveSelectionSchema>): ByokActiveSelection {
+  return {
+    credential_id: selection.credential_id,
+    facade_api_key_hash: selection.facade_api_key_hash,
+    updated_at: selection.updated_at,
   }
 }
 
@@ -252,6 +278,17 @@ function resolvedCredential(
 
 function listMatches(filter: readonly string[] | null, value: string | undefined): boolean {
   return filter === null || (value !== undefined && filter.includes(value))
+}
+
+function callerCanManageCredential(credential: StoredCredential, facadeApiKeyHash: string): boolean {
+  return (
+    credential.allowed_user_ids === null &&
+    listMatches(credential.allowed_api_key_hashes, facadeApiKeyHash)
+  )
+}
+
+function callerCanSelectCredential(credential: StoredCredential, facadeApiKeyHash: string): boolean {
+  return !credential.disabled && callerCanManageCredential(credential, facadeApiKeyHash)
 }
 
 function byRoutingOrder(left: StoredCredential, right: StoredCredential): number {
@@ -343,6 +380,7 @@ abstract class AbstractByokStore implements ByokStore {
         ),
       })
       const next = {
+        ...this.state,
         credentials: [...this.state.credentials, record],
         revision: this.state.revision + 1,
       }
@@ -360,7 +398,9 @@ abstract class AbstractByokStore implements ByokStore {
       .filter(
         (credential) =>
           (parsed.provider === undefined || credential.provider === parsed.provider) &&
-          (parsed.workspace_id === undefined || credential.workspace_id === parsed.workspace_id),
+          (parsed.workspace_id === undefined || credential.workspace_id === parsed.workspace_id) &&
+          (parsed.facade_api_key_hash === undefined ||
+            callerCanManageCredential(credential, parsed.facade_api_key_hash)),
       )
       .sort(byRoutingOrder)
     return {
@@ -404,23 +444,112 @@ abstract class AbstractByokStore implements ByokStore {
       )
       const credentials = [...this.state.credentials]
       credentials[index] = updated
-      const next = { credentials, revision: this.state.revision + 1 }
+      const next = { ...this.state, credentials, revision: this.state.revision + 1 }
       await this.persist(next)
       this.state = next
       return publicCredential(updated)
     })
   }
 
-  async delete(id: string): Promise<boolean> {
+  async delete(id: string, facadeApiKeyHash?: string): Promise<boolean> {
+    const normalizedHash =
+      facadeApiKeyHash === undefined ? undefined : apiKeyHashSchema.parse(facadeApiKeyHash)
     await this.prepare()
     return this.mutex.runExclusive(async () => {
       this.assertOpen()
-      const credentials = this.state.credentials.filter((credential) => credential.id !== id)
-      if (credentials.length === this.state.credentials.length) return false
-      const next = { credentials, revision: this.state.revision + 1 }
+      const credential = this.state.credentials.find((candidate) => candidate.id === id)
+      if (
+        credential === undefined ||
+        (normalizedHash !== undefined && !callerCanManageCredential(credential, normalizedHash))
+      ) {
+        return false
+      }
+      const selectedCallers = this.state.active_selections
+        .filter((selection) => selection.credential_id === id)
+        .map((selection) => selection.facade_api_key_hash)
+      const callerCanSwitch = selectedCallers.some((facadeApiKeyHash) =>
+        this.state.credentials.some(
+          (candidate) =>
+            candidate.id !== id && callerCanSelectCredential(candidate, facadeApiKeyHash),
+        ),
+      )
+      if (callerCanSwitch) {
+        throw new ByokStoreError(
+          "ACTIVE_CREDENTIAL_DELETE_REQUIRES_SWITCH",
+          "Switch callers with another eligible credential away from the active BYOK credential before deleting it.",
+        )
+      }
+      const credentials = this.state.credentials.filter((candidate) => candidate.id !== id)
+      const next = {
+        active_selections: this.state.active_selections.filter((selection) => selection.credential_id !== id),
+        credentials,
+        revision: this.state.revision + 1,
+      }
       await this.persist(next)
       this.state = next
       return true
+    })
+  }
+
+  async getActiveSelection(facadeApiKeyHash: string): Promise<ByokActiveSelection | undefined> {
+    const normalizedHash = apiKeyHashSchema.parse(facadeApiKeyHash)
+    await this.prepare()
+    this.assertOpen()
+    const selection = this.state.active_selections.find(
+      (candidate) => candidate.facade_api_key_hash === normalizedHash,
+    )
+    return selection === undefined ? undefined : publicSelection(selection)
+  }
+
+  async setActiveSelection(
+    facadeApiKeyHash: string,
+    credentialId: string,
+  ): Promise<ByokActiveSelection> {
+    const normalizedHash = apiKeyHashSchema.parse(facadeApiKeyHash)
+    const normalizedCredentialId = z.uuid().parse(credentialId)
+    await this.prepare()
+    return this.mutex.runExclusive(async () => {
+      this.assertOpen()
+      const credential = this.state.credentials.find((candidate) => candidate.id === normalizedCredentialId)
+      if (credential === undefined) {
+        throw new ByokStoreError("CREDENTIAL_NOT_FOUND", "The requested BYOK credential does not exist.")
+      }
+      if (
+        !callerCanSelectCredential(credential, normalizedHash)
+      ) {
+        throw new ByokStoreError(
+          "ACTIVE_CREDENTIAL_INELIGIBLE",
+          "The requested BYOK credential is not eligible for this facade API key.",
+        )
+      }
+      const existing = this.state.active_selections.find(
+        (candidate) => candidate.facade_api_key_hash === normalizedHash,
+      )
+      if (existing?.credential_id === credential.id) return publicSelection(existing)
+      if (existing === undefined && this.state.active_selections.length >= MAX_ACTIVE_SELECTIONS) {
+        throw new ByokStoreError(
+          "CREDENTIAL_LIMIT_EXCEEDED",
+          `The BYOK credential store supports at most ${MAX_ACTIVE_SELECTIONS} active caller selections.`,
+        )
+      }
+      const selection = storedActiveSelectionSchema.parse({
+        credential_id: credential.id,
+        facade_api_key_hash: normalizedHash,
+        updated_at: this.timestamp(),
+      })
+      const next = storedStateSchema.parse({
+        ...this.state,
+        active_selections: [
+          ...this.state.active_selections.filter(
+            (candidate) => candidate.facade_api_key_hash !== normalizedHash,
+          ),
+          selection,
+        ],
+        revision: this.state.revision + 1,
+      })
+      await this.persist(next)
+      this.state = next
+      return publicSelection(selection)
     })
   }
 
@@ -428,11 +557,18 @@ abstract class AbstractByokStore implements ByokStore {
     const parsed = resolveInputSchema.parse(input)
     await this.prepare()
     this.assertOpen()
+    const activeCredentialId =
+      parsed.credentialId === undefined && parsed.apiKeyHash !== undefined
+        ? this.state.active_selections.find(
+            (selection) => selection.facade_api_key_hash === parsed.apiKeyHash,
+          )?.credential_id
+        : undefined
+    const selectedCredentialId = parsed.credentialId ?? activeCredentialId
     return this.state.credentials
       .filter(
         (credential) =>
           !credential.disabled &&
-          (parsed.credentialId === undefined || credential.id === parsed.credentialId) &&
+          (selectedCredentialId === undefined || credential.id === selectedCredentialId) &&
           credential.provider === parsed.provider &&
           credential.workspace_id === parsed.workspaceId &&
           listMatches(credential.allowed_models, parsed.model) &&
@@ -481,6 +617,12 @@ abstract class AbstractByokStore implements ByokStore {
       throw new ByokStoreError(
         "STORE_CORRUPT",
         "The BYOK credential store contains a credential from a different workspace.",
+      )
+    }
+    if (state.active_selections.length > MAX_ACTIVE_SELECTIONS) {
+      throw new ByokStoreError(
+        "STORE_CORRUPT",
+        `The BYOK credential store exceeds its ${MAX_ACTIVE_SELECTIONS} active selection limit.`,
       )
     }
   }
@@ -541,7 +683,7 @@ export class MemoryByokStore extends AbstractByokStore {
       const sortOrder = z.number().int().nonnegative().parse(seededSortOrder ?? index)
       return createRecord(parsed, { createdAt, id, keyVersionId, sortOrder })
     })
-    const parsedState = storedStateSchema.parse({ credentials: records, revision: records.length })
+    const parsedState = storedStateSchema.parse({ active_selections: [], credentials: records, revision: records.length })
     this.assertStateWithinLimit(parsedState)
     this.state = parsedState
   }

@@ -153,7 +153,7 @@ const DEFAULT_MAX_BYTES_BY_KIND: Readonly<Record<ReferenceKind, number>> = {
   video: 200 * 1024 * 1024,
 };
 const DEFAULT_MAX_REDIRECTS = 3;
-const DEFAULT_TIMEOUT_MS = 30_000;
+export const PIPPIT_DEFAULT_REFERENCE_TIMEOUT_MS = 12 * 60 * 60 * 1_000;
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const GENERIC_MEDIA_TYPES = new Set(['application/octet-stream', 'binary/octet-stream']);
@@ -878,7 +878,7 @@ async function loadHttpReference(
  * validated DNS answer to the actual socket and revalidates every redirect.
  */
 export function createReferenceLoader(config: ReferenceLoaderConfig = {}): ReferenceLoader {
-  const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs = config.timeoutMs ?? PIPPIT_DEFAULT_REFERENCE_TIMEOUT_MS;
   const maxRedirects = config.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
   assertPositiveInteger(timeoutMs);
   assertNonNegativeInteger(maxRedirects);

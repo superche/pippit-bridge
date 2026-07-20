@@ -2,11 +2,18 @@ import { Readable, Transform } from "node:stream"
 import { resolve } from "node:path"
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify"
 import { z } from "zod"
-import { authenticateFacadeApiKey, authenticateManagementKey } from "./auth.js"
+import {
+  authenticateFacadeApiKey,
+  authenticateManagementKey,
+  type AuthenticatedApiKey,
+} from "./auth.js"
 import {
   ByokStoreError,
   FileByokStore,
+  byokActiveSelectionQuerySchema,
+  byokActiveSelectionUpdateSchema,
   byokCredentialCreateSchema,
+  byokCredentialDeleteQuerySchema,
   byokCredentialListQuerySchema,
   byokCredentialUpdateSchema,
   type ByokStore,
@@ -34,6 +41,9 @@ import {
 import {
   type VideoGenerationJob,
   type VideoGenerationStatus,
+  type VideoEditRequest,
+  type VideoGenerationRequest,
+  videoEditRequestSchema,
   videoGenerationRequestSchema,
 } from "./openrouter/contracts.js"
 import { pippitStateToOpenRouterStatus, resolveOutputGeometry } from "./openrouter/video-mapping.js"
@@ -192,6 +202,29 @@ function normalizeReferenceError(error: ReferenceLoadError): ApiError {
 }
 
 function normalizeByokStoreError(error: ByokStoreError): ApiError {
+  if (error.code === "ACTIVE_CREDENTIAL_DELETE_REQUIRES_SWITCH") {
+    return new ApiError("Switch away from the active BYOK credential before deleting it.", {
+      code: "active_byok_delete_requires_switch",
+      statusCode: 409,
+      type: "invalid_request_error",
+    })
+  }
+  if (error.code === "ACTIVE_CREDENTIAL_INELIGIBLE") {
+    return new ApiError("The requested BYOK credential is not eligible for this facade API key.", {
+      code: "byok_credential_ineligible",
+      param: "credential_id",
+      statusCode: 409,
+      type: "invalid_request_error",
+    })
+  }
+  if (error.code === "CREDENTIAL_NOT_FOUND") {
+    return new ApiError("The requested BYOK credential does not exist.", {
+      code: "byok_credential_not_found",
+      param: "credential_id",
+      statusCode: 404,
+      type: "not_found_error",
+    })
+  }
   if (error.code === "CREDENTIAL_LIMIT_EXCEEDED") {
     return new ApiError("The BYOK credential store has reached its configured limit.", {
       code: "byok_credential_limit_exceeded",
@@ -250,6 +283,71 @@ function unsupportedStandardParameters(request: {
       "unsupported_parameter",
     )
   }
+}
+
+const MAX_COMPILED_EDIT_PROMPT_LENGTH = 20_000
+
+function compileVideoEditPrompt(request: VideoEditRequest): string {
+  // Pippit receives the complete source video. Segment and normalized ROI values
+  // are deterministic provider instructions, not hard-trim or pixel-mask operations.
+  const prompt = [
+    "Pippit reference-guided video regeneration instruction v1.",
+    "The complete source video is attached as the only video reference.",
+    "Treat segment and normalized region values as edit guidance only; preserve unrelated content outside them.",
+    JSON.stringify({
+      annotations: request.annotations,
+      instruction: request.prompt ?? null,
+      segment: request.segment,
+    }),
+  ].join("\n")
+  if (prompt.length > MAX_COMPILED_EDIT_PROMPT_LENGTH) {
+    throw new ApiError("The compiled video edit instructions exceed the supported prompt length.", {
+      code: "edit_instruction_too_long",
+      param: "annotations",
+      statusCode: 422,
+      type: "invalid_request_error",
+    })
+  }
+  return prompt
+}
+
+function editSourceVideoUrl(result: PippitVideoResult, index: number): string {
+  const status = pippitStateToOpenRouterStatus(result.runState)
+  if (status !== "completed") {
+    throw new ApiError(`The source video is not available while its job is ${status}.`, {
+      code: "source_video_not_ready",
+      param: "source_job_id",
+      statusCode: 400,
+      type: "invalid_request_error",
+    })
+  }
+  const videoUrl = result.videoUrls[index]
+  if (videoUrl === undefined) {
+    throw new ApiError(`Source video output index ${index} does not exist.`, {
+      code: "source_video_output_not_found",
+      param: "source_index",
+      statusCode: 404,
+      type: "not_found_error",
+    })
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(videoUrl)
+  } catch {
+    throw new ApiError("Pippit returned an invalid source video URL.", {
+      code: "invalid_upstream_response",
+      statusCode: 502,
+      type: "upstream_error",
+    })
+  }
+  if (!new Set(["http:", "https:"]).has(parsed.protocol) || parsed.username || parsed.password) {
+    throw new ApiError("Pippit returned an unsupported source video URL.", {
+      code: "invalid_upstream_response",
+      statusCode: 502,
+      type: "upstream_error",
+    })
+  }
+  return parsed.toString()
 }
 
 const jobParamsSchema = z.object({ jobId: z.string().min(1) })
@@ -312,8 +410,9 @@ async function queryJob(
   pippit: PippitApi,
   byokStore: ByokStore,
   config: AppConfig,
+  authenticatedCaller?: AuthenticatedApiKey,
 ): Promise<{ readonly accessKey: string; readonly payload: JobTokenPayload; readonly result: PippitVideoResult }> {
-  const caller = authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
+  const caller = authenticatedCaller ?? authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
   const payload = parseJobId(jobId, caller.apiKey, config.JOB_SIGNING_KEY_HEX)
   const credential = await byokStore.getVersion(payload.credential_id, payload.credential_version_id)
   if (credential === undefined || credential.credential.workspace_id !== payload.workspace_id) {
@@ -456,96 +555,11 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     },
   })
 
-  app.addHook("onReady", async () => {
-    await byokStore.getWorkspaceId()
-  })
-  app.addHook("onRequest", async (request, reply) => {
-    const path = request.url.split("?", 1)[0]
-    if (path === "/api/v1/byok" || path?.startsWith("/api/v1/byok/")) {
-      reply.header("cache-control", "no-store")
-    }
-  })
-  app.addHook("onClose", async () => {
-    await byokStore.close()
-  })
-
-  app.setErrorHandler((error, _request, reply) => {
-    const normalized =
-      error instanceof PippitApiError
-        ? normalizePippitError(error)
-        : error instanceof ReferenceLoadError
-          ? normalizeReferenceError(error)
-          : error instanceof ByokStoreError
-            ? normalizeByokStoreError(error)
-            : normalizeFrameworkError(error)
-    const response = toOpenRouterError(normalized)
-    if (response.statusCode === 401) reply.header("www-authenticate", "Bearer")
-    void reply.status(response.statusCode).send(response.body)
-  })
-
-  app.get("/health", async () => {
-    await byokStore.getWorkspaceId()
-    return { status: "ok" }
-  })
-  app.get("/openapi.json", async () => OPENAPI_DOCUMENT)
-
-  app.get("/api/v1/videos/models", async (request) => {
-    authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
-    return { data: VIDEO_MODELS.map(publicVideoModel) }
-  })
-
-  app.get("/api/v1/models", async (request) => {
-    authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
-    return { data: VIDEO_MODELS.map(generalModel) }
-  })
-
-  app.post("/api/v1/byok", async (request, reply) => {
-    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
-    const input = byokCredentialCreateSchema.parse(request.body)
-    const credential = await byokStore.create(input)
-    reply.header("cache-control", "no-store")
-    return reply.status(201).send({ data: credential })
-  })
-
-  app.get("/api/v1/byok", async (request, reply) => {
-    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
-    const query = byokCredentialListQuerySchema.parse(request.query)
-    const credentials = await byokStore.list(query)
-    reply.header("cache-control", "no-store")
-    return credentials
-  })
-
-  app.get("/api/v1/byok/:id", async (request, reply) => {
-    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
-    const { id } = byokParamsSchema.parse(request.params)
-    const credential = await byokStore.get(id)
-    if (credential === undefined) throw byokCredentialNotFound()
-    reply.header("cache-control", "no-store")
-    return { data: credential }
-  })
-
-  app.patch("/api/v1/byok/:id", async (request, reply) => {
-    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
-    const { id } = byokParamsSchema.parse(request.params)
-    const input = byokCredentialUpdateSchema.parse(request.body)
-    const credential = await byokStore.update(id, input)
-    if (credential === undefined) throw byokCredentialNotFound()
-    reply.header("cache-control", "no-store")
-    return { data: credential }
-  })
-
-  app.delete("/api/v1/byok/:id", async (request, reply) => {
-    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
-    const { id } = byokParamsSchema.parse(request.params)
-    const deleted = await byokStore.delete(id)
-    if (!deleted) throw byokCredentialNotFound()
-    reply.header("cache-control", "no-store")
-    return { deleted: true }
-  })
-
-  app.post("/api/v1/videos", async (request, reply) => {
-    const caller = authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
-    const body = videoGenerationRequestSchema.parse(request.body)
+  const submitVideoGeneration = async (
+    request: FastifyRequest,
+    caller: AuthenticatedApiKey,
+    body: VideoGenerationRequest,
+  ): Promise<VideoGenerationJob> => {
     const model = resolveFacadeVideoModel(body.model)
     unsupportedStandardParameters(body)
     const geometry = resolveOutputGeometry(body, model)
@@ -620,7 +634,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
             caller.apiKey,
             config.JOB_SIGNING_KEY_HEX,
           )
-          const response: VideoGenerationJob = {
+          return {
             generation_id: submitted.run.runId,
             id: jobId,
             model: model.id,
@@ -628,7 +642,6 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
             status: pippitStateToOpenRouterStatus(submitted.run.state),
             usage: { is_byok: true },
           }
-          return reply.status(202).send(response)
         } catch (error) {
           const hasNextCandidate = index + 1 < candidates.length
           if (!hasNextCandidate || !canTryNextByokCredential(error)) throw error
@@ -638,6 +651,143 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     } finally {
       requestSignal.dispose()
     }
+  }
+
+  app.addHook("onReady", async () => {
+    await byokStore.getWorkspaceId()
+  })
+  app.addHook("onRequest", async (request, reply) => {
+    const path = request.url.split("?", 1)[0]
+    if (path === "/api/v1/byok" || path?.startsWith("/api/v1/byok/")) {
+      reply.header("cache-control", "no-store")
+    }
+  })
+  app.addHook("onClose", async () => {
+    await byokStore.close()
+  })
+
+  app.setErrorHandler((error, _request, reply) => {
+    const normalized =
+      error instanceof PippitApiError
+        ? normalizePippitError(error)
+        : error instanceof ReferenceLoadError
+          ? normalizeReferenceError(error)
+          : error instanceof ByokStoreError
+            ? normalizeByokStoreError(error)
+            : normalizeFrameworkError(error)
+    const response = toOpenRouterError(normalized)
+    if (response.statusCode === 401) reply.header("www-authenticate", "Bearer")
+    void reply.status(response.statusCode).send(response.body)
+  })
+
+  app.get("/health", async () => {
+    await byokStore.getWorkspaceId()
+    return { status: "ok" }
+  })
+  app.get("/openapi.json", async () => OPENAPI_DOCUMENT)
+
+  app.get("/api/v1/videos/models", async (request) => {
+    authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
+    return { data: VIDEO_MODELS.map(publicVideoModel) }
+  })
+
+  app.get("/api/v1/models", async (request) => {
+    authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
+    return { data: VIDEO_MODELS.map(generalModel) }
+  })
+
+  app.post("/api/v1/byok", async (request, reply) => {
+    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
+    const input = byokCredentialCreateSchema.parse(request.body)
+    const credential = await byokStore.create(input)
+    reply.header("cache-control", "no-store")
+    return reply.status(201).send({ data: credential })
+  })
+
+  app.get("/api/v1/byok", async (request, reply) => {
+    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
+    const query = byokCredentialListQuerySchema.parse(request.query)
+    const credentials = await byokStore.list(query)
+    reply.header("cache-control", "no-store")
+    return credentials
+  })
+
+  app.get("/api/v1/byok/active", async (request, reply) => {
+    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
+    const query = byokActiveSelectionQuerySchema.parse(request.query)
+    const selection = await byokStore.getActiveSelection(query.facade_api_key_hash)
+    reply.header("cache-control", "no-store")
+    return { data: selection ?? null }
+  })
+
+  app.put("/api/v1/byok/active", async (request, reply) => {
+    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
+    const input = byokActiveSelectionUpdateSchema.parse(request.body)
+    const selection = await byokStore.setActiveSelection(
+      input.facade_api_key_hash,
+      input.credential_id,
+    )
+    reply.header("cache-control", "no-store")
+    return { data: selection }
+  })
+
+  app.get("/api/v1/byok/:id", async (request, reply) => {
+    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
+    const { id } = byokParamsSchema.parse(request.params)
+    const credential = await byokStore.get(id)
+    if (credential === undefined) throw byokCredentialNotFound()
+    reply.header("cache-control", "no-store")
+    return { data: credential }
+  })
+
+  app.patch("/api/v1/byok/:id", async (request, reply) => {
+    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
+    const { id } = byokParamsSchema.parse(request.params)
+    const input = byokCredentialUpdateSchema.parse(request.body)
+    const credential = await byokStore.update(id, input)
+    if (credential === undefined) throw byokCredentialNotFound()
+    reply.header("cache-control", "no-store")
+    return { data: credential }
+  })
+
+  app.delete("/api/v1/byok/:id", async (request, reply) => {
+    authenticateManagementKey(request, config.BYOK_MANAGEMENT_KEY_SHA256)
+    const { id } = byokParamsSchema.parse(request.params)
+    const query = byokCredentialDeleteQuerySchema.parse(request.query)
+    const deleted = await byokStore.delete(id, query.facade_api_key_hash)
+    if (!deleted) throw byokCredentialNotFound()
+    reply.header("cache-control", "no-store")
+    return { deleted: true }
+  })
+
+  app.post("/api/v1/videos", async (request, reply) => {
+    const caller = authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
+    const body = videoGenerationRequestSchema.parse(request.body)
+    return reply.status(202).send(await submitVideoGeneration(request, caller, body))
+  })
+
+  app.post("/api/v1/videos/edits", async (request, reply) => {
+    const caller = authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
+    const edit = videoEditRequestSchema.parse(request.body)
+    const source = await queryJob(
+      request,
+      edit.source_job_id,
+      pippit,
+      byokStore,
+      config,
+      caller,
+    )
+    const sourceUrl = editSourceVideoUrl(source.result, edit.source_index)
+    const body = videoGenerationRequestSchema.parse({
+      duration: Math.max(1, Math.ceil((edit.segment.end_ms - edit.segment.start_ms) / 1_000)),
+      input_references: [{ type: "video_url", video_url: { url: sourceUrl } }],
+      model: edit.model,
+      prompt: compileVideoEditPrompt(edit),
+      ...(edit.provider === undefined ? {} : { provider: edit.provider }),
+      ...(edit.resolution === undefined ? {} : { resolution: edit.resolution }),
+      ...(edit.seed === undefined ? {} : { seed: edit.seed }),
+    })
+    return reply.status(202).send(await submitVideoGeneration(request, caller, body))
   })
 
   app.get("/api/v1/videos/:jobId", async (request) => {

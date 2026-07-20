@@ -35,6 +35,86 @@ export const frameImageSchema = imageUrlReferenceSchema.extend({
 
 const providerOptionsSchema = z.record(z.string(), z.record(z.string(), z.unknown()))
 
+const normalizedCoordinateSchema = z.number().min(0).max(1)
+const normalizedExtentSchema = z.number().positive().max(1)
+
+const videoEditRegionSchema = z
+  .object({
+    height: normalizedExtentSchema,
+    width: normalizedExtentSchema,
+    x: normalizedCoordinateSchema,
+    y: normalizedCoordinateSchema,
+  })
+  .strict()
+  .superRefine((region, context) => {
+    if (region.x + region.width > 1) {
+      context.addIssue({ code: "custom", message: "x + width must be at most 1", path: ["width"] })
+    }
+    if (region.y + region.height > 1) {
+      context.addIssue({ code: "custom", message: "y + height must be at most 1", path: ["height"] })
+    }
+  })
+
+const videoEditAnnotationSchema = z
+  .object({
+    at_ms: z.number().int().nonnegative(),
+    instruction: z.string().trim().min(1).max(2_000),
+    region: videoEditRegionSchema,
+  })
+  .strict()
+
+const videoEditSegmentSchema = z
+  .object({
+    end_ms: z.number().int().positive(),
+    start_ms: z.number().int().nonnegative(),
+  })
+  .strict()
+  .superRefine((segment, context) => {
+    if (segment.end_ms <= segment.start_ms) {
+      context.addIssue({ code: "custom", message: "end_ms must be greater than start_ms", path: ["end_ms"] })
+    }
+    if (segment.end_ms - segment.start_ms > 30_000) {
+      context.addIssue({ code: "custom", message: "The editable segment may be at most 30000 ms", path: ["end_ms"] })
+    }
+  })
+
+export const videoEditRequestSchema = z
+  .object({
+    annotations: z.array(videoEditAnnotationSchema).max(20).default([]),
+    model: z.string().trim().min(1).max(256),
+    prompt: z.string().trim().min(1).max(20_000).optional(),
+    provider: z
+      .object({
+        options: providerOptionsSchema.optional(),
+      })
+      .strict()
+      .optional(),
+    resolution: z.string().trim().min(1).max(64).optional(),
+    seed: z.number().int().min(-1).max(4_294_967_295).optional(),
+    segment: videoEditSegmentSchema,
+    source_index: z.number().int().min(0).max(1_000).default(0),
+    source_job_id: z.string().trim().min(1).max(16_384),
+  })
+  .strict()
+  .superRefine((request, context) => {
+    if (request.prompt === undefined && request.annotations.length === 0) {
+      context.addIssue({
+        code: "custom",
+        message: "Provide prompt or at least one annotation",
+        path: ["annotations"],
+      })
+    }
+    for (const [index, annotation] of request.annotations.entries()) {
+      if (annotation.at_ms < request.segment.start_ms || annotation.at_ms > request.segment.end_ms) {
+        context.addIssue({
+          code: "custom",
+          message: "Annotation at_ms must fall inside segment",
+          path: ["annotations", index, "at_ms"],
+        })
+      }
+    }
+  })
+
 export const videoGenerationRequestSchema = z
   .object({
     aspect_ratio: z.string().trim().min(1).optional(),
@@ -103,6 +183,7 @@ export type AudioUrlReference = z.infer<typeof audioUrlReferenceSchema>
 export type FrameImage = z.infer<typeof frameImageSchema>
 export type ImageUrlReference = z.infer<typeof imageUrlReferenceSchema>
 export type InputReference = z.infer<typeof inputReferenceSchema>
+export type VideoEditRequest = z.infer<typeof videoEditRequestSchema>
 export type VideoGenerationRequest = z.infer<typeof videoGenerationRequestSchema>
 export type VideoUrlReference = z.infer<typeof videoUrlReferenceSchema>
 

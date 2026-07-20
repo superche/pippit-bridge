@@ -8,7 +8,7 @@ describe("parsePluginOptions", () => {
       baseURL: "https://xyq.jianying.com",
       outputDirectory: ".pippit/outputs",
       pollIntervalMs: 2_000,
-      requestTimeoutMs: 120_000,
+      requestTimeoutMs: 43_200_000,
     })
   })
 
