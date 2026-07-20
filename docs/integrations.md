@@ -190,7 +190,7 @@ packages/mcp-server-pippit
 └── src/stdio.ts
 ```
 
-公开 marketplace 位于 GitHub 仓库 `superche/pippit-bridge` 的 `.agents/plugins/marketplace.json`，其中 plugin source 固定为公开 npm 包 `@pippit-bridge/mcp-server@0.2.13`。用户安装不需要预先 clone 或 build 本仓库：
+公开 marketplace 位于 GitHub 仓库 `superche/pippit-bridge` 的 `.agents/plugins/marketplace.json`。Codex 自行克隆这个公开 marketplace 快照，并从快照内的相对目录安装 manifest、skill、assets 与启动 shim；这里的 `local` source 只表示“相对已下载的 marketplace 根目录”，不是用户机器上的仓库路径。用户不需要预先 clone 或 build 本仓库：
 
 - Codex CLI：添加公开 GitHub marketplace，再安装 `plugin@marketplace`：
 
@@ -202,11 +202,11 @@ codex plugin list --json
 
 - ChatGPT Desktop：先在终端执行同样的 marketplace add / plugin add 命令，重启 app 后在 **Plugins** 或 `/plugins` 中确认 **Pippit Video** 已启用，再新建 Codex session。
 
-plugin 包内的 stdio server 与 Facade daemon bundle 是自包含的，安装 plugin 不需要在 plugin cache 中再运行 `npm install`、build 或写环境变量。`.mcp.json` 通过 `plugin-entry.mjs` 启动；安装和 MCP discovery 不生成 key，第一次实际工具调用才启动用户级共享 runtime。plugin 升级后，下一次实际调用会先认证已有 daemon 的 challenge proof 与 runtime version；旧版本 daemon 会在 bootstrap lock 内自动停止并替换，持久化 key 与账号不变。需要外部部署时，仍可从启动 Codex 的 secret 环境中显式提供完整 Facade 配置。
+`.mcp.json` 通过公开快照内的 `plugin-entry.mjs` 启动。npm tarball 安装中它直接加载随包发布的 stdio server 与 Facade daemon；GitHub marketplace 安装中它通过 `npx --package @pippit-bridge/mcp-server@0.2.13 pippit-mcp` 获取同一份公开、固定版本运行包。因此用户需要 Node.js 22.22.2+/24.15.0+（含 npm/npx），但不需要 checkout、`npm install` 或 build 本仓库。安装和 MCP discovery 不生成 key，第一次实际工具调用才启动用户级共享 runtime。plugin 升级后，下一次实际调用会先认证已有 daemon 的 challenge proof 与 runtime version；旧版本 daemon 会在 bootstrap lock 内自动停止并替换，持久化 key 与账号不变。需要外部部署时，仍可从启动 Codex 的 secret 环境中显式提供完整 Facade 配置。
 
 生成、查询和参考视频重新生成工具共享同一个 MCP App widget resource。widget 会自动轮询 pending/in-progress job；打开旧结果时先通过 model-hidden 的 `pippit_resolve_latest_video` 找到最新 regenerate job，宿主随后回放的旧 tool result 不能覆盖它。`pippit_get_video` 到达 `completed` 后，stdio/plugin 进程先把完整 MP4 原子保存为普通本地文件，再通过 MCP Apps `resources/read` 分块传给 widget 并创建 `blob:` 播放地址。Codex 不要求模型另行生成 `file://` 可视化；本地绝对路径、facade content URL、API key 与 `unsigned_urls` 不进入 Widget 或 model-visible 结果。stdin 重启不改变本地 artifact identity 或 regenerate lineage，文件继续保留；用户需要自定文件名或额外路径时再调用下载工具。
 
-marketplace 只提供公开索引；Codex 安装时从 npm registry 下载由 `prepack` 生成的自包含 `@pippit-bridge/mcp-server@0.2.13` tarball，并且不会在 plugin cache 中运行 lifecycle scripts。仓库开发者若要测试未发布源码，仍应在 checkout 中先运行 `npm run build -w @pippit-bridge/mcp-server`，再使用单独的本地 marketplace 配置，不能把本地 path 作为公开分发契约。
+marketplace 本身从公开 GitHub 下载，运行时通过 npm registry 获取由 `prepack` 生成的自包含 `@pippit-bridge/mcp-server@0.2.13` tarball；不会在 plugin cache 中运行仓库 lifecycle scripts。仓库开发者若要测试未发布源码，仍应在 checkout 中先运行 `npm run build -w @pippit-bridge/mcp-server`，再使用单独的开发 marketplace 配置，不能把用户机器上的绝对 path 作为公开分发契约。
 
 进入 Codex 后可用 `/plugins` 检查/enable plugin。安装或更新后开始一个新 session，再请求 `pippit-video` 列出模型、生成或查询视频；完成结果会自动保存本地 MP4 并展示 widget，只有需要额外自定义文件名或路径副本时才请求下载。
 

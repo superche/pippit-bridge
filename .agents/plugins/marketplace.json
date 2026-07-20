@@ -7,10 +7,8 @@
     {
       "name": "pippit-video",
       "source": {
-        "source": "npm",
-        "package": "@pippit-bridge/mcp-server",
-        "version": "0.2.13",
-        "registry": "https://registry.npmjs.org"
+        "source": "local",
+        "path": "./packages/mcp-server-pippit"
       },
       "policy": {
         "installation": "AVAILABLE",

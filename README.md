@@ -11,7 +11,7 @@ Pippit Bridge 是小云雀（Pippit）的 API gateway 与 adapter monorepo。当
 - `@pippit-bridge/opencode-provider`：使用 OpenCode 标准 auth/plugin/tool 接口的本地视频 provider。
 - `@pippit-bridge/mcp-server`：通用 stdio MCP server，面向支持 MCP 的本地 agent/client。
 - `@pippit-bridge/chatgpt-app`：使用 Streamable HTTP `/mcp` 与 Apps SDK widget 的 ChatGPT App。
-- `pippit-video`：从公开 GitHub marketplace 安装、由 npm tarball 分发的 Codex plugin，内嵌同一个 stdio MCP server。
+- `pippit-video`：从公开 GitHub marketplace 安装的 Codex plugin；公开快照携带 manifest、skill 与启动 shim，运行时使用 npm 上的同一个 stdio MCP server。
 
 **当前三种封装的媒体能力都只覆盖视频。** 图片、视频和音频可以作为视频生成的参考素材，但这不代表已提供文本、图片生成、语音生成或转录工具。通用 MCP 与 Codex plugin 另外提供 facade 账号管理；ChatGPT App 的 `noauth` developer-mode surface 不暴露这组管理工具。
 

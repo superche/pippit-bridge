@@ -28,9 +28,9 @@ Set a distinct `PIPPIT_FACADE_MANAGEMENT_API_KEY` only if this external identity
 
 ## Distribution
 
-The npm tarball includes compiled stdio code and a self-contained local Facade daemon. Codex's npm marketplace installer does not run package lifecycle scripts, so `prepack` builds these artifacts before publication. A clean installed tarball requires no package install, build step, or secret injection at first use.
+The npm tarball includes compiled stdio code and a self-contained local Facade daemon. `prepack` builds these artifacts before publication. A clean installed tarball requires no build step or secret injection at first use.
 
-The public GitHub marketplace at `superche/pippit-bridge` resolves this plugin from `@pippit-bridge/mcp-server@0.2.13` on npm. End users add that marketplace and install `pippit-video@pippit-bridge`; they do not clone or build this repository. A separate local marketplace may still be used for source-development checks after running `npm run build -w @pippit-bridge/mcp-server`.
+The public GitHub marketplace at `superche/pippit-bridge` installs the plugin metadata, skill, assets, and launcher from the repository snapshot. Its relative local source is inside Codex's downloaded marketplace cache, not an end-user checkout. When the compiled bundle is absent from that Git snapshot, the launcher runs the pinned public `@pippit-bridge/mcp-server@0.2.13` package through `npx`. End users need Node.js/npm but do not clone, install dependencies for, or build this repository. A separate local development marketplace may still be used after running `npm run build -w @pippit-bridge/mcp-server`.
 
 The plugin manifest configures Codex MCP tool calls for a 12-hour timeout. The same default applies to facade requests, reference preparation, generation/regeneration submission, result materialization, and widget video-tool calls. Generic MCP hosts may have their own shorter outer timeout and must opt into an equivalent limit separately.
 
