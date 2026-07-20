@@ -986,7 +986,7 @@ function imageResult(value: PippitImageGenerationResponse): PippitMcpCallToolRes
   return {
     content: [
       {
-        text: `Generated ${images.length} image${images.length === 1 ? "" : "s"} with ${value.model}. The inline result card displays the images and provides Download original; do not regenerate when the user asks for the same file.`,
+        text: `Generated ${images.length} image${images.length === 1 ? "" : "s"} with ${value.model}. The inline result card displays the images and can reveal each persistent local file in Finder or the system file manager; do not regenerate when the user asks for the same file.`,
         type: "text",
       },
       ...value.data.map((image) => ({

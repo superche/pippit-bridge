@@ -2,7 +2,7 @@
 
 `@pippit-bridge/mcp-server` is the shared Pippit image/video capability layer for generic stdio MCP clients and the `pippit-video` Codex plugin. It provides Seedream image generation, asynchronous video generation, reference-guided regeneration, polling, confined video downloads, and facade-backed account add/list/switch/delete.
 
-`pippit_generate_image` returns standard MCP image content and binds a dedicated MCP App result card. In Codex/stdio, every completed image is atomically persisted under the configured output root first. The card reads its stable opaque `pippit-image://artifact/...` resource through the local MCP bridge and offers `Download original`; it never depends on an expiring upstream URL or requires another paid generation.
+`pippit_generate_image` starts a local image task so the dedicated MCP App result card can render progress immediately; `pippit_get_image` polls that task until completion. In Codex/stdio, every completed image is atomically persisted under the configured output root first. The card reads its stable opaque `pippit-image://artifact/...` resource through the local MCP bridge and can reveal the saved file in Finder or the system file manager; it never depends on an expiring upstream URL or requires another paid generation.
 
 This package is designed for one local user on a trusted host. Its shared loopback runtime and private file stores are not a multi-tenant service boundary and do not provide distributed coordination or cross-machine state.
 
@@ -34,7 +34,7 @@ Set a distinct `PIPPIT_FACADE_MANAGEMENT_API_KEY` only if this external identity
 
 The npm tarball includes compiled stdio code and a self-contained local Facade daemon. `prepack` builds these artifacts before publication. A clean installed tarball requires no build step or secret injection at first use.
 
-The public GitHub marketplace at `superche/pippit-bridge` installs the plugin metadata, skill, assets, and launcher from the repository snapshot. Its relative local source is inside Codex's downloaded marketplace cache, not an end-user checkout. When the compiled bundle is absent from that Git snapshot, the launcher runs the pinned public `@pippit-bridge/mcp-server@0.2.15` package through `npx`. End users need Node.js/npm but do not clone, install dependencies for, or build this repository. A separate local development marketplace may still be used after running `npm run build -w @pippit-bridge/mcp-server`.
+The public GitHub marketplace at `superche/pippit-bridge` installs the plugin metadata, skill, assets, and launcher from the repository snapshot. Its relative local source is inside Codex's downloaded marketplace cache, not an end-user checkout. When the compiled bundle is absent from that Git snapshot, the launcher runs the pinned public `@pippit-bridge/mcp-server@0.2.16` package through `npx`. End users need Node.js/npm but do not clone, install dependencies for, or build this repository. A separate local development marketplace may still be used after running `npm run build -w @pippit-bridge/mcp-server`.
 
 The plugin manifest configures Codex MCP tool calls for a 12-hour timeout. The same default applies to facade requests, reference preparation, generation/regeneration submission, result materialization, and widget video-tool calls. Generic MCP hosts may have their own shorter outer timeout and must opt into an equivalent limit separately.
 

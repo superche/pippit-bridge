@@ -208,13 +208,13 @@ codex plugin list --json
 
 - ChatGPT Desktop：先在终端执行同样的 marketplace add / plugin add 命令，重启 app 后在 **Plugins** 或 `/plugins` 中确认 **Pippit Video** 已启用，再新建 Codex session。
 
-`.mcp.json` 通过公开快照内的 `plugin-entry.mjs` 启动。npm tarball 安装中它直接加载随包发布的 stdio server 与 Facade daemon；GitHub marketplace 安装中它通过 `npx --package @pippit-bridge/mcp-server@0.2.15 pippit-mcp` 获取同一份公开、固定版本运行包。因此用户需要 Node.js 22.22.2+/24.15.0+（含 npm/npx），但不需要 checkout、`npm install` 或 build 本仓库。安装和 MCP discovery 不生成 key，第一次实际工具调用才启动用户级共享 runtime。plugin 升级后，下一次实际调用会先认证已有 daemon 的 challenge proof 与 runtime version；旧版本 daemon 会在 bootstrap lock 内自动停止并替换，持久化 key 与账号不变。需要外部部署时，仍可从启动 Codex 的 secret 环境中显式提供完整 Facade 配置。
+`.mcp.json` 通过公开快照内的 `plugin-entry.mjs` 启动。npm tarball 安装中它直接加载随包发布的 stdio server 与 Facade daemon；GitHub marketplace 安装中它通过 `npx --package @pippit-bridge/mcp-server@0.2.16 pippit-mcp` 获取同一份公开、固定版本运行包。因此用户需要 Node.js 22.22.2+/24.15.0+（含 npm/npx），但不需要 checkout、`npm install` 或 build 本仓库。安装和 MCP discovery 不生成 key，第一次实际工具调用才启动用户级共享 runtime。plugin 升级后，下一次实际调用会先认证已有 daemon 的 challenge proof 与 runtime version；旧版本 daemon 会在 bootstrap lock 内自动停止并替换，持久化 key 与账号不变。需要外部部署时，仍可从启动 Codex 的 secret 环境中显式提供完整 Facade 配置。
 
 生成、查询和参考视频重新生成工具共享同一个 MCP App widget resource。widget 会自动轮询 pending/in-progress job；打开旧结果时先通过 model-hidden 的 `pippit_resolve_latest_video` 找到最新 regenerate job，宿主随后回放的旧 tool result 不能覆盖它。`pippit_get_video` 到达 `completed` 后，stdio/plugin 进程先把完整 MP4 原子保存为普通本地文件，再通过 MCP Apps `resources/read` 分块传给 widget 并创建 `blob:` 播放地址。Codex 不要求模型另行生成 `file://` 可视化；本地绝对路径、facade content URL、API key 与 `unsigned_urls` 不进入 Widget 或 model-visible 结果。stdin 重启不改变本地 artifact identity 或 regenerate lineage，文件继续保留；用户需要自定文件名或额外路径时再调用下载工具。
 
-marketplace 本身从公开 GitHub 下载，运行时通过 npm registry 获取由 `prepack` 生成的自包含 `@pippit-bridge/mcp-server@0.2.15` tarball；不会在 plugin cache 中运行仓库 lifecycle scripts。仓库开发者若要测试未发布源码，仍应在 checkout 中先运行 `npm run build -w @pippit-bridge/mcp-server`，再使用单独的开发 marketplace 配置，不能把用户机器上的绝对 path 作为公开分发契约。
+marketplace 本身从公开 GitHub 下载，运行时通过 npm registry 获取由 `prepack` 生成的自包含 `@pippit-bridge/mcp-server@0.2.16` tarball；不会在 plugin cache 中运行仓库 lifecycle scripts。仓库开发者若要测试未发布源码，仍应在 checkout 中先运行 `npm run build -w @pippit-bridge/mcp-server`，再使用单独的开发 marketplace 配置，不能把用户机器上的绝对 path 作为公开分发契约。
 
-进入 Codex 后可用 `/plugins` 检查/enable plugin。安装或更新后开始一个新 session，再请求 `pippit-video` 生成 Seedream 图片，或列出、生成、查询视频；图片会先保存到本地 output root，再由结果卡通过稳定本地 artifact 地址预览并提供“下载原图”，同一文件不应再次生成；视频完成结果同样会自动保存本地 MP4 并展示 widget，只有需要额外自定义文件名或路径副本时才请求下载。
+进入 Codex 后可用 `/plugins` 检查/enable plugin。安装或更新后开始一个新 session，再请求 `pippit-video` 生成 Seedream 图片，或列出、生成、查询视频；图片任务会立即显示 Infinity Run，完成后保存到本地 output root，再由结果卡通过稳定本地 artifact 地址预览，并可在 Finder/资源管理器中定位，同一文件不应再次生成；视频完成结果同样会自动保存本地 MP4 并展示 widget，只有需要额外自定义文件名或路径副本时才请求下载。
 
 plugin 的 `.mcp.json` 只声明本地 stdio server，不内嵌 Pippit AK 或 Facade API Key。Codex 的 sandbox/工具批准策略仍在 host 侧生效；plugin 不会绕过这些边界。
 

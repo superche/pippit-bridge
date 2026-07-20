@@ -1,4 +1,4 @@
-export const PIPPIT_IMAGE_WIDGET_URI = "ui://widget/pippit-image-result-v3.html"
+export const PIPPIT_IMAGE_WIDGET_URI = "ui://widget/pippit-image-result-v4.html"
 
 export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
 <html lang="en">
@@ -10,7 +10,7 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
     * { box-sizing: border-box; }
     body { margin: 0; padding: 12px; background: transparent; color: CanvasText; }
     main { display: grid; gap: 12px; }
-    header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-inline: 32px; }
     h1 { margin: 0; font-size: 14px; font-weight: 650; }
     #summary { color: color-mix(in srgb, CanvasText 62%, transparent); font-size: 12px; }
     #gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 12px; }
@@ -18,14 +18,15 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
     img { display: block; width: 100%; height: auto; max-height: 72vh; object-fit: contain; background: color-mix(in srgb, Canvas 88%, CanvasText 12%); }
     figcaption { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; }
     .filename { min-width: 0; overflow: hidden; color: color-mix(in srgb, CanvasText 65%, transparent); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-    a { flex: none; border-radius: 9px; padding: 7px 10px; background: CanvasText; color: Canvas; font-size: 12px; font-weight: 650; text-decoration: none; }
+    button, a { flex: none; min-height: 36px; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 9px; padding: 7px 12px; background: CanvasText; color: Canvas; cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; text-decoration: none; }
+    button:disabled { cursor: default; opacity: .58; }
     [hidden] { display: none !important; }
     #empty { margin: 0; padding: 18px; border: 1px dashed color-mix(in srgb, CanvasText 20%, transparent); border-radius: 12px; color: color-mix(in srgb, CanvasText 65%, transparent); text-align: center; }
     .loading-view { display: grid; min-height: 300px; place-content: center; justify-items: center; gap: 22px; text-align: center; }
     .loading-status { margin: 0; color: color-mix(in srgb, CanvasText 62%, transparent); font-size: 14px; font-weight: 500; letter-spacing: -.01em; line-height: 20px; }
     .infinity-loader { display: grid; grid-template-columns: repeat(5, 8px); grid-template-rows: repeat(5, 8px); gap: 6px; width: 64px; height: 64px; place-content: center; color: CanvasText; }
     .infinity-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .08; transition: opacity 40ms linear; }
-    @media (max-width: 640px) { .loading-view { min-height: 240px; } }
+    @media (max-width: 640px) { header { padding-inline: 4px; } .loading-view { min-height: 240px; } }
     @media (prefers-reduced-motion: reduce) { .infinity-dot { transition: none; } }
   </style>
 </head>
@@ -53,6 +54,7 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
       var bootstrapResult;
       var renderGeneration = 0;
       var destroyed = false;
+      var pollTimer;
       var loaderStep = 0;
       var loaderTimer;
       var loadingView = document.getElementById("loading-view");
@@ -98,6 +100,10 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
         objectUrls.forEach(function (url) { URL.revokeObjectURL(url); });
         objectUrls = [];
       }
+      function clearPollTimer() {
+        window.clearTimeout(pollTimer);
+        pollTimer = undefined;
+      }
       function infinityPoint(step) {
         var t = (step % 48) / 48 * Math.PI * 2;
         return { x: Math.sin(t), y: 0.58 * Math.sin(2 * t) };
@@ -136,12 +142,14 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
         window.clearInterval(loaderTimer);
         loaderTimer = undefined;
       }
-      function showLoading() {
+      function showLoading(status) {
         loadingView.hidden = false;
         resultHeader.hidden = true;
         gallery.hidden = true;
         empty.hidden = true;
-        loadingStatus.textContent = "Preparing the local image preview…";
+        loadingStatus.textContent = status === "in_progress"
+          ? "Generating your image…"
+          : "Preparing the local image preview…";
         startInfinityLoader();
         reportSize();
       }
@@ -204,6 +212,14 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
         }
         return current && typeof current === "object" ? current : {};
       }
+      function imageJob(rawResult) {
+        var result = normalizeResult(rawResult);
+        var structured = result.structuredContent && typeof result.structuredContent === "object"
+          ? result.structuredContent
+          : result;
+        if (typeof structured.image_job_id !== "string" || typeof structured.status !== "string") return undefined;
+        return { id: structured.image_job_id, status: structured.status };
+      }
       function openAiToolResult(globals) {
         var source = globals && typeof globals === "object" ? globals : window.openai;
         if (!source) return undefined;
@@ -259,15 +275,34 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
         }
         return output.blob;
       }
-      function callImageTool(image) {
-        var args = { resource_uri: image.resource_uri };
+      function callTool(name, args) {
         if (serverToolsAvailable) {
-          return request("tools/call", { name: "pippit_read_image", arguments: args });
+          return request("tools/call", { name: name, arguments: args });
         }
         if (window.openai && typeof window.openai.callTool === "function") {
-          return Promise.resolve(window.openai.callTool("pippit_read_image", args));
+          return Promise.resolve(window.openai.callTool(name, args));
         }
-        return Promise.reject(new Error("The local image tool is unavailable."));
+        return Promise.reject(new Error("The local Pippit image tool is unavailable."));
+      }
+      function callImageTool(image) {
+        return callTool("pippit_read_image", { resource_uri: image.resource_uri });
+      }
+      function fileManagerLabel() {
+        var nav = window.navigator || {};
+        var platform = String(
+          nav.userAgentData && nav.userAgentData.platform || nav.platform || nav.userAgent || ""
+        ).toLowerCase();
+        if (platform.includes("mac")) return "Show in Finder";
+        if (platform.includes("win")) return "Show in Explorer";
+        return "Show in folder";
+      }
+      function schedulePoll(jobId) {
+        clearPollTimer();
+        pollTimer = window.setTimeout(function () {
+          callTool("pippit_get_image", { image_job_id: jobId })
+            .then(function (result) { void render(result); })
+            .catch(function () { schedulePoll(jobId); });
+        }, 900);
       }
       async function imageData(image) {
         if (typeof image.resource_uri === "string") {
@@ -291,11 +326,16 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
         var filename = document.createElement("span");
         filename.className = "filename";
         filename.textContent = image.filename;
-        var download = document.createElement("a");
-        download.download = image.filename;
-        download.textContent = "Download original";
-        download.hidden = true;
-        caption.append(filename, download);
+        var action = document.createElement(typeof image.resource_uri === "string" ? "button" : "a");
+        action.hidden = true;
+        if (typeof image.resource_uri === "string") {
+          action.type = "button";
+          action.textContent = fileManagerLabel();
+        } else {
+          action.download = image.filename;
+          action.textContent = "Download original";
+        }
+        caption.append(filename, action);
         figure.append(preview, caption);
         gallery.append(figure);
         try {
@@ -303,8 +343,23 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
           if (destroyed || generation !== renderGeneration) return false;
           var url = URL.createObjectURL(imageBlob(data, image.mime_type));
           objectUrls.push(url);
-          download.href = url;
-          download.hidden = false;
+          if (typeof image.resource_uri === "string") {
+            action.hidden = false;
+            action.addEventListener("click", function () {
+              var label = fileManagerLabel();
+              action.disabled = true;
+              action.textContent = "Opening…";
+              callTool("pippit_reveal_image", { resource_uri: image.resource_uri })
+                .then(function () { action.textContent = label === "Show in folder" ? "Shown in folder" : label.replace("Show", "Shown"); })
+                .catch(function () {
+                  action.disabled = false;
+                  action.textContent = label;
+                });
+            });
+          } else {
+            action.href = url;
+            action.hidden = false;
+          }
           var loaded = await new Promise(function (resolve) {
             preview.addEventListener("load", function () { resolve(true); }, { once: true });
             preview.addEventListener("error", function () { resolve(false); }, { once: true });
@@ -323,10 +378,20 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
         var result = normalizeResult(rawResult);
         bootstrapResult = result;
         var generation = ++renderGeneration;
+        clearPollTimer();
         releaseUrls();
         gallery.replaceChildren();
-        showLoading();
+        var job = imageJob(result);
+        showLoading(job && job.status);
         if (!protocolReady && !(window.openai && typeof window.openai.callTool === "function")) return;
+        if (job && job.status === "in_progress") {
+          schedulePoll(job.id);
+          return;
+        }
+        if (result.isError === true || job && job.status === "failed") {
+          showTerminal("The Pippit image generation could not be completed.");
+          return;
+        }
         var images = resultImages(result);
         if (images.length === 0) {
           showTerminal("The generated image result did not include a local preview.");
@@ -362,6 +427,7 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
           }
           destroyed = true;
           renderGeneration += 1;
+          clearPollTimer();
           stopInfinityLoader();
           releaseUrls();
           pending.forEach(function (state) { state.reject(new Error("Widget was closed.")); });
@@ -372,7 +438,7 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
       window.setTimeout(useOpenAiResult, 600);
       request("ui/initialize", {
         appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
-        appInfo: { name: "pippit-image-result", title: "Pippit image result", version: "0.2.15" },
+        appInfo: { name: "pippit-image-result", title: "Pippit image result", version: "0.2.16" },
         protocolVersion: protocolVersion
       }).then(function (result) {
         protocolReady = true;

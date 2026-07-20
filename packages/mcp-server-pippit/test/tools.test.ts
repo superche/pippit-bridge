@@ -116,7 +116,7 @@ describe("Pippit tool runtime", () => {
     })
     expect(result.content).toEqual([
       {
-        text: "Generated 1 image with pippit/seedream-5.0-pro. The inline result card displays the images and provides Download original; do not regenerate when the user asks for the same file.",
+        text: "Generated 1 image with pippit/seedream-5.0-pro. The inline result card displays the images and can reveal each persistent local file in Finder or the system file manager; do not regenerate when the user asks for the same file.",
         type: "text",
       },
       { data: "aW1hZ2U=", mimeType: "image/jpeg", type: "image" },

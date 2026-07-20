@@ -243,7 +243,7 @@ try {
     clientInfo: { name: "installed-media-smoke", version: "1" },
     protocolVersion: "2025-11-25",
   })
-  if (initialized?.serverInfo?.version !== "0.2.15") throw new Error("Unexpected installed plugin version.")
+  if (initialized?.serverInfo?.version !== "0.2.16") throw new Error("Unexpected installed plugin version.")
   const resource = await rpc("resources/read", { uri: "ui://widget/pippit-video-job-v13.html" })
   if (!resource?.contents?.[0]?.text?.includes("pippit-video-editor")) throw new Error("Missing v13 widget resource.")
   const result = await rpc("tools/call", {

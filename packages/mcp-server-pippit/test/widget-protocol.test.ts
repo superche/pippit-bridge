@@ -35,6 +35,11 @@ describe("Pippit widget protocol", () => {
     expect(imageMetadata?.["ui/resourceUri"]).toBe(PIPPIT_IMAGE_WIDGET_URI)
     expect(imageMetadata?.["openai/outputTemplate"]).toBe(PIPPIT_IMAGE_WIDGET_URI)
     expect(imageMetadata?.["openai/widgetAccessible"]).toBe(true)
+    const imageOutputSchema = definitions.find(
+      (definition) => definition.name === "pippit_generate_image",
+    )?.outputSchema
+    expect((imageOutputSchema?.anyOf as Readonly<Record<string, unknown>>[] | undefined)?.[0])
+      .toMatchObject({ required: ["image_job_id", "model", "status"] })
     for (const name of ["pippit_generate_video", "pippit_get_video", "pippit_edit_video_segment"]) {
       const metadata = definitions.find((definition) => definition.name === name)?._meta
       expect((metadata?.ui as { resourceUri?: string } | undefined)?.resourceUri).toBe(PIPPIT_WIDGET_URI)
@@ -354,6 +359,12 @@ describe("Pippit widget protocol", () => {
     expect(pippitWidgetReadResource("ui://widget/pippit-image-result-v2.html")).toMatchObject({
       contents: [{ text: PIPPIT_IMAGE_WIDGET_HTML, uri: "ui://widget/pippit-image-result-v2.html" }],
     })
+    expect(pippitWidgetReadResource("ui://widget/pippit-image-result-v3.html")).toMatchObject({
+      contents: [{ text: PIPPIT_IMAGE_WIDGET_HTML, uri: "ui://widget/pippit-image-result-v3.html" }],
+    })
+    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("Show in Finder")
+    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain('callTool("pippit_get_image"')
+    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain('callTool("pippit_reveal_image"')
     expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("Download original")
     expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("toolResponseMetadata")
     expect(PIPPIT_IMAGE_WIDGET_HTML).toContain('request("resources/read"')

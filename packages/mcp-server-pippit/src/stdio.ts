@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { realpathSync } from "node:fs"
 import { createInterface } from "node:readline"
 import { join, resolve } from "node:path"
@@ -38,6 +38,7 @@ import {
 } from "./widget-lineage.ts"
 import {
   extractPippitWidgetJob,
+  pippitImageWidgetOutputSchema,
   projectPippitWidgetResult,
   withPippitWidgetTools,
 } from "./widget-protocol.ts"
@@ -54,9 +55,70 @@ export interface PippitStdioServerOptions {
 
 export const PIPPIT_READ_VIDEO_CHUNK_TOOL_NAME = "pippit_read_video_chunk"
 export const PIPPIT_READ_IMAGE_TOOL_NAME = "pippit_read_image"
+export const PIPPIT_GET_IMAGE_TOOL_NAME = "pippit_get_image"
+export const PIPPIT_REVEAL_IMAGE_TOOL_NAME = "pippit_reveal_image"
 export { PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME } from "./widget-lineage.ts"
 
 const MAX_VIDEO_CHUNK_BYTES = 1024 * 1024
+const IMAGE_JOB_ID_PATTERN = /^pimg_[a-f0-9]{32}$/u
+const IMAGE_COMPLETED_OUTPUT_SCHEMA = PIPPIT_RUNTIME_TOOL_DEFINITIONS.find(
+  definition => definition.name === "pippit_generate_image",
+)?.outputSchema ?? { type: "object" }
+const PIPPIT_GET_IMAGE_TOOL_DEFINITION: PippitToolDefinition = {
+  annotations: {
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+    readOnlyHint: true,
+    title: "Get Pippit image result",
+  },
+  description: "Poll an image generation started by pippit_generate_image until the local result is ready.",
+  inputSchema: {
+    additionalProperties: false,
+    properties: {
+      image_job_id: { pattern: IMAGE_JOB_ID_PATTERN.source, type: "string" },
+    },
+    required: ["image_job_id"],
+    type: "object",
+  },
+  name: PIPPIT_GET_IMAGE_TOOL_NAME as PippitToolDefinition["name"],
+  outputSchema: pippitImageWidgetOutputSchema(IMAGE_COMPLETED_OUTPUT_SCHEMA),
+  title: "Get Pippit image result",
+}
+
+const PIPPIT_REVEAL_IMAGE_TOOL_DEFINITION: PippitToolDefinition = {
+  _meta: {
+    ui: { visibility: ["app"] },
+    "openai/widgetAccessible": true,
+  },
+  annotations: {
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+    readOnlyHint: false,
+    title: "Show saved image in file manager",
+  },
+  description: "Reveal one persistent local Pippit image in Finder or the system file manager.",
+  inputSchema: {
+    additionalProperties: false,
+    properties: {
+      resource_uri: {
+        pattern: "^pippit-image://artifact/[a-f0-9]{64}\\.(?:jpg|png|webp)$",
+        type: "string",
+      },
+    },
+    required: ["resource_uri"],
+    type: "object",
+  },
+  name: PIPPIT_REVEAL_IMAGE_TOOL_NAME as PippitToolDefinition["name"],
+  outputSchema: {
+    additionalProperties: false,
+    properties: { revealed: { const: true, type: "boolean" } },
+    required: ["revealed"],
+    type: "object",
+  },
+  title: "Show saved image in file manager",
+}
 const PIPPIT_READ_IMAGE_TOOL_DEFINITION: PippitToolDefinition = {
   _meta: {
     ui: { visibility: ["app"] },
@@ -183,6 +245,17 @@ function parseReadImageInput(value: unknown): string | undefined {
     !/^pippit-image:\/\/artifact\/[a-f0-9]{64}\.(?:jpg|png|webp)$/u.test(record.resource_uri)
   ) return undefined
   return record.resource_uri
+}
+
+function parseImageJobInput(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  if (
+    Object.keys(record).length !== 1 ||
+    typeof record.image_job_id !== "string" ||
+    !IMAGE_JOB_ID_PATTERN.test(record.image_job_id)
+  ) return undefined
+  return record.image_job_id
 }
 
 function parseResolveLatestVideoInput(value: unknown): string | undefined {
@@ -389,6 +462,27 @@ function withWidgetRuntime(
   widgetMedia: PippitWidgetMediaServer,
   widgetLineage: PippitWidgetLineageStore,
 ): PippitToolRuntime {
+  interface ImageJobState {
+    readonly model: string
+    readonly result?: PippitMcpCallToolResult
+  }
+  const imageJobs = new Map<string, ImageJobState>()
+  const pendingImageResult = (imageJobId: string, model: string): PippitMcpCallToolResult => ({
+    content: [{
+      text: `Image generation ${imageJobId} is in progress. Poll ${PIPPIT_GET_IMAGE_TOOL_NAME} with this image_job_id until the saved local result is ready.`,
+      type: "text",
+    }],
+    structuredContent: { image_job_id: imageJobId, model, status: "in_progress" },
+  })
+  const projectImageResult = async (result: PippitMcpCallToolResult): Promise<PippitMcpCallToolResult> => {
+    return await projectPippitWidgetResult(
+      result,
+      undefined,
+      widgetMedia.prepareImage === undefined
+        ? undefined
+        : (data, mimeType) => widgetMedia.prepareImage!(data, mimeType),
+    )
+  }
   return {
     async callTool(name, argumentsValue) {
       if (name === PIPPIT_READ_IMAGE_TOOL_NAME) {
@@ -414,6 +508,50 @@ function withWidgetRuntime(
         } catch {
           return localVideoChunkFailure("local_image_unavailable", "The saved local image is unavailable.")
         }
+      }
+      if (name === PIPPIT_REVEAL_IMAGE_TOOL_NAME) {
+        const resourceUri = parseReadImageInput(argumentsValue)
+        if (resourceUri === undefined) {
+          return localVideoChunkFailure("invalid_arguments", "Invalid saved image request.")
+        }
+        try {
+          const revealed = await widgetMedia.revealImage?.(resourceUri)
+          if (revealed !== true) {
+            return localVideoChunkFailure("local_image_unavailable", "The saved local image is unavailable.")
+          }
+          return { content: [], structuredContent: { revealed: true } }
+        } catch {
+          return localVideoChunkFailure("local_image_reveal_failed", "The saved local image could not be shown in the system file manager.")
+        }
+      }
+      if (name === PIPPIT_GET_IMAGE_TOOL_NAME) {
+        const imageJobId = parseImageJobInput(argumentsValue)
+        if (imageJobId === undefined) {
+          return localVideoChunkFailure("invalid_arguments", "Invalid Pippit image job request.")
+        }
+        const imageJob = imageJobs.get(imageJobId)
+        if (imageJob === undefined) {
+          return localVideoChunkFailure("image_job_unavailable", "The Pippit image job is unavailable in this plugin session.")
+        }
+        return imageJob.result ?? pendingImageResult(imageJobId, imageJob.model)
+      }
+      if (name === "pippit_generate_image") {
+        const modelValue = typeof argumentsValue === "object" && argumentsValue !== null && !Array.isArray(argumentsValue)
+          ? (argumentsValue as Record<string, unknown>).model
+          : undefined
+        const model = typeof modelValue === "string" ? modelValue : "Pippit Seedream"
+        const imageJobId = `pimg_${randomUUID().replaceAll("-", "")}`
+        imageJobs.set(imageJobId, { model })
+        void runtime.callTool(name, argumentsValue)
+          .then(projectImageResult)
+          .then((result) => { imageJobs.set(imageJobId, { model, result }) })
+          .catch(() => {
+            imageJobs.set(imageJobId, {
+              model,
+              result: localVideoChunkFailure("image_generation_failed", "Pippit image generation failed."),
+            })
+          })
+        return pendingImageResult(imageJobId, model)
       }
       if (name === PIPPIT_READ_VIDEO_CHUNK_TOOL_NAME) {
         const input = parseReadVideoChunkInput(argumentsValue)
@@ -516,8 +654,9 @@ function withWidgetRuntime(
     },
     listTools() {
       return [
-        ...withPippitWidgetTools(runtime.listTools()),
+        ...withPippitWidgetTools([...runtime.listTools(), PIPPIT_GET_IMAGE_TOOL_DEFINITION]),
         PIPPIT_READ_IMAGE_TOOL_DEFINITION,
+        PIPPIT_REVEAL_IMAGE_TOOL_DEFINITION,
         PIPPIT_READ_VIDEO_CHUNK_TOOL_DEFINITION,
         PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_DEFINITION,
       ]

@@ -122,6 +122,7 @@ describe("Pippit stdio entrypoint", () => {
         model: "pippit/seedream-5.0",
       },
     }))
+    const revealFile = vi.fn(async () => undefined)
     const running = runPippitStdioServer({
       input,
       output,
@@ -132,6 +133,7 @@ describe("Pippit stdio entrypoint", () => {
       widgetMedia: createPippitWidgetMediaServer({
         artifactRoot: outputRoot,
         backend: { async downloadVideo() { throw new Error("Video download is not used in this test.") } },
+        revealFile,
       }),
     })
     try {
@@ -155,8 +157,17 @@ describe("Pippit stdio entrypoint", () => {
       })
       const tools = responses.find((response) => response.id === 2)?.result.tools as Array<{
         _meta?: Record<string, unknown>
+        name?: string
       }>
       expect(tools[0]?._meta?.["openai/outputTemplate"]).toBe(PIPPIT_IMAGE_WIDGET_URI)
+      expect(tools).toContainEqual(expect.objectContaining({
+        name: "pippit_get_image",
+        _meta: expect.objectContaining({ "openai/outputTemplate": PIPPIT_IMAGE_WIDGET_URI }),
+      }))
+      expect(tools).toContainEqual(expect.objectContaining({
+        name: "pippit_reveal_image",
+        _meta: expect.objectContaining({ ui: { visibility: ["app"] } }),
+      }))
       expect(responses.find((response) => response.id === 3)?.result.resources).toEqual(
         expect.arrayContaining([expect.objectContaining({ uri: PIPPIT_IMAGE_WIDGET_URI })]),
       )
@@ -165,8 +176,28 @@ describe("Pippit stdio entrypoint", () => {
       })
       const callResult = responses.find((response) => response.id === 5)?.result
       if (callResult === undefined) throw new Error("Missing image tools/call result in test.")
-      expect(callResult.content).toContainEqual({ data: "aW1hZ2U=", mimeType: "image/jpeg", type: "image" })
-      const images = (callResult._meta as Record<string, unknown>)["pippit/images"] as Array<{
+      expect(callResult.structuredContent).toMatchObject({
+        image_job_id: expect.stringMatching(/^pimg_[a-f0-9]{32}$/u),
+        model: "pippit/seedream-5.0",
+        status: "in_progress",
+      })
+      const imageJobId = (callResult.structuredContent as Record<string, string>).image_job_id
+      await vi.waitFor(async () => expect(await readdir(outputRoot)).toHaveLength(1))
+      input.write(`${JSON.stringify({
+        id: 6,
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { arguments: { image_job_id: imageJobId }, name: "pippit_get_image" },
+      })}\n`)
+      await vi.waitFor(() => expect(stdout.trim().split("\n")).toHaveLength(6))
+      responses = stdout.trim().split("\n").map((line) => JSON.parse(line) as {
+        id: number
+        result: Record<string, unknown>
+      })
+      const completedResult = responses.find((response) => response.id === 6)?.result
+      if (completedResult === undefined) throw new Error("Missing completed image result in test.")
+      expect(completedResult.content).toContainEqual({ data: "aW1hZ2U=", mimeType: "image/jpeg", type: "image" })
+      const images = (completedResult._meta as Record<string, unknown>)["pippit/images"] as Array<{
         data?: string
         filename: string
         resource_uri: string
@@ -179,7 +210,7 @@ describe("Pippit stdio entrypoint", () => {
         }),
       ])
       expect(images[0]).not.toHaveProperty("data")
-      expect(callResult.structuredContent).toMatchObject({
+      expect(completedResult.structuredContent).toMatchObject({
         images: [{
           filename: images[0]!.filename,
           media_type: "image/jpeg",
@@ -191,30 +222,36 @@ describe("Pippit stdio entrypoint", () => {
 
       input.write([
         JSON.stringify({
-          id: 6,
+          id: 7,
           jsonrpc: "2.0",
           method: "resources/read",
           params: { uri: images[0]!.resource_uri },
         }),
         JSON.stringify({
-          id: 7,
+          id: 8,
           jsonrpc: "2.0",
           method: "tools/call",
           params: { arguments: { resource_uri: images[0]!.resource_uri }, name: "pippit_read_image" },
         }),
+        JSON.stringify({
+          id: 9,
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { arguments: { resource_uri: images[0]!.resource_uri }, name: "pippit_reveal_image" },
+        }),
         "",
       ].join("\n"))
-      await vi.waitFor(() => expect(stdout.trim().split("\n")).toHaveLength(7))
+      await vi.waitFor(() => expect(stdout.trim().split("\n")).toHaveLength(9))
       input.end()
       await running
       responses = stdout.trim().split("\n").map((line) => JSON.parse(line) as {
         id: number
         result: Record<string, unknown>
       })
-      expect(responses.find((response) => response.id === 6)?.result).toMatchObject({
+      expect(responses.find((response) => response.id === 7)?.result).toMatchObject({
         contents: [{ blob: "aW1hZ2U=", mimeType: "image/jpeg", uri: images[0]!.resource_uri }],
       })
-      expect(responses.find((response) => response.id === 7)?.result).toMatchObject({
+      expect(responses.find((response) => response.id === 8)?.result).toMatchObject({
         structuredContent: {
           blob: "aW1hZ2U=",
           filename: images[0]!.filename,
@@ -222,6 +259,10 @@ describe("Pippit stdio entrypoint", () => {
           resource_uri: images[0]!.resource_uri,
         },
       })
+      expect(responses.find((response) => response.id === 9)?.result).toMatchObject({
+        structuredContent: { revealed: true },
+      })
+      expect(revealFile).toHaveBeenCalledWith(join(outputRoot, images[0]!.filename))
       expect(generateImage).toHaveBeenCalledOnce()
     } finally {
       input.end()

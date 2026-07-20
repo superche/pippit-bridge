@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto"
+import { execFile } from "node:child_process"
 import { constants } from "node:fs"
 import {
   chmod,
@@ -10,6 +11,7 @@ import {
   type FileHandle,
 } from "node:fs/promises"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
+import { promisify } from "node:util"
 
 import type { PippitVideoDownloadOptions } from "./contracts.ts"
 import type { PippitMcpResourceProvider } from "./protocol.ts"
@@ -44,6 +46,7 @@ export interface PippitWidgetMediaServer extends PippitMcpResourceProvider {
   preparePreview(jobId: string, index: number): Promise<PippitPreparedWidgetMedia>
   readImage?(resourceUri: string): Promise<PippitWidgetImageArtifact | undefined>
   readChunk(resourceUri: string, offset: number, length: number): Promise<PippitWidgetMediaChunk | undefined>
+  revealImage?(resourceUri: string): Promise<boolean>
 }
 
 export interface PippitPreparedWidgetImage {
@@ -85,6 +88,7 @@ export interface PippitWidgetMediaServerOptions {
   readonly maxArtifactBytes?: number
   readonly maxInlinePreviewBytes?: number
   readonly maxResourceChunkBytes?: number
+  readonly revealFile?: (path: string) => Promise<void>
 }
 
 interface CachedArtifact {
@@ -99,6 +103,20 @@ interface ArtifactResourceRequest {
   readonly length: number
   readonly offset: number
   readonly resourceUri: string
+}
+
+const execFileAsync = promisify(execFile)
+
+async function revealFileInSystemManager(path: string): Promise<void> {
+  if (process.platform === "darwin") {
+    await execFileAsync("open", ["-R", path])
+    return
+  }
+  if (process.platform === "win32") {
+    await execFileAsync("explorer.exe", ["/select,", path])
+    return
+  }
+  await execFileAsync("xdg-open", [dirname(path)])
 }
 
 function playableContentType(value: string | null): boolean {
@@ -455,6 +473,40 @@ async function readImageArtifact(
   }
 }
 
+async function revealImageArtifact(
+  uri: string,
+  resolveRoot: () => Promise<string>,
+  maxReadableBytes: number,
+  revealFile: (path: string) => Promise<void>,
+): Promise<boolean> {
+  const parsed = parseImageArtifactResourceUri(uri)
+  if (parsed === undefined) return false
+  const root = await resolveRoot()
+  const path = imageArtifactPath(root, parsed.artifactId, parsed.extension)
+  let handle: FileHandle
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+    throw error
+  }
+  try {
+    const stats = await handle.stat()
+    if (
+      !stats.isFile() ||
+      stats.size <= 0 ||
+      stats.size > maxReadableBytes ||
+      (process.platform !== "win32" && (stats.mode & 0o077) !== 0)
+    ) {
+      throw new Error("The local Pippit image artifact is unsafe.")
+    }
+  } finally {
+    await handle.close()
+  }
+  await revealFile(path)
+  return true
+}
+
 async function syncDirectory(path: string): Promise<void> {
   if (process.platform === "win32") return
   const handle = await open(path, constants.O_RDONLY)
@@ -572,6 +624,7 @@ export function createPippitWidgetMediaServer(
     maxArtifactBytes,
   )
   const maxResourceChunkBytes = options.maxResourceChunkBytes ?? DEFAULT_MAX_RESOURCE_CHUNK_BYTES
+  const revealFile = options.revealFile ?? revealFileInSystemManager
   if (!Number.isSafeInteger(maxArtifactBytes) || maxArtifactBytes < 1) {
     throw new Error("Widget media artifact limit must be a positive integer.")
   }
@@ -694,6 +747,10 @@ export function createPippitWidgetMediaServer(
     async readImage(resourceUri) {
       if (closed) throw new Error("The widget media server is closed.")
       return await readImageArtifact(resourceUri, resolveArtifactRoot, maxInlinePreviewBytes)
+    },
+    async revealImage(resourceUri) {
+      if (closed) throw new Error("The widget media server is closed.")
+      return await revealImageArtifact(resourceUri, resolveArtifactRoot, maxInlinePreviewBytes, revealFile)
     },
     async readChunk(resourceUri, offset, length) {
       if (closed) throw new Error("The widget media server is closed.")

@@ -19,7 +19,24 @@ const WIDGET_TOOL_NAMES = new Set([
   "pippit_edit_video_segment",
 ])
 
-const IMAGE_WIDGET_TOOL_NAME = "pippit_generate_image"
+const IMAGE_WIDGET_TOOL_NAMES = new Set(["pippit_generate_image", "pippit_get_image"])
+
+export const PIPPIT_IMAGE_JOB_OUTPUT_SCHEMA: Readonly<Record<string, unknown>> = {
+  additionalProperties: false,
+  properties: {
+    image_job_id: { pattern: "^pimg_[a-f0-9]{32}$", type: "string" },
+    model: { type: "string" },
+    status: { enum: ["in_progress", "failed"], type: "string" },
+  },
+  required: ["image_job_id", "model", "status"],
+  type: "object",
+}
+
+export function pippitImageWidgetOutputSchema(
+  completedSchema: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  return { anyOf: [PIPPIT_IMAGE_JOB_OUTPUT_SCHEMA, completedSchema] }
+}
 
 const LEGACY_PIPPIT_WIDGET_URIS = new Set([
   "ui://widget/pippit-video-job-v5.html",
@@ -34,11 +51,13 @@ const LEGACY_PIPPIT_WIDGET_URIS = new Set([
 const LEGACY_PIPPIT_IMAGE_WIDGET_URIS = new Set([
   "ui://widget/pippit-image-result-v1.html",
   "ui://widget/pippit-image-result-v2.html",
+  "ui://widget/pippit-image-result-v3.html",
 ])
 
 const INVOCATION_STATUS: Readonly<Record<string, readonly [string, string]>> = {
   pippit_edit_video_segment: ["Preparing reference video…", "New Pippit generation submitted"],
-  pippit_generate_image: ["Generating Pippit images…", "Pippit images generated"],
+  pippit_generate_image: ["Starting Pippit image generation…", "Pippit image generation started"],
+  pippit_get_image: ["Refreshing Pippit image…", "Pippit image refreshed"],
   pippit_generate_video: ["Starting Pippit generation…", "Pippit generation started"],
   pippit_get_video: ["Refreshing Pippit video…", "Pippit video refreshed"],
 }
@@ -269,7 +288,7 @@ export function withPippitWidgetTools(
   definitions: readonly PippitToolDefinition[],
 ): readonly PippitToolDefinition[] {
   return definitions.map((definition) => {
-    if (definition.name === IMAGE_WIDGET_TOOL_NAME) {
+    if (IMAGE_WIDGET_TOOL_NAMES.has(definition.name)) {
       const [invoking, invoked] = INVOCATION_STATUS[definition.name] ?? ["Working…", "Done"]
       return {
         ...definition,
@@ -282,6 +301,9 @@ export function withPippitWidgetTools(
           "openai/toolInvocation/invoking": invoking,
           "openai/widgetAccessible": true,
         },
+        outputSchema: definition.name === "pippit_generate_image"
+          ? pippitImageWidgetOutputSchema(definition.outputSchema)
+          : definition.outputSchema,
       }
     }
     if (!WIDGET_TOOL_NAMES.has(definition.name)) return definition
@@ -342,7 +364,7 @@ export function pippitImageWidgetResourceMetadata(
       prefersBorder: true,
     },
     "openai/widgetCSP": { connect_domains: origins, resource_domains: resourceOrigins },
-    "openai/widgetDescription": "Shows generated Pippit images with an original-file download action.",
+    "openai/widgetDescription": "Shows generated Pippit images and locates their persistent local files in the system file manager.",
     "openai/widgetPrefersBorder": true,
   }
 }
@@ -351,7 +373,7 @@ export function pippitWidgetListResources(): Readonly<Record<string, unknown>> {
   return {
     resources: [
       {
-        description: "Inline preview and original-file download for generated Pippit images.",
+        description: "Inline progress, persistent preview, and system file-manager access for generated Pippit images.",
         mimeType: PIPPIT_WIDGET_MIME_TYPE,
         name: "Pippit image result widget",
         uri: PIPPIT_IMAGE_WIDGET_URI,
