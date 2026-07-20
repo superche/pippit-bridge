@@ -28,6 +28,8 @@ import {
 } from "./account-store.js"
 import { PippitCredentialSource, type PippitRuntimeCredential } from "./auth.js"
 import {
+  PIPPIT_DEFAULT_VIDEO_DURATION,
+  PIPPIT_DEFAULT_VIDEO_MODEL,
   PIPPIT_MAX_WAIT_SECONDS,
   PippitVideoService,
   type PippitToolResult,
@@ -414,7 +416,7 @@ async function initializePippitPlugin(
             .default(PIPPIT_MAX_WAIT_SECONDS),
           model: schema
             .string()
-            .default("pippit/seedance-2.0")
+            .default(PIPPIT_DEFAULT_VIDEO_MODEL)
             .describe(`Stable Pippit model ID. Available: ${VIDEO_MODELS.map((model) => model.id).join(", ")}.`),
           output_directory: schema
             .string()
@@ -432,6 +434,10 @@ async function initializePippitPlugin(
           wait_for_completion: schema.boolean().default(true),
         },
         async execute(args, context) {
+          const duration = args.duration ?? PIPPIT_DEFAULT_VIDEO_DURATION
+          const maxWaitSeconds = args.max_wait_seconds ?? PIPPIT_MAX_WAIT_SECONDS
+          const model = args.model ?? PIPPIT_DEFAULT_VIDEO_MODEL
+          const waitForCompletion = args.wait_for_completion ?? true
           const referenceSources = [
             ...(args.first_frame === undefined ? [] : [args.first_frame]),
             ...(args.last_frame === undefined ? [] : [args.last_frame]),
@@ -441,16 +447,16 @@ async function initializePippitPlugin(
           await context.ask({
             always: [],
             metadata: {
-              duration: args.duration ?? 5,
-              model: args.model,
+              duration,
+              model,
               output_directory: outputDirectory,
               reference_sources: referenceSources,
               target_origin: options.baseURL,
             },
-            patterns: [args.model, options.baseURL, outputDirectory, ...referenceSources],
+            patterns: [model, options.baseURL, outputDirectory, ...referenceSources],
             permission: "pippit_generate_video",
           })
-          context.metadata({ title: `Pippit · ${args.model}`, metadata: { model: args.model } })
+          context.metadata({ title: `Pippit · ${model}`, metadata: { model } })
           try {
             const credential = await credentials.readRuntimeCredential()
             const begun = args.idempotency_key === undefined
@@ -461,10 +467,10 @@ async function initializePippitPlugin(
                   request: {
                     account_identity: credential.accountId ?? credential.accessKey,
                     ...(args.aspect_ratio === undefined ? {} : { aspect_ratio: args.aspect_ratio }),
-                    ...(args.duration === undefined ? {} : { duration: args.duration }),
+                    duration,
                     ...(args.first_frame === undefined ? {} : { first_frame: args.first_frame }),
                     ...(args.last_frame === undefined ? {} : { last_frame: args.last_frame }),
-                    model: args.model,
+                    model,
                     prompt: args.prompt,
                     ...(args.references === undefined ? {} : { references: args.references }),
                     ...(args.resolution === undefined ? {} : { resolution: args.resolution }),
@@ -499,19 +505,19 @@ async function initializePippitPlugin(
                         },
                       }),
                   ...(args.aspect_ratio === undefined ? {} : { aspectRatio: args.aspect_ratio }),
-                  ...(args.duration === undefined ? {} : { duration: args.duration }),
+                  duration,
                   ...(args.first_frame === undefined ? {} : { firstFrame: args.first_frame }),
                   ...(args.last_frame === undefined ? {} : { lastFrame: args.last_frame }),
-                  maxWaitSeconds: args.max_wait_seconds,
-                  model: args.model,
-                  ...(args.output_directory === undefined ? {} : { outputDirectory: args.output_directory }),
+                  maxWaitSeconds,
+                  model,
+                  outputDirectory,
                   prompt: args.prompt,
                   ...(args.references === undefined ? {} : { references: args.references }),
                   ...(args.resolution === undefined ? {} : { resolution: args.resolution }),
                   rootDirectory: context.worktree,
                   ...(args.seed === undefined ? {} : { seed: args.seed }),
                   signal: context.abort,
-                  waitForCompletion: args.wait_for_completion,
+                  waitForCompletion,
                 })
                 if (recordId !== undefined && !durablySubmitted) {
                   if (!crossedSubmissionBoundary) await idempotency.markSubmitting(recordId)
@@ -583,8 +589,11 @@ async function initializePippitPlugin(
           wait_for_completion: schema.boolean().default(false),
         },
         async execute(args, context) {
+          const download = args.download ?? true
+          const maxWaitSeconds = args.max_wait_seconds ?? PIPPIT_MAX_WAIT_SECONDS
           const outputDirectory = args.output_directory ?? options.outputDirectory
-          if (args.download) {
+          const waitForCompletion = args.wait_for_completion ?? false
+          if (download) {
             await context.ask({
               always: [],
               metadata: {
@@ -606,14 +615,14 @@ async function initializePippitPlugin(
             )
             const result = await videos.get({
               accessKey: credential.accessKey,
-              download: args.download,
-              maxWaitSeconds: args.max_wait_seconds,
-              ...(args.output_directory === undefined ? {} : { outputDirectory: args.output_directory }),
+              download,
+              maxWaitSeconds,
+              outputDirectory,
               rootDirectory: context.worktree,
               runId: args.run_id,
               signal: context.abort,
               threadId: args.thread_id,
-              waitForCompletion: args.wait_for_completion,
+              waitForCompletion,
             })
             return {
               metadata: {

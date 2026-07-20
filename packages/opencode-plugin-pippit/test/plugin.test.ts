@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { MemoryIdempotencyStore, VIDEO_MODELS } from "@pippit-bridge/core"
 import { MemoryPippitAccountStore, PippitAccountManager } from "../src/account-store.js"
+import {
+  PIPPIT_DEFAULT_VIDEO_DURATION,
+  PIPPIT_DEFAULT_VIDEO_MODEL,
+  PIPPIT_MAX_WAIT_SECONDS,
+} from "../src/generation.js"
 import pluginModule from "../src/index.js"
 import { createPippitPlugin, PippitPlugin } from "../src/plugin.js"
 
@@ -46,6 +51,107 @@ describe("Pippit OpenCode plugin", () => {
         expect(accepts(args?.resolution, resolution)).toBe(true)
       }
     }
+  })
+
+  it("normalizes generate defaults when OpenCode executes raw args without schema defaults", async () => {
+    const accounts = new PippitAccountManager(new MemoryPippitAccountStore())
+    await accounts.addAccount("工作", "ak-runtime-defaults-test")
+    const generate = vi.fn(async () => ({
+      model: PIPPIT_DEFAULT_VIDEO_MODEL,
+      runId: "run-runtime-defaults",
+      status: "pending" as const,
+      threadId: "thread-runtime-defaults",
+    }))
+    const hooks = await createPippitPlugin({
+      accounts,
+      videos: {
+        generate,
+        get: vi.fn(async () => ({ runId: "unused", status: "pending" as const, threadId: "unused" })),
+      },
+    })({} as never)
+    const execute = hooks.tool?.pippit_generate_video?.execute
+    if (execute === undefined) throw new Error("Expected the Pippit generate tool")
+    const ask = vi.fn(async (_request: { readonly patterns: readonly unknown[] }) => undefined)
+    const metadata = vi.fn()
+
+    await execute(
+      { prompt: "local validation smoke", wait_for_completion: false },
+      {
+        abort: new AbortController().signal,
+        ask,
+        metadata,
+        worktree: "/tmp/pippit-runtime-defaults-test",
+      } as never,
+    )
+
+    expect(ask).toHaveBeenCalledOnce()
+    expect(ask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          duration: PIPPIT_DEFAULT_VIDEO_DURATION,
+          model: PIPPIT_DEFAULT_VIDEO_MODEL,
+        }),
+        patterns: expect.arrayContaining([
+          PIPPIT_DEFAULT_VIDEO_MODEL,
+          "https://xyq.jianying.com",
+          ".pippit/outputs",
+        ]),
+        permission: "pippit_generate_video",
+      }),
+    )
+    const permission = ask.mock.calls[0]?.[0]
+    expect(permission?.patterns.every((pattern: unknown) => typeof pattern === "string")).toBe(true)
+    expect(metadata).toHaveBeenCalledWith({
+      title: `Pippit · ${PIPPIT_DEFAULT_VIDEO_MODEL}`,
+      metadata: { model: PIPPIT_DEFAULT_VIDEO_MODEL },
+    })
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        duration: PIPPIT_DEFAULT_VIDEO_DURATION,
+        maxWaitSeconds: PIPPIT_MAX_WAIT_SECONDS,
+        model: PIPPIT_DEFAULT_VIDEO_MODEL,
+        waitForCompletion: false,
+      }),
+    )
+  })
+
+  it("normalizes get defaults before deciding whether download permission is required", async () => {
+    const accounts = new PippitAccountManager(new MemoryPippitAccountStore())
+    await accounts.addAccount("工作", "ak-get-runtime-defaults-test")
+    const get = vi.fn(async () => ({
+      runId: "run-get-runtime-defaults",
+      status: "pending" as const,
+      threadId: "thread-get-runtime-defaults",
+    }))
+    const hooks = await createPippitPlugin({
+      accounts,
+      videos: {
+        generate: vi.fn(async () => ({ runId: "unused", status: "pending" as const, threadId: "unused" })),
+        get,
+      },
+    })({} as never)
+    const execute = hooks.tool?.pippit_get_video?.execute
+    if (execute === undefined) throw new Error("Expected the Pippit get tool")
+    const ask = vi.fn(async () => undefined)
+
+    await execute(
+      { run_id: "run-get-runtime-defaults", thread_id: "thread-get-runtime-defaults" },
+      {
+        abort: new AbortController().signal,
+        ask,
+        metadata: vi.fn(),
+        worktree: "/tmp/pippit-get-runtime-defaults-test",
+      } as never,
+    )
+
+    expect(ask).toHaveBeenCalledOnce()
+    expect(get).toHaveBeenCalledWith(
+      expect.objectContaining({
+        download: true,
+        maxWaitSeconds: PIPPIT_MAX_WAIT_SECONDS,
+        waitForCompletion: false,
+      }),
+    )
   })
 
   it("configures, lists, switches, and deletes multiple accounts without exposing raw AKs", async () => {
@@ -203,14 +309,18 @@ describe("Pippit OpenCode plugin", () => {
     } as never
     const args = {
       idempotency_key: "same-open-code-key",
-      max_wait_seconds: 43_200,
-      model: "pippit/seedance-2.0",
       prompt: "submit once",
-      wait_for_completion: false,
+    } as const
+    const explicitDefaults = {
+      ...args,
+      duration: PIPPIT_DEFAULT_VIDEO_DURATION,
+      max_wait_seconds: PIPPIT_MAX_WAIT_SECONDS,
+      model: PIPPIT_DEFAULT_VIDEO_MODEL,
+      wait_for_completion: true,
     } as const
 
     const first = await execute(args, context)
-    const replay = await execute(args, context)
+    const replay = await execute(explicitDefaults, context)
     await expect(execute({ ...args, prompt: "changed request" }, context)).rejects.toThrow("different Pippit request")
     await accounts.addAccount("个人", "ak-idempotency-second-account")
     await expect(execute(args, context)).rejects.toThrow("different Pippit request")

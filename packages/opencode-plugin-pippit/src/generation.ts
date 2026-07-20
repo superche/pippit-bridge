@@ -84,8 +84,8 @@ interface PreparedReferences {
   readonly videos: readonly PippitMediaReference[]
 }
 
-const DEFAULT_MODEL = "pippit/seedance-2.0"
-const DEFAULT_DURATION = 5
+export const PIPPIT_DEFAULT_VIDEO_MODEL = "pippit/seedance-2.0"
+export const PIPPIT_DEFAULT_VIDEO_DURATION = 5
 export const PIPPIT_MAX_WAIT_SECONDS = PIPPIT_DEFAULT_TIMEOUT_MS / 1_000
 const DEFAULT_MAX_WAIT_SECONDS = PIPPIT_MAX_WAIT_SECONDS
 const MAX_TOTAL_REFERENCE_BYTES = 300 * 1024 * 1024
@@ -123,7 +123,7 @@ function safeFailure(reason: PippitFailReason | undefined, accessKey: string): s
 function validateModel(input: GenerateVideoInput): VideoModelDefinition {
   let model: VideoModelDefinition
   try {
-    model = resolveVideoModel(input.model ?? DEFAULT_MODEL)
+    model = resolveVideoModel(input.model ?? PIPPIT_DEFAULT_VIDEO_MODEL)
   } catch (error) {
     if (error instanceof UnknownVideoModelError) throw new Error(error.message)
     throw error
@@ -162,7 +162,7 @@ function validateGenerateInput(input: GenerateVideoInput): void {
   if (prompt.length < 1 || prompt.length > 20_000) {
     throw new Error("Pippit video prompts must contain 1 to 20,000 characters.")
   }
-  positiveInteger(input.duration, DEFAULT_DURATION, "duration", 3_600)
+  positiveInteger(input.duration, PIPPIT_DEFAULT_VIDEO_DURATION, "duration", 3_600)
   positiveInteger(input.maxWaitSeconds, DEFAULT_MAX_WAIT_SECONDS, "max_wait_seconds", PIPPIT_MAX_WAIT_SECONDS)
   if (
     input.seed !== undefined &&
@@ -327,7 +327,7 @@ export class PippitVideoService {
         message: input.prompt.trim(),
         video_part_tool_param: {
           ...(references.audios.length === 0 ? {} : { audios: [...references.audios] }),
-          duration_sec: input.duration ?? DEFAULT_DURATION,
+          duration_sec: input.duration ?? PIPPIT_DEFAULT_VIDEO_DURATION,
           ...(references.generateType === undefined ? {} : { generate_type: references.generateType }),
           ...(references.images.length === 0 ? {} : { images: [...references.images] }),
           model: model.upstreamModel,
