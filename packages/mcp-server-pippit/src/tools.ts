@@ -9,8 +9,12 @@ import type {
   PippitDownloadVideoToolInput,
   PippitDownloadedVideo,
   PippitEditVideoSegmentToolInput,
+  PippitGenerateImageToolInput,
   PippitGenerateVideoToolInput,
   PippitGetVideoToolInput,
+  PippitImageGenerateRequest,
+  PippitImageGenerationResponse,
+  PippitImageModelList,
   PippitSwitchAccessKeyToolInput,
   PippitVideoDownloadOptions,
   PippitVideoEditRequest,
@@ -27,6 +31,8 @@ import {
 import { PIPPIT_DEFAULT_OUTPUT_DIRECTORY } from "./options.ts"
 
 export const PIPPIT_RUNTIME_TOOL_NAMES = [
+  "pippit_list_image_models",
+  "pippit_generate_image",
   "pippit_list_video_models",
   "pippit_generate_video",
   "pippit_get_video",
@@ -68,12 +74,17 @@ export interface PippitToolDefinition {
 
 export interface PippitMcpCallToolResult {
   readonly _meta?: Readonly<Record<string, unknown>>
-  readonly content: readonly { readonly text: string; readonly type: "text" }[]
+  readonly content: readonly (
+    | { readonly data: string; readonly mimeType: string; readonly type: "image" }
+    | { readonly text: string; readonly type: "text" }
+  )[]
   readonly isError?: boolean
   readonly structuredContent?: Readonly<Record<string, unknown>>
 }
 
 export interface PippitFacadeBackend {
+  generateImage(input: PippitImageGenerateRequest, signal?: AbortSignal): Promise<PippitImageGenerationResponse>
+  listImageModels(signal?: AbortSignal): Promise<PippitImageModelList>
   downloadVideo(jobId: string, options?: PippitVideoDownloadOptions): Promise<Response>
   editVideo(input: PippitVideoEditRequest, signal?: AbortSignal): Promise<PippitVideoGenerationJob>
   generateVideo(input: PippitVideoGenerateRequest, signal?: AbortSignal): Promise<PippitVideoGenerationJob>
@@ -186,6 +197,89 @@ const accessKeySelectionOutputSchema = {
 } as const
 
 export const PIPPIT_TOOL_DEFINITIONS: readonly PippitToolDefinition[] = [
+  {
+    annotations: {
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+      readOnlyHint: true,
+      title: "List Pippit image models",
+    },
+    description: "List Seedream image generation models and their model-specific settings.",
+    inputSchema: { additionalProperties: false, properties: {}, type: "object" },
+    name: "pippit_list_image_models",
+    outputSchema: {
+      additionalProperties: false,
+      properties: { data: { items: { type: "object" }, type: "array" } },
+      required: ["data"],
+      type: "object",
+    },
+    title: "List Pippit image models",
+  },
+  {
+    annotations: {
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+      readOnlyHint: false,
+      title: "Generate Pippit images",
+    },
+    description: "Generate images with Seedream 5.0 or Seedream 5.0 Pro. This may incur Pippit charges. Optional reference images are fetched and uploaded by the facade; the completed images are returned directly to the host.",
+    inputSchema: {
+      additionalProperties: false,
+      properties: {
+        byok_id: { description: "Optional facade-managed BYOK credential identifier. Never pass a raw access key.", type: "string" },
+        images: {
+          description: "Optional reference images, up to 9.",
+          items: {
+            additionalProperties: false,
+            properties: {
+              image_url: urlValueSchema,
+              type: { const: "image_url", type: "string" },
+            },
+            required: ["type", "image_url"],
+            type: "object",
+          },
+          maxItems: 9,
+          type: "array",
+        },
+        model: { enum: ["pippit/seedream-5.0", "pippit/seedream-5.0-pro"], type: "string" },
+        n: { default: 1, maximum: 10, minimum: 1, type: "integer" },
+        prompt: { maxLength: 20000, minLength: 1, type: "string" },
+        resolution: { description: "Seedream 5.0 Pro only.", enum: ["1K", "2K", "4K"], type: "string" },
+        thread_id: { description: "Optional Pippit thread to continue through the facade.", type: "string" },
+      },
+      required: ["model", "prompt"],
+      type: "object",
+    },
+    name: "pippit_generate_image",
+    outputSchema: {
+      additionalProperties: false,
+      properties: {
+        created: { minimum: 0, type: "integer" },
+        images: {
+          items: {
+            additionalProperties: false,
+            properties: {
+              bytes: { minimum: 0, type: "integer" },
+              filename: { type: "string" },
+              media_type: { type: "string" },
+              resource_uri: { pattern: "^pippit-image://artifact/", type: "string" },
+            },
+            required: ["media_type"],
+            type: "object",
+          },
+          minItems: 1,
+          type: "array",
+        },
+        model: { type: "string" },
+        usage: { type: "object" },
+      },
+      required: ["created", "images", "model", "usage"],
+      type: "object",
+    },
+    title: "Generate Pippit images",
+  },
   {
     annotations: {
       destructiveHint: false,
@@ -502,7 +596,7 @@ class ToolInputError extends Error {}
 
 interface DedupeEntry {
   readonly fingerprint: string
-  readonly promise: Promise<PippitVideoGenerationJob>
+  readonly promise: Promise<object>
   settled: boolean
 }
 
@@ -651,6 +745,43 @@ function parseGenerateInput(value: unknown): PippitGenerateVideoToolInput {
   }
 }
 
+function parseGenerateImageInput(value: unknown): PippitGenerateImageToolInput {
+  if (!isRecord(value)) throw new ToolInputError("Tool arguments must be an object.")
+  assertExactKeys(
+    value,
+    ["byok_id", "images", "model", "n", "prompt", "resolution", "thread_id"],
+    "arguments",
+  )
+  const model = nonEmptyString(value.model, "model", 256)
+  if (model !== "pippit/seedream-5.0" && model !== "pippit/seedream-5.0-pro") {
+    throw new ToolInputError("model must be pippit/seedream-5.0 or pippit/seedream-5.0-pro.")
+  }
+  const references = parseInputReferences(value.images)
+  if (references !== undefined && (references.length > 9 || references.some((item) => item.type !== "image_url"))) {
+    throw new ToolInputError("images must contain at most 9 image_url references.")
+  }
+  const resolution = value.resolution === undefined
+    ? undefined
+    : nonEmptyString(value.resolution, "resolution", 2)
+  if (resolution !== undefined && resolution !== "1K" && resolution !== "2K" && resolution !== "4K") {
+    throw new ToolInputError("resolution must be 1K, 2K, or 4K.")
+  }
+  if (model === "pippit/seedream-5.0" && resolution !== undefined) {
+    throw new ToolInputError("resolution must be omitted for pippit/seedream-5.0.")
+  }
+  return {
+    ...(value.byok_id === undefined ? {} : { byok_id: nonEmptyString(value.byok_id, "byok_id", 256) }),
+    ...(references === undefined
+      ? {}
+      : { images: references as readonly NonNullable<PippitGenerateImageToolInput["images"]>[number][] }),
+    model,
+    ...(value.n === undefined ? {} : { n: optionalInteger(value.n, "n", 1, 10) as number }),
+    prompt: nonEmptyString(value.prompt, "prompt", 20_000),
+    ...(resolution === undefined ? {} : { resolution }),
+    ...(value.thread_id === undefined ? {} : { thread_id: nonEmptyString(value.thread_id, "thread_id", 8_192) }),
+  }
+}
+
 function finiteNumber(value: unknown, name: string, minimum: number, maximum: number): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < minimum || value > maximum) {
     throw new ToolInputError(`${name} must be a finite number from ${minimum} to ${maximum}.`)
@@ -795,6 +926,28 @@ function facadeRequest(input: PippitGenerateVideoToolInput): PippitVideoGenerate
   }
 }
 
+function facadeImageRequest(input: PippitGenerateImageToolInput): PippitImageGenerateRequest {
+  return {
+    ...(input.images === undefined ? {} : { input_references: input.images }),
+    model: input.model,
+    ...(input.n === undefined ? {} : { n: input.n }),
+    prompt: input.prompt,
+    ...(input.byok_id === undefined && input.thread_id === undefined
+      ? {}
+      : {
+          provider: {
+            options: {
+              pippit: {
+                ...(input.byok_id === undefined ? {} : { byok_id: input.byok_id }),
+                ...(input.thread_id === undefined ? {} : { thread_id: input.thread_id }),
+              },
+            },
+          },
+        }),
+    ...(input.resolution === undefined ? {} : { resolution: input.resolution }),
+  }
+}
+
 function facadeEditRequest(input: PippitEditVideoSegmentToolInput): PippitVideoEditRequest {
   return {
     annotations: input.annotations,
@@ -828,13 +981,36 @@ function structuredResult(value: object): PippitMcpCallToolResult {
   }
 }
 
+function imageResult(value: PippitImageGenerationResponse): PippitMcpCallToolResult {
+  const images = value.data.map((image) => ({ media_type: image.media_type ?? "image/png" }))
+  return {
+    content: [
+      {
+        text: `Generated ${images.length} image${images.length === 1 ? "" : "s"} with ${value.model}. The inline result card displays the images and can reveal each persistent local file in Finder or the system file manager; do not regenerate when the user asks for the same file.`,
+        type: "text",
+      },
+      ...value.data.map((image) => ({
+        data: image.b64_json,
+        mimeType: image.media_type ?? "image/png",
+        type: "image" as const,
+      })),
+    ],
+    structuredContent: {
+      created: value.created,
+      images,
+      model: value.model,
+      usage: value.usage,
+    },
+  }
+}
+
 function safeError(error: unknown): PippitMcpCallToolResult {
   const message =
     error instanceof ToolInputError || error instanceof PippitFacadeError
       ? error.message
       : isRecord(error) && error.code === "EEXIST"
         ? "Output file already exists; choose a new output_path."
-        : "Pippit video tool could not complete the operation."
+        : "Pippit tool could not complete the operation."
   return { content: [{ text: message.slice(0, 2_000), type: "text" }], isError: true }
 }
 
@@ -955,8 +1131,8 @@ export function createPippitToolRuntime(options: PippitToolRuntimeOptions): Pipp
     idempotencyKey: string | undefined,
     operation: "edit" | "generate",
     request: PippitVideoEditRequest | PippitVideoGenerateRequest,
-    create: () => Promise<PippitVideoGenerationJob>,
-  ): Promise<PippitVideoGenerationJob> => {
+    create: () => Promise<object>,
+  ): Promise<object> => {
     if (idempotencyKey === undefined) return create()
     const fingerprint = JSON.stringify({ operation, request })
     const existing = dedupe.get(idempotencyKey)
@@ -973,7 +1149,7 @@ export function createPippitToolRuntime(options: PippitToolRuntimeOptions): Pipp
       }
       dedupe.delete(settledKey)
     }
-    const durableSubmission = async (): Promise<PippitVideoGenerationJob> => {
+    const durableSubmission = async (): Promise<object> => {
       if (options.idempotencyStore === undefined) return create()
       const begun = await options.idempotencyStore.begin({
         key: idempotencyKey,
@@ -981,7 +1157,7 @@ export function createPippitToolRuntime(options: PippitToolRuntimeOptions): Pipp
         request,
         scope: options.idempotencyScope as string,
       })
-      if (begun.kind === "replay") return begun.response as PippitVideoGenerationJob
+      if (begun.kind === "replay") return begun.response as object
       if (begun.kind === "conflict") {
         throw new ToolInputError("idempotency_key was already used for a different recovery request.")
       }
@@ -995,7 +1171,7 @@ export function createPippitToolRuntime(options: PippitToolRuntimeOptions): Pipp
         throw new ToolInputError(`The previous recovery request failed (${begun.errorCode}).`)
       }
       await options.idempotencyStore.markSubmitting(begun.recordId)
-      let response: PippitVideoGenerationJob
+      let response: object
       try {
         response = await create()
       } catch (error) {
@@ -1028,6 +1204,18 @@ export function createPippitToolRuntime(options: PippitToolRuntimeOptions): Pipp
   return {
     async callTool(name, argumentsValue) {
       try {
+        if (name === "pippit_list_image_models") {
+          if (argumentsValue !== undefined) {
+            if (!isRecord(argumentsValue)) throw new ToolInputError("Tool arguments must be an object.")
+            assertExactKeys(argumentsValue, [], "arguments")
+          }
+          return structuredResult(await options.client.listImageModels())
+        }
+        if (name === "pippit_generate_image") {
+          const input = parseGenerateImageInput(argumentsValue)
+          const request = facadeImageRequest(input)
+          return imageResult(await options.client.generateImage(request))
+        }
         if (name === "pippit_list_video_models") {
           if (argumentsValue !== undefined) {
             if (!isRecord(argumentsValue)) throw new ToolInputError("Tool arguments must be an object.")

@@ -27,10 +27,12 @@ export PIPPIT_FACADE_API_KEY='<facade-api-key>'
 
 只配置其中一项会 fail closed，不会回退或拼接本地配置。不要在这两个变量、MCP client 配置或 plugin 配置中写 Pippit AK。无论本地还是外部模式，Pippit AK 都只从短时 loopback enrollment password POST 进入加密 BYOK store；生成、查询、编辑和 Widget 都看不到它。
 
-当前工具集只有视频能力：
+当前工具集提供图片与视频能力：
 
 | 工具 | 作用 | 可用形式 |
 | --- | --- | --- |
+| `pippit_list_image_models` | 读取 Seedream 5.0 / 5.0 Pro 图片模型与分辨率能力 | stdio MCP、ChatGPT App、Codex plugin |
+| `pippit_generate_image` | 同步生成图片，可带最多 9 张参考图；Codex/stdio 先将完成图片原子落盘，再通过本地 artifact 结果卡预览和下载 | stdio MCP、ChatGPT App、Codex plugin |
 | `pippit_list_video_models` | 读取 facade 的视频模型与能力目录 | stdio MCP、ChatGPT App、Codex plugin |
 | `pippit_generate_video` | 异步提交视频任务；可选 `idempotency_key` 仅用于异常恢复；支持 facade 的 URL 参考素材、首尾帧、`byok_id` 与 `thread_id` | stdio MCP、ChatGPT App、Codex plugin |
 | `pippit_edit_video_segment` | 将已完成结果作为唯一视频参考，把最多 30 秒的选段、时间点和归一化矩形标注编译为提示词，重新生成一个异步视频任务 | stdio MCP、ChatGPT App、Codex plugin |
@@ -41,9 +43,9 @@ export PIPPIT_FACADE_API_KEY='<facade-api-key>'
 | `pippit_switch_access_key` | 切换同一 Facade API Key identity 的新任务 active 账号 | stdio MCP、Codex plugin |
 | `pippit_delete_access_key` | 显式确认后删除 facade 加密 store 中的账号 | stdio MCP、Codex plugin |
 
-参考图片/视频/音频只是视频生成的输入。本包没有宣告文本模型、图片生成、语音生成或转录工具。
+图片生成只覆盖 Seedream 5.0 / 5.0 Pro；参考图片也可用于图片或视频生成，参考视频/音频仅用于视频。本包没有宣告通用文本、语音生成或转录工具。
 
-`idempotency_key` 是 MCP/OpenCode plugin 的可选异常恢复字段，不属于 Facade/OpenRouter API。缺省时每次调用均独立提交；显式提供时，MCP 或 OpenCode 才在自己的私有账本中合并同 key 同请求、检测冲突并跨重启恢复。`submitting` 后的未知结果只能执行 fail-closed at-most-once retry policy，不能宣称 provider-level exactly-once。详见 [持久化幂等](./idempotency.md)。
+`idempotency_key` 是视频 MCP/OpenCode plugin 的可选异常恢复字段，不属于 Facade/OpenRouter API。图片接口同步返回，不暴露该恢复字段。视频缺省时每次调用均独立提交；显式提供时，MCP 或 OpenCode 才在自己的私有账本中合并同 key 同请求、检测冲突并跨重启恢复。详见 [持久化幂等](./idempotency.md)。
 
 ## 1. 通用 stdio MCP package
 
@@ -76,11 +78,11 @@ pippit-mcp
 
 本地模式的 output root 默认是 macOS `~/Movies/Pippit`、其他平台 `~/Videos/Pippit`。外部模式可设置 `PIPPIT_FACADE_BASE_URL`、`PIPPIT_FACADE_API_KEY`、可选的独立 `PIPPIT_FACADE_MANAGEMENT_API_KEY` 和 `PIPPIT_MCP_OUTPUT_ROOT`；这些 secret 应放在用户级 secret 配置中，不要提交到项目。下载工具只接受 root 下的相对 `output_path`，拒绝路径越界和覆盖。
 
-Codex/MCP widget 在 completed 后会先把完整 MP4 原子写成 output root 下的普通本地文件，然后返回稳定的本地 artifact resource identity。widget 通过宿主代理的标准 `resources/read` 读取最多 1 MiB 的分块、校验总长度后创建沙箱内 `blob:` URL；换源、失败或 teardown 会撤销该 URL。artifact identity 不依赖 stdio 端口或进程随机密钥，因此 stdio 重启后仍可恢复同一文件。完整 MP4 不会进入 `/tmp`、项目目录或版本化 plugin cache；需要自定文件名或额外路径时再调用 `pippit_download_video`。
+Codex/MCP 的图片与视频结果都会先原子写成 output root 下的普通本地文件，再返回稳定的本地 artifact resource identity。图片 widget 通过标准 `resources/read` 读取完整本地图片；视频 widget 分块读取完整 MP4 并校验总长度，随后都只在沙箱内创建 `blob:` URL。artifact identity 不依赖 stdio 端口或进程随机密钥，因此 stdio 重启后仍可恢复同一文件。生成文件不会进入 `/tmp`、项目目录或版本化 plugin cache；视频需要自定文件名或额外路径时再调用 `pippit_download_video`。
 
 ### AK 新增、切换与删除
 
-自动本地模式会生成彼此独立的 runtime 与 Management key，因此默认发布四个 AK 管理工具。外部模式的 `PIPPIT_FACADE_MANAGEMENT_API_KEY` 必须与 `PIPPIT_FACADE_API_KEY` 分离；没有配置时只发布五个视频/runtime 工具。
+自动本地模式会生成彼此独立的 runtime 与 Management key，因此默认发布四个 AK 管理工具。外部模式的 `PIPPIT_FACADE_MANAGEMENT_API_KEY` 必须与 `PIPPIT_FACADE_API_KEY` 分离；没有配置时只发布七个图片/视频 runtime 工具。
 
 安全新增流程：
 
@@ -103,9 +105,9 @@ MCP 的 list/delete 会把 runtime Facade API Key 的 SHA-256 只在 server-to-s
 
 ## 2. ChatGPT App
 
-ChatGPT App package 名为 `@pippit-bridge/chatgpt-app`。它通过 `POST /mcp` 提供 Streamable HTTP MCP，并注册 MCP App 视频结果 widget。默认监听 `127.0.0.1:8787`。
+ChatGPT App package 名为 `@pippit-bridge/chatgpt-app`。它通过 `POST /mcp` 提供 Streamable HTTP MCP，直接返回生成图片，并为视频结果注册 MCP App widget。默认监听 `127.0.0.1:8787`。
 
-`pippit_generate_video` 在 ChatGPT 形式中同时接受 URL 和 ChatGPT 上传文件：`first_frame` / `last_frame`、`images`、`videos`、`audios` 被声明为 file parameters，app server 只把其下载 URL 映射为 facade 的视频参考素材。这仍然不是图片、音频或通用文本生成能力。
+`pippit_generate_image` 的 `images` 声明为 ChatGPT file parameter，也接受 `image_urls`；`pippit_generate_video` 同时接受 URL 和 ChatGPT 上传文件：`first_frame` / `last_frame`、`images`、`videos`、`audios` 被声明为 file parameters。App 只把下载 URL 映射为 facade 参考素材，不提供音频或通用文本生成能力。
 
 ### 本地启动
 
@@ -129,7 +131,7 @@ npm run dev:chatgpt-app
 1. 在 ChatGPT 打开 **Settings → Apps & Connectors → Advanced settings**，开启 **Developer mode**。如果 workspace 管理员禁用了 developer mode，需要先由管理员允许。
 2. 回到 app settings，选择创建 developer-mode app。
 3. 填写用户可见的 Name/Description，将 MCP server URL 设为 tunnel 的 `https://.../mcp`，并上传仓库中的 `apps/chatgpt-app/assets/pippit-video.png` 作为 App 图标。
-4. 创建成功后核对四个 ChatGPT 工具：`pippit_list_video_models`、`pippit_generate_video`、`pippit_edit_video_segment`、`pippit_get_video`。ChatGPT App 不提供本地文件下载或 AK 管理工具。
+4. 创建成功后核对六个 ChatGPT 工具：`pippit_list_image_models`、`pippit_generate_image`、`pippit_list_video_models`、`pippit_generate_video`、`pippit_edit_video_segment`、`pippit_get_video`。ChatGPT App 不提供本地文件下载或 AK 管理工具。
 5. 修改工具描述或 widget 后，回到该 developer-mode app 点击 **Refresh** 重新读取 server metadata。
 
 ### 认证与媒体预览边界
@@ -206,13 +208,13 @@ codex plugin list --json
 
 - ChatGPT Desktop：先在终端执行同样的 marketplace add / plugin add 命令，重启 app 后在 **Plugins** 或 `/plugins` 中确认 **Pippit Video** 已启用，再新建 Codex session。
 
-`.mcp.json` 通过公开快照内的 `plugin-entry.mjs` 启动。npm tarball 安装中它直接加载随包发布的 stdio server 与 Facade daemon；GitHub marketplace 安装中它通过 `npx --package @pippit-bridge/mcp-server@0.2.13 pippit-mcp` 获取同一份公开、固定版本运行包。因此用户需要 Node.js 22.22.2+/24.15.0+（含 npm/npx），但不需要 checkout、`npm install` 或 build 本仓库。安装和 MCP discovery 不生成 key，第一次实际工具调用才启动用户级共享 runtime。plugin 升级后，下一次实际调用会先认证已有 daemon 的 challenge proof 与 runtime version；旧版本 daemon 会在 bootstrap lock 内自动停止并替换，持久化 key 与账号不变。需要外部部署时，仍可从启动 Codex 的 secret 环境中显式提供完整 Facade 配置。
+`.mcp.json` 通过公开快照内的 `plugin-entry.mjs` 启动。npm tarball 安装中它直接加载随包发布的 stdio server 与 Facade daemon；GitHub marketplace 安装中它通过 `npx --package @pippit-bridge/mcp-server@0.2.16 pippit-mcp` 获取同一份公开、固定版本运行包。因此用户需要 Node.js 22.22.2+/24.15.0+（含 npm/npx），但不需要 checkout、`npm install` 或 build 本仓库。安装和 MCP discovery 不生成 key，第一次实际工具调用才启动用户级共享 runtime。plugin 升级后，下一次实际调用会先认证已有 daemon 的 challenge proof 与 runtime version；旧版本 daemon 会在 bootstrap lock 内自动停止并替换，持久化 key 与账号不变。需要外部部署时，仍可从启动 Codex 的 secret 环境中显式提供完整 Facade 配置。
 
 生成、查询和参考视频重新生成工具共享同一个 MCP App widget resource。widget 会自动轮询 pending/in-progress job；打开旧结果时先通过 model-hidden 的 `pippit_resolve_latest_video` 找到最新 regenerate job，宿主随后回放的旧 tool result 不能覆盖它。`pippit_get_video` 到达 `completed` 后，stdio/plugin 进程先把完整 MP4 原子保存为普通本地文件，再通过 MCP Apps `resources/read` 分块传给 widget 并创建 `blob:` 播放地址。Codex 不要求模型另行生成 `file://` 可视化；本地绝对路径、facade content URL、API key 与 `unsigned_urls` 不进入 Widget 或 model-visible 结果。stdin 重启不改变本地 artifact identity 或 regenerate lineage，文件继续保留；用户需要自定文件名或额外路径时再调用下载工具。
 
-marketplace 本身从公开 GitHub 下载，运行时通过 npm registry 获取由 `prepack` 生成的自包含 `@pippit-bridge/mcp-server@0.2.13` tarball；不会在 plugin cache 中运行仓库 lifecycle scripts。仓库开发者若要测试未发布源码，仍应在 checkout 中先运行 `npm run build -w @pippit-bridge/mcp-server`，再使用单独的开发 marketplace 配置，不能把用户机器上的绝对 path 作为公开分发契约。
+marketplace 本身从公开 GitHub 下载，运行时通过 npm registry 获取由 `prepack` 生成的自包含 `@pippit-bridge/mcp-server@0.2.16` tarball；不会在 plugin cache 中运行仓库 lifecycle scripts。仓库开发者若要测试未发布源码，仍应在 checkout 中先运行 `npm run build -w @pippit-bridge/mcp-server`，再使用单独的开发 marketplace 配置，不能把用户机器上的绝对 path 作为公开分发契约。
 
-进入 Codex 后可用 `/plugins` 检查/enable plugin。安装或更新后开始一个新 session，再请求 `pippit-video` 列出模型、生成或查询视频；完成结果会自动保存本地 MP4 并展示 widget，只有需要额外自定义文件名或路径副本时才请求下载。
+进入 Codex 后可用 `/plugins` 检查/enable plugin。安装或更新后开始一个新 session，再请求 `pippit-video` 生成 Seedream 图片，或列出、生成、查询视频；图片任务会立即显示 Infinity Run，完成后保存到本地 output root，再由结果卡通过稳定本地 artifact 地址预览，并可在 Finder/资源管理器中定位，同一文件不应再次生成；视频完成结果同样会自动保存本地 MP4 并展示 widget，只有需要额外自定义文件名或路径副本时才请求下载。
 
 plugin 的 `.mcp.json` 只声明本地 stdio server，不内嵌 Pippit AK 或 Facade API Key。Codex 的 sandbox/工具批准策略仍在 host 侧生效；plugin 不会绕过这些边界。
 
@@ -232,7 +234,7 @@ marketplace 的认证策略使用 `ON_USE`，与惰性 runtime 一致：安装/e
 | `PIPPIT_FACADE_API_KEY` | MCP / ChatGPT App / Codex plugin | 外部 Facade Bearer key；本地模式自动生成 |
 | `PIPPIT_FACADE_MANAGEMENT_API_KEY` | stdio MCP / Codex plugin | 外部 AK 管理 key；本地模式自动生成，ChatGPT App 显式丢弃 |
 | `PIPPIT_FACADE_TIMEOUT_MS` | MCP / ChatGPT App / Codex plugin | wrapper 到 facade 的请求超时；默认 `43200000`（12 小时） |
-| `PIPPIT_MCP_OUTPUT_ROOT` | stdio MCP / Codex plugin | completed MP4 自动落盘及 `pippit_download_video` 额外副本的 root |
+| `PIPPIT_MCP_OUTPUT_ROOT` | stdio MCP / Codex plugin | completed 图片/MP4 自动落盘及 `pippit_download_video` 额外副本的 root |
 | `PIPPIT_MCP_ENROLLMENT_PORT` | stdio MCP / Codex plugin | loopback AK 设置页监听端口；默认 `0`，即随机空闲端口 |
 | `PIPPIT_MCP_ENROLLMENT_TTL_MS` | stdio MCP / Codex plugin | 单次 AK 设置链接有效期；默认 `300000`，最大 15 分钟 |
 | `CHATGPT_APP_HOST` / `CHATGPT_APP_PORT` | ChatGPT App | HTTP 监听地址；默认 `127.0.0.1:8787` |

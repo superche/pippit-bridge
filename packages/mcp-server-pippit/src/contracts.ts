@@ -42,6 +42,53 @@ export interface PippitProviderOptions {
   readonly thread_id?: string
 }
 
+export interface PippitImageGenerateRequest {
+  readonly input_references?: readonly PippitImageUrlReference[]
+  readonly model: string
+  readonly n?: number
+  readonly prompt: string
+  readonly provider?: {
+    readonly options?: {
+      readonly pippit?: PippitProviderOptions
+    }
+  }
+  readonly resolution?: "1K" | "2K" | "4K"
+}
+
+export interface PippitImageGenerationData {
+  readonly b64_json: string
+  readonly media_type?: string
+}
+
+export interface PippitImageGenerationResponse {
+  readonly created: number
+  readonly data: readonly PippitImageGenerationData[]
+  readonly model: string
+  readonly usage: {
+    readonly cost: number | null
+    readonly is_byok: boolean
+  }
+}
+
+export interface PippitImageModel {
+  readonly architecture: {
+    readonly input_modalities: readonly string[]
+    readonly output_modalities: readonly string[]
+  }
+  readonly canonical_slug: string
+  readonly created: number
+  readonly description: string
+  readonly endpoints: string
+  readonly id: string
+  readonly name: string
+  readonly supported_parameters: Readonly<Record<string, Readonly<Record<string, unknown>>>>
+  readonly supports_streaming: boolean
+}
+
+export interface PippitImageModelList {
+  readonly data: readonly PippitImageModel[]
+}
+
 export interface PippitVideoGenerateRequest {
   readonly aspect_ratio?: string
   readonly duration?: number
@@ -177,6 +224,8 @@ export interface PippitVideoDownloadOptions {
 }
 
 export type PippitFacadeOperation =
+  | "list_image_models"
+  | "generate_image"
   | "list_video_models"
   | "generate_video"
   | "edit_video_segment"
@@ -207,6 +256,16 @@ export interface PippitGenerateVideoToolInput {
   readonly prompt: string
   readonly resolution?: string
   readonly seed?: number
+  readonly thread_id?: string
+}
+
+export interface PippitGenerateImageToolInput {
+  readonly byok_id?: string
+  readonly images?: readonly PippitImageUrlReference[]
+  readonly model: string
+  readonly n?: number
+  readonly prompt: string
+  readonly resolution?: "1K" | "2K" | "4K"
   readonly thread_id?: string
 }
 

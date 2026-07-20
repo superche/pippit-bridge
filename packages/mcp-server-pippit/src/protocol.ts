@@ -1,7 +1,7 @@
 import type { PippitMcpCallToolResult, PippitToolRuntime } from "./tools.ts"
 
 export const PIPPIT_MCP_PROTOCOL_VERSION = "2025-11-25"
-export const PIPPIT_MCP_SERVER_INFO = { name: "pippit-video", version: "0.2.13" } as const
+export const PIPPIT_MCP_SERVER_INFO = { name: "pippit-video", version: "0.2.16" } as const
 
 const SUPPORTED_PROTOCOL_VERSIONS = new Set(["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"])
 
@@ -82,7 +82,7 @@ export function createPippitMcpMessageHandler(
             tools: { listChanged: false },
           },
           instructions:
-            "Use these tools only for Pippit video jobs through the configured facade. Never provide a raw Pippit Access Key.",
+            "Use these tools only for Pippit image and video generation through the configured facade. Never provide a raw Pippit Access Key.",
           protocolVersion,
           serverInfo: PIPPIT_MCP_SERVER_INFO,
         })

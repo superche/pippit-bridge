@@ -8,6 +8,10 @@ import {
   type PippitFacadeFetch,
   type PippitFacadeManagementClientOptions,
   type PippitFacadeOperation,
+  type PippitImageGenerateRequest,
+  type PippitImageGenerationResponse,
+  type PippitImageModel,
+  type PippitImageModelList,
   type PippitVideoGenerateRequest,
   type PippitVideoEditRequest,
   type PippitVideoGenerationJob,
@@ -22,6 +26,7 @@ import {
 } from "./options.ts"
 
 const MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024
+const MAX_IMAGE_JSON_RESPONSE_BYTES = 420 * 1024 * 1024
 
 export class PippitFacadeError extends Error {
   readonly code: PippitFacadeErrorCode
@@ -118,6 +123,72 @@ function parseVideoModel(value: unknown, operation: PippitFacadeOperation): Pipp
       value.supported_frame_images === null ? null : [...value.supported_frame_images],
     supported_resolutions: value.supported_resolutions === null ? null : [...value.supported_resolutions],
     supported_sizes: value.supported_sizes === null ? null : [...value.supported_sizes],
+  }
+}
+
+function parseImageModel(value: unknown, operation: PippitFacadeOperation): PippitImageModel {
+  if (!isRecord(value) || !isRecord(value.architecture)) throw invalidResponse(operation)
+  if (
+    !Array.isArray(value.architecture.input_modalities) ||
+    !value.architecture.input_modalities.every(isNonEmptyString) ||
+    !Array.isArray(value.architecture.output_modalities) ||
+    !value.architecture.output_modalities.every(isNonEmptyString) ||
+    !isNonEmptyString(value.canonical_slug) ||
+    typeof value.created !== "number" || !Number.isFinite(value.created) ||
+    !isNonEmptyString(value.description) ||
+    !isNonEmptyString(value.endpoints) ||
+    !isNonEmptyString(value.id) ||
+    !isNonEmptyString(value.name) ||
+    !isRecord(value.supported_parameters) ||
+    !Object.values(value.supported_parameters).every(isRecord) ||
+    typeof value.supports_streaming !== "boolean"
+  ) throw invalidResponse(operation)
+  return {
+    architecture: {
+      input_modalities: [...value.architecture.input_modalities] as string[],
+      output_modalities: [...value.architecture.output_modalities] as string[],
+    },
+    canonical_slug: value.canonical_slug,
+    created: value.created,
+    description: value.description,
+    endpoints: value.endpoints,
+    id: value.id,
+    name: value.name,
+    supported_parameters: value.supported_parameters as Readonly<Record<string, Readonly<Record<string, unknown>>>>,
+    supports_streaming: value.supports_streaming,
+  }
+}
+
+function parseImageResponse(value: unknown, operation: PippitFacadeOperation): PippitImageGenerationResponse {
+  if (
+    !isRecord(value) ||
+    typeof value.created !== "number" || !Number.isSafeInteger(value.created) || value.created < 0 ||
+    !isNonEmptyString(value.model) ||
+    !Array.isArray(value.data) || value.data.length < 1 || value.data.length > 10 ||
+    !isRecord(value.usage)
+  ) throw invalidResponse(operation)
+  const data = value.data.map((item) => {
+    if (!isRecord(item) || !isNonEmptyString(item.b64_json) || !/^[A-Za-z0-9+/]+={0,2}$/u.test(item.b64_json)) {
+      throw invalidResponse(operation)
+    }
+    if (item.media_type !== undefined && (!isNonEmptyString(item.media_type) || !item.media_type.startsWith("image/"))) {
+      throw invalidResponse(operation)
+    }
+    return {
+      b64_json: item.b64_json,
+      ...(item.media_type === undefined ? {} : { media_type: item.media_type }),
+    }
+  })
+  if (
+    value.usage.cost !== null &&
+    (typeof value.usage.cost !== "number" || !Number.isFinite(value.usage.cost))
+  ) throw invalidResponse(operation)
+  if (typeof value.usage.is_byok !== "boolean") throw invalidResponse(operation)
+  return {
+    created: value.created,
+    data,
+    model: value.model,
+    usage: { cost: value.usage.cost, is_byok: value.usage.is_byok },
   }
 }
 
@@ -251,11 +322,15 @@ function normalizeJobId(value: string, operation: PippitFacadeOperation): string
   return normalized
 }
 
-async function readJson(response: Response, operation: PippitFacadeOperation): Promise<unknown> {
+async function readJson(
+  response: Response,
+  operation: PippitFacadeOperation,
+  maxBytes = MAX_JSON_RESPONSE_BYTES,
+): Promise<unknown> {
   const declaredHeader = response.headers.get("content-length")
   if (
     declaredHeader !== null &&
-    (!/^\d+$/u.test(declaredHeader) || Number(declaredHeader) > MAX_JSON_RESPONSE_BYTES)
+    (!/^\d+$/u.test(declaredHeader) || Number(declaredHeader) > maxBytes)
   ) {
     await response.body?.cancel().catch(() => undefined)
     throw invalidResponse(operation)
@@ -269,7 +344,7 @@ async function readJson(response: Response, operation: PippitFacadeOperation): P
       const chunk = await reader.read()
       if (chunk.done) break
       totalBytes += chunk.value.byteLength
-      if (totalBytes > MAX_JSON_RESPONSE_BYTES) {
+      if (totalBytes > maxBytes) {
         await reader.cancel().catch(() => undefined)
         throw invalidResponse(operation)
       }
@@ -435,6 +510,28 @@ export class PippitFacadeClient {
     this.#baseUrl = normalizeBaseUrl(options.baseUrl)
     this.#fetchImpl = options.fetchImpl ?? fetch
     this.#timeoutMs = normalizeTimeout(options.timeoutMs)
+  }
+
+  async listImageModels(signal?: AbortSignal): Promise<PippitImageModelList> {
+    const operation = "list_image_models"
+    const response = await this.#request("/api/v1/images/models", { method: "GET" }, operation, signal)
+    const body = await readJson(response, operation)
+    if (!isRecord(body) || !Array.isArray(body.data)) throw invalidResponse(operation)
+    return { data: body.data.map((item) => parseImageModel(item, operation)) }
+  }
+
+  async generateImage(
+    input: PippitImageGenerateRequest,
+    signal?: AbortSignal,
+  ): Promise<PippitImageGenerationResponse> {
+    const operation = "generate_image"
+    const response = await this.#request(
+      "/api/v1/images",
+      { body: serializeJson(input, operation), headers: { "content-type": "application/json" }, method: "POST" },
+      operation,
+      signal,
+    )
+    return parseImageResponse(await readJson(response, operation, MAX_IMAGE_JSON_RESPONSE_BYTES), operation)
   }
 
   async listVideoModels(signal?: AbortSignal): Promise<PippitVideoModelList> {

@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto"
+import { execFile } from "node:child_process"
 import { constants } from "node:fs"
 import {
   chmod,
@@ -10,6 +11,7 @@ import {
   type FileHandle,
 } from "node:fs/promises"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
+import { promisify } from "node:util"
 
 import type { PippitVideoDownloadOptions } from "./contracts.ts"
 import type { PippitMcpResourceProvider } from "./protocol.ts"
@@ -24,6 +26,12 @@ const DEFAULT_MAX_RESOURCE_CHUNK_BYTES = 1024 * 1024
 const ARTIFACT_ID_PATTERN = /^[a-f0-9]{64}$/u
 const ARTIFACT_RESOURCE_HOST = "artifact"
 const ARTIFACT_RESOURCE_PROTOCOL = "pippit-video:"
+const IMAGE_ARTIFACT_RESOURCE_PROTOCOL = "pippit-image:"
+const IMAGE_MEDIA_TYPES = {
+  jpg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+} as const
 
 export interface PippitWidgetMediaBackend {
   downloadVideo(jobId: string, options?: PippitVideoDownloadOptions): Promise<Response>
@@ -31,8 +39,30 @@ export interface PippitWidgetMediaBackend {
 
 export interface PippitWidgetMediaServer extends PippitMcpResourceProvider {
   close(): Promise<void>
+  prepareImage?(
+    data: string,
+    mimeType: string,
+  ): Promise<PippitPreparedWidgetImage>
   preparePreview(jobId: string, index: number): Promise<PippitPreparedWidgetMedia>
+  readImage?(resourceUri: string): Promise<PippitWidgetImageArtifact | undefined>
   readChunk(resourceUri: string, offset: number, length: number): Promise<PippitWidgetMediaChunk | undefined>
+  revealImage?(resourceUri: string): Promise<boolean>
+}
+
+export interface PippitPreparedWidgetImage {
+  readonly bytes: number
+  readonly filename: string
+  readonly localPath: string
+  readonly mimeType: "image/jpeg" | "image/png" | "image/webp"
+  readonly resourceUri: string
+}
+
+export interface PippitWidgetImageArtifact {
+  readonly blob: string
+  readonly bytes: number
+  readonly filename: string
+  readonly mimeType: "image/jpeg" | "image/png" | "image/webp"
+  readonly resourceUri: string
 }
 
 export interface PippitPreparedWidgetMedia {
@@ -58,6 +88,7 @@ export interface PippitWidgetMediaServerOptions {
   readonly maxArtifactBytes?: number
   readonly maxInlinePreviewBytes?: number
   readonly maxResourceChunkBytes?: number
+  readonly revealFile?: (path: string) => Promise<void>
 }
 
 interface CachedArtifact {
@@ -72,6 +103,20 @@ interface ArtifactResourceRequest {
   readonly length: number
   readonly offset: number
   readonly resourceUri: string
+}
+
+const execFileAsync = promisify(execFile)
+
+async function revealFileInSystemManager(path: string): Promise<void> {
+  if (process.platform === "darwin") {
+    await execFileAsync("open", ["-R", path])
+    return
+  }
+  if (process.platform === "win32") {
+    await execFileAsync("explorer.exe", ["/select,", path])
+    return
+  }
+  await execFileAsync("xdg-open", [dirname(path)])
 }
 
 function playableContentType(value: string | null): boolean {
@@ -115,6 +160,49 @@ function parseArtifactResourceIdentity(uri: string): string | undefined {
     parsed.pathname !== `/${resourceArtifactId}`
   ) return undefined
   return resourceArtifactId
+}
+
+function imageExtension(mimeType: string): keyof typeof IMAGE_MEDIA_TYPES | undefined {
+  if (mimeType === "image/jpeg") return "jpg"
+  if (mimeType === "image/png") return "png"
+  if (mimeType === "image/webp") return "webp"
+  return undefined
+}
+
+function imageArtifactPath(root: string, id: string, extension: keyof typeof IMAGE_MEDIA_TYPES): string {
+  return join(root, `pippit-image-${id}.${extension}`)
+}
+
+function imageArtifactResourceUri(id: string, extension: keyof typeof IMAGE_MEDIA_TYPES): string {
+  return `${IMAGE_ARTIFACT_RESOURCE_PROTOCOL}//${ARTIFACT_RESOURCE_HOST}/${id}.${extension}`
+}
+
+function parseImageArtifactResourceUri(uri: string): {
+  readonly artifactId: string
+  readonly extension: keyof typeof IMAGE_MEDIA_TYPES
+  readonly mimeType: PippitWidgetImageArtifact["mimeType"]
+} | undefined {
+  let parsed: URL
+  try {
+    parsed = new URL(uri)
+  } catch {
+    return undefined
+  }
+  if (
+    parsed.protocol !== IMAGE_ARTIFACT_RESOURCE_PROTOCOL ||
+    parsed.hostname !== ARTIFACT_RESOURCE_HOST ||
+    parsed.port !== "" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.hash !== "" ||
+    parsed.search !== ""
+  ) return undefined
+  const match = /^\/([a-f0-9]{64})\.(jpg|png|webp)$/u.exec(parsed.pathname)
+  if (match === null) return undefined
+  const artifactId = match[1]
+  const extension = match[2] as keyof typeof IMAGE_MEDIA_TYPES
+  if (artifactId === undefined) return undefined
+  return { artifactId, extension, mimeType: IMAGE_MEDIA_TYPES[extension] }
 }
 
 function parseArtifactResourceUri(uri: string, maxChunkBytes: number): ArtifactResourceRequest | undefined {
@@ -270,6 +358,155 @@ async function existingArtifact(path: string, id: string): Promise<CachedArtifac
   }
 }
 
+function decodeCanonicalBase64Image(data: string): Buffer {
+  if (data === "" || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(data)) {
+    throw new Error("The generated Pippit image is not valid base64.")
+  }
+  const bytes = Buffer.from(data, "base64")
+  if (bytes.length === 0 || bytes.toString("base64") !== data) {
+    throw new Error("The generated Pippit image is not canonical base64.")
+  }
+  return bytes
+}
+
+async function persistImageArtifact(input: {
+  readonly bytes: Buffer
+  readonly extension: keyof typeof IMAGE_MEDIA_TYPES
+  readonly maxBytes: number
+  readonly mimeType: PippitWidgetImageArtifact["mimeType"]
+  readonly root: string
+}): Promise<PippitPreparedWidgetImage> {
+  if (input.bytes.byteLength > input.maxBytes) {
+    throw new Error("The generated Pippit image exceeds the local artifact limit.")
+  }
+  const id = createHash("sha256")
+    .update("pippit-image-artifact\0", "utf8")
+    .update(input.mimeType, "utf8")
+    .update("\0", "utf8")
+    .update(input.bytes)
+    .digest("hex")
+  const path = imageArtifactPath(input.root, id, input.extension)
+  const present = await existingArtifact(path, id)
+  if (present !== undefined) {
+    return {
+      bytes: present.size,
+      filename: present.filename,
+      localPath: present.path,
+      mimeType: input.mimeType,
+      resourceUri: imageArtifactResourceUri(id, input.extension),
+    }
+  }
+
+  const temporaryPath = `${path}.partial-${process.pid}-${randomBytes(8).toString("hex")}`
+  let handle: FileHandle | undefined
+  try {
+    handle = await open(
+      temporaryPath,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o600,
+    )
+    await handle.writeFile(input.bytes)
+    await handle.sync()
+    await handle.close()
+    handle = undefined
+    try {
+      await link(temporaryPath, path)
+      await syncDirectory(dirname(path))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+    }
+    await unlink(temporaryPath)
+    const cached = await existingArtifact(path, id)
+    if (cached === undefined) throw new Error("The Pippit image artifact could not be committed.")
+    return {
+      bytes: cached.size,
+      filename: cached.filename,
+      localPath: cached.path,
+      mimeType: input.mimeType,
+      resourceUri: imageArtifactResourceUri(id, input.extension),
+    }
+  } finally {
+    await handle?.close().catch(() => undefined)
+    await unlink(temporaryPath).catch(() => undefined)
+  }
+}
+
+async function readImageArtifact(
+  uri: string,
+  resolveRoot: () => Promise<string>,
+  maxReadableBytes: number,
+): Promise<PippitWidgetImageArtifact | undefined> {
+  const parsed = parseImageArtifactResourceUri(uri)
+  if (parsed === undefined) return undefined
+  const root = await resolveRoot()
+  const path = imageArtifactPath(root, parsed.artifactId, parsed.extension)
+  let handle: FileHandle
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+    throw error
+  }
+  try {
+    const stats = await handle.stat()
+    if (
+      !stats.isFile() ||
+      stats.size <= 0 ||
+      stats.size > maxReadableBytes ||
+      (process.platform !== "win32" && (stats.mode & 0o077) !== 0)
+    ) {
+      throw new Error("The local Pippit image artifact is unsafe.")
+    }
+    const bytes = await handle.readFile()
+    if (bytes.byteLength !== stats.size) {
+      throw new Error("The local Pippit image artifact changed while being read.")
+    }
+    return {
+      blob: bytes.toString("base64"),
+      bytes: bytes.byteLength,
+      filename: basename(path),
+      mimeType: parsed.mimeType,
+      resourceUri: uri,
+    }
+  } finally {
+    await handle.close()
+  }
+}
+
+async function revealImageArtifact(
+  uri: string,
+  resolveRoot: () => Promise<string>,
+  maxReadableBytes: number,
+  revealFile: (path: string) => Promise<void>,
+): Promise<boolean> {
+  const parsed = parseImageArtifactResourceUri(uri)
+  if (parsed === undefined) return false
+  const root = await resolveRoot()
+  const path = imageArtifactPath(root, parsed.artifactId, parsed.extension)
+  let handle: FileHandle
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+    throw error
+  }
+  try {
+    const stats = await handle.stat()
+    if (
+      !stats.isFile() ||
+      stats.size <= 0 ||
+      stats.size > maxReadableBytes ||
+      (process.platform !== "win32" && (stats.mode & 0o077) !== 0)
+    ) {
+      throw new Error("The local Pippit image artifact is unsafe.")
+    }
+  } finally {
+    await handle.close()
+  }
+  await revealFile(path)
+  return true
+}
+
 async function syncDirectory(path: string): Promise<void> {
   if (process.platform === "win32") return
   const handle = await open(path, constants.O_RDONLY)
@@ -387,6 +624,7 @@ export function createPippitWidgetMediaServer(
     maxArtifactBytes,
   )
   const maxResourceChunkBytes = options.maxResourceChunkBytes ?? DEFAULT_MAX_RESOURCE_CHUNK_BYTES
+  const revealFile = options.revealFile ?? revealFileInSystemManager
   if (!Number.isSafeInteger(maxArtifactBytes) || maxArtifactBytes < 1) {
     throw new Error("Widget media artifact limit must be a positive integer.")
   }
@@ -478,6 +716,12 @@ export function createPippitWidgetMediaServer(
       return {
         resourceTemplates: [
           {
+            description: "Read one private local generated Pippit image artifact.",
+            mimeType: "image/*",
+            name: "Pippit local image",
+            uriTemplate: "pippit-image://artifact/{artifact_id}.{extension}",
+          },
+          {
             description: "Read a bounded chunk from a private local Pippit MP4 artifact.",
             mimeType: "video/mp4",
             name: "Pippit local video chunk",
@@ -486,7 +730,28 @@ export function createPippitWidgetMediaServer(
         ],
       }
     },
+    async prepareImage(data, mimeType) {
+      if (closed) throw new Error("The widget media server is closed.")
+      const extension = imageExtension(mimeType)
+      if (extension === undefined) throw new Error("The generated Pippit image type is unsupported.")
+      const root = await resolveArtifactRoot()
+      return await persistImageArtifact({
+        bytes: decodeCanonicalBase64Image(data),
+        extension,
+        maxBytes: maxInlinePreviewBytes,
+        mimeType: IMAGE_MEDIA_TYPES[extension],
+        root,
+      })
+    },
     preparePreview,
+    async readImage(resourceUri) {
+      if (closed) throw new Error("The widget media server is closed.")
+      return await readImageArtifact(resourceUri, resolveArtifactRoot, maxInlinePreviewBytes)
+    },
+    async revealImage(resourceUri) {
+      if (closed) throw new Error("The widget media server is closed.")
+      return await revealImageArtifact(resourceUri, resolveArtifactRoot, maxInlinePreviewBytes, revealFile)
+    },
     async readChunk(resourceUri, offset, length) {
       if (closed) throw new Error("The widget media server is closed.")
       const resourceArtifactId = parseArtifactResourceIdentity(resourceUri)
@@ -508,6 +773,12 @@ export function createPippitWidgetMediaServer(
       if (closed) throw new Error("The widget media server is closed.")
       const widgetResource = pippitWidgetReadResource(uri)
       if (widgetResource !== undefined) return widgetResource
+      const image = await readImageArtifact(uri, resolveArtifactRoot, maxInlinePreviewBytes)
+      if (image !== undefined) {
+        return {
+          contents: [{ blob: image.blob, mimeType: image.mimeType, uri }],
+        }
+      }
       return await readArtifactResource(
         uri,
         resolveArtifactRoot,

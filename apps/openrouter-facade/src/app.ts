@@ -25,20 +25,28 @@ import {
   createReferenceLoader,
   createPublicHttpFetcher,
   ReferenceLoadError,
+  IMAGE_MODELS,
+  publicImageModel,
   type ReferenceLookup,
   type ReferenceLoader,
   type ReferenceTransport,
   publicVideoModel,
+  resolveImageModel,
   resolveVideoModel,
+  UnknownImageModelError,
   UnknownVideoModelError,
   VIDEO_MODELS,
 } from "@pippit-bridge/core"
 import {
   createReferenceWorkGate,
+  prepareImageReferences,
   prepareReferences,
   readPippitProviderOptions,
 } from "./media/prepare-references.js"
 import {
+  imageGenerationRequestSchema,
+  type ImageGenerationRequest,
+  type ImageGenerationResponse,
   type VideoGenerationJob,
   type VideoGenerationStatus,
   type VideoEditRequest,
@@ -509,6 +517,67 @@ function resolveFacadeVideoModel(modelId: string): (typeof VIDEO_MODELS)[number]
   }
 }
 
+function resolveFacadeImageModel(modelId: string): (typeof IMAGE_MODELS)[number] {
+  try {
+    return resolveImageModel(modelId)
+  } catch (error) {
+    if (error instanceof UnknownImageModelError) {
+      throw invalidRequest(error.message, "model", "model_not_found")
+    }
+    throw error
+  }
+}
+
+function generalImageModel(model: (typeof IMAGE_MODELS)[number]): Record<string, unknown> {
+  return {
+    architecture: {
+      input_modalities: [...model.architecture.input_modalities],
+      instruct_type: null,
+      modality: "text+image->image",
+      output_modalities: ["image"],
+      tokenizer: "Other",
+    },
+    canonical_slug: model.canonical_slug,
+    context_length: 0,
+    created: model.created,
+    default_parameters: null,
+    description: model.description,
+    expiration_date: null,
+    id: model.id,
+    knowledge_cutoff: null,
+    links: { details: "/api/v1/images/models" },
+    name: model.name,
+    per_request_limits: null,
+    pricing: { completion: "0", image: "0", prompt: "0", request: "0" },
+    supported_parameters: ["prompt", ...Object.keys(model.supported_parameters), "provider"],
+    supported_voices: null,
+    top_provider: { context_length: 0, is_moderated: true, max_completion_tokens: 0 },
+  }
+}
+
+function waitForPollDelay(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(new ApiError("The request was cancelled.", {
+    code: "request_cancelled",
+    statusCode: 408,
+    type: "api_error",
+  }))
+  return new Promise((resolveDelay, rejectDelay) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort)
+      resolveDelay()
+    }, delayMs)
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      rejectDelay(new ApiError("The request was cancelled.", {
+        code: "request_cancelled",
+        statusCode: 408,
+        type: "api_error",
+      }))
+    }
+    signal.addEventListener("abort", onAbort, { once: true })
+  })
+}
+
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const config =
     options.config === undefined
@@ -653,6 +722,138 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     }
   }
 
+  const submitImageGeneration = async (
+    request: FastifyRequest,
+    caller: AuthenticatedApiKey,
+    body: ImageGenerationRequest,
+  ): Promise<ImageGenerationResponse> => {
+    const model = resolveFacadeImageModel(body.model)
+    if (model.upstreamModel === "seedream_5.0" && body.resolution !== undefined) {
+      throw invalidRequest(
+        "resolution is not supported by pippit/seedream-5.0; omit the field entirely.",
+        "resolution",
+        "unsupported_parameter",
+      )
+    }
+
+    const providerOptions = readPippitProviderOptions(body)
+    const workspaceId = await byokStore.getWorkspaceId()
+    const candidates = await byokStore.resolveCandidates({
+      apiKeyHash: caller.apiKeyHash,
+      ...(providerOptions.byok_id === undefined ? {} : { credentialId: providerOptions.byok_id }),
+      model: model.id,
+      provider: "pippit",
+      workspaceId,
+    })
+    if (candidates.length === 0) throw noEligibleByokCredential()
+    if (providerOptions.thread_id !== undefined && providerOptions.byok_id === undefined && candidates.length > 1) {
+      throw invalidRequest(
+        "provider.options.pippit.byok_id is required when continuing a thread with multiple eligible BYOK credentials.",
+        "provider.options.pippit.byok_id",
+        "byok_credential_required",
+      )
+    }
+
+    const requestSignal = createRequestSignal(request)
+    try {
+      let selectedAccessKey: string | undefined
+      let submitted: Awaited<ReturnType<PippitApi["submitRun"]>> | undefined
+      for (const [index, candidate] of candidates.entries()) {
+        try {
+          const assetIds = await prepareImageReferences({
+            accessKey: candidate.accessKey,
+            concurrency: config.REFERENCE_UPLOAD_CONCURRENCY,
+            gate: referenceGate,
+            loader: referenceLoader,
+            maxTotalBytes: config.REFERENCE_MAX_TOTAL_BYTES,
+            pippit,
+            request: body,
+            signal: requestSignal.signal,
+          })
+          submitted = await pippit.submitRun({
+            accessKey: candidate.accessKey,
+            request: {
+              ...(assetIds.length === 0 ? {} : { asset_ids: [...assetIds] }),
+              general_agent_settings: {
+                generate_image_count: body.n,
+                image_model: model.upstreamModel,
+                ...(body.resolution === undefined ? {} : { resolution: body.resolution }),
+              },
+              message: body.prompt,
+              ...(providerOptions.thread_id === undefined ? {} : { thread_id: providerOptions.thread_id }),
+            },
+            signal: requestSignal.signal,
+          })
+          selectedAccessKey = candidate.accessKey
+          break
+        } catch (error) {
+          const hasNextCandidate = index + 1 < candidates.length
+          if (!hasNextCandidate || !canTryNextByokCredential(error)) throw error
+        }
+      }
+      if (selectedAccessKey === undefined || submitted === undefined) throw noEligibleByokCredential()
+
+      const deadline = Date.now() + config.IMAGE_GENERATION_TIMEOUT_MS
+      let result: PippitVideoResult
+      while (true) {
+        result = await pippit.queryVideoResult({
+          accessKey: selectedAccessKey,
+          runId: submitted.run.runId,
+          signal: requestSignal.signal,
+          threadId: submitted.run.threadId,
+        })
+        const status = pippitStateToOpenRouterStatus(result.runState)
+        if (status === "completed") break
+        if (status === "failed" || status === "cancelled" || status === "expired") {
+          const detail = failureMessage(result.failReason, status) ?? `Pippit image generation ${status}.`
+          throw new ApiError(sanitizeMessage(detail, selectedAccessKey), {
+            code: "image_generation_failed",
+            statusCode: 502,
+            type: "upstream_error",
+          })
+        }
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) {
+          throw new ApiError("Pippit image generation timed out.", {
+            code: "upstream_timeout",
+            statusCode: 504,
+            type: "upstream_error",
+          })
+        }
+        await waitForPollDelay(Math.min(config.IMAGE_GENERATION_POLL_INTERVAL_MS, remaining), requestSignal.signal)
+      }
+
+      if (result.imageUrls.length === 0) {
+        throw new ApiError("Pippit marked the run completed without returning an image URL.", {
+          code: "invalid_upstream_response",
+          statusCode: 502,
+          type: "upstream_error",
+        })
+      }
+
+      const data: Array<{ b64_json: string; media_type?: string }> = []
+      let totalBytes = 0
+      for (const imageUrl of result.imageUrls) {
+        const image = await referenceLoader.load(imageUrl, "image", requestSignal.signal)
+        totalBytes += image.bytes.byteLength
+        if (totalBytes > config.REFERENCE_MAX_TOTAL_BYTES) throw new ReferenceLoadError("TOTAL_TOO_LARGE")
+        data.push({
+          b64_json: Buffer.from(image.bytes).toString("base64"),
+          ...(image.mediaType === "image/png" ? {} : { media_type: image.mediaType }),
+        })
+      }
+
+      return {
+        created: Math.floor(Date.now() / 1_000),
+        data,
+        model: model.id,
+        usage: { cost: null, is_byok: true },
+      }
+    } finally {
+      requestSignal.dispose()
+    }
+  }
+
   app.addHook("onReady", async () => {
     await byokStore.getWorkspaceId()
   })
@@ -691,9 +892,32 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     return { data: VIDEO_MODELS.map(publicVideoModel) }
   })
 
+  app.get("/api/v1/images/models", async (request) => {
+    authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
+    return { data: IMAGE_MODELS.map(publicImageModel) }
+  })
+
+  app.get("/api/v1/images/models/:provider/:model/endpoints", async (request) => {
+    authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
+    const params = z.object({ model: z.string().min(1), provider: z.string().min(1) }).parse(request.params)
+    const model = resolveFacadeImageModel(`${params.provider}/${params.model}`)
+    return {
+      endpoints: [{
+        allowed_passthrough_parameters: ["byok_id", "thread_id"],
+        pricing: [],
+        provider_name: "Pippit",
+        provider_slug: "pippit",
+        provider_tag: "pippit",
+        supported_parameters: model.supported_parameters,
+        supports_streaming: false,
+      }],
+      id: model.id,
+    }
+  })
+
   app.get("/api/v1/models", async (request) => {
     authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
-    return { data: VIDEO_MODELS.map(generalModel) }
+    return { data: [...VIDEO_MODELS.map(generalModel), ...IMAGE_MODELS.map(generalImageModel)] }
   })
 
   app.post("/api/v1/byok", async (request, reply) => {
@@ -764,6 +988,12 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     const caller = authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
     const body = videoGenerationRequestSchema.parse(request.body)
     return reply.status(202).send(await submitVideoGeneration(request, caller, body))
+  })
+
+  app.post("/api/v1/images", async (request) => {
+    const caller = authenticateFacadeApiKey(request, config.FACADE_API_KEY_SHA256_ALLOWLIST)
+    const body = imageGenerationRequestSchema.parse(request.body)
+    return submitImageGeneration(request, caller, body)
   })
 
   app.post("/api/v1/videos/edits", async (request, reply) => {

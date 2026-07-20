@@ -4,7 +4,7 @@ export const OPENAPI_DOCUMENT = {
     title: "Pippit Bridge",
     version: "0.1.0",
     description:
-      "An OpenRouter-compatible asynchronous video API backed by Pippit's immersive short-film generation API. BYOK management follows OpenRouter's management-key boundary; provider=pippit and video generation are explicit extensions of the OpenRouter surface.",
+      "An OpenRouter-compatible image and asynchronous video API backed by Pippit. BYOK management follows OpenRouter's management-key boundary; provider=pippit is an explicit facade extension.",
   },
   externalDocs: {
     description: "OpenRouter BYOK documentation",
@@ -13,6 +13,7 @@ export const OPENAPI_DOCUMENT = {
   tags: [
     { name: "BYOK", description: "Manage encrypted Pippit credentials with a management API key." },
     { name: "Models" },
+    { name: "Images" },
     { name: "Videos" },
   ],
   paths: {
@@ -219,6 +220,66 @@ export const OPENAPI_DOCUMENT = {
         tags: ["Models"],
       },
     },
+    "/api/v1/images": {
+      post: {
+        operationId: "createImage",
+        requestBody: {
+          content: { "application/json": { schema: { $ref: "#/components/schemas/ImageGenerationRequest" } } },
+          required: true,
+        },
+        responses: {
+          "200": {
+            content: { "application/json": { schema: { $ref: "#/components/schemas/ImageGenerationResponse" } } },
+            description: "Completed image generation response with base64 image data",
+          },
+          "400": { $ref: "#/components/responses/Error" },
+          "401": { $ref: "#/components/responses/Error" },
+          "413": { $ref: "#/components/responses/Error" },
+          "502": { $ref: "#/components/responses/Error" },
+          "503": { $ref: "#/components/responses/Error" },
+          "504": { $ref: "#/components/responses/Error" },
+        },
+        security: [{ runtimeBearer: [] }],
+        summary: "Generate images",
+        tags: ["Images"],
+      },
+    },
+    "/api/v1/images/models": {
+      get: {
+        operationId: "listImageModels",
+        responses: {
+          "200": {
+            content: { "application/json": { schema: {
+              properties: { data: { items: { $ref: "#/components/schemas/ImageModel" }, type: "array" } },
+              required: ["data"],
+              type: "object",
+            } } },
+            description: "Seedream image models and capability descriptors",
+          },
+          "401": { $ref: "#/components/responses/Error" },
+        },
+        security: [{ runtimeBearer: [] }],
+        summary: "List image generation models",
+        tags: ["Images", "Models"],
+      },
+    },
+    "/api/v1/images/models/{provider}/{model}/endpoints": {
+      get: {
+        operationId: "listImageModelEndpoints",
+        parameters: [
+          { in: "path", name: "provider", required: true, schema: { type: "string" } },
+          { in: "path", name: "model", required: true, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": { description: "Pippit endpoint capability and pricing metadata" },
+          "401": { $ref: "#/components/responses/Error" },
+          "404": { $ref: "#/components/responses/Error" },
+        },
+        security: [{ runtimeBearer: [] }],
+        summary: "List endpoint records for an image model",
+        tags: ["Images", "Models"],
+      },
+    },
     "/api/v1/videos": {
       post: {
         operationId: "createVideo",
@@ -394,6 +455,103 @@ export const OPENAPI_DOCUMENT = {
       },
     },
     schemas: {
+      ImageGenerationRequest: {
+        additionalProperties: false,
+        properties: {
+          input_references: { items: { $ref: "#/components/schemas/ImageGenerationReference" }, maxItems: 9, type: "array" },
+          model: { enum: ["pippit/seedream-5.0", "pippit/seedream-5.0-pro"], type: "string" },
+          n: { default: 1, maximum: 10, minimum: 1, type: "integer" },
+          prompt: { maxLength: 20000, minLength: 1, type: "string" },
+          provider: { $ref: "#/components/schemas/ProviderRouting" },
+          resolution: { description: "Seedream 5.0 Pro only; omit for Seedream 5.0.", enum: ["1K", "2K", "4K"], type: "string" },
+        },
+        required: ["model", "prompt"],
+        type: "object",
+      },
+      ImageGenerationResponse: {
+        additionalProperties: false,
+        properties: {
+          created: { minimum: 0, type: "integer" },
+          data: {
+            items: {
+              additionalProperties: false,
+              properties: {
+                b64_json: { contentEncoding: "base64", type: "string" },
+                media_type: { pattern: "^image/", type: "string" },
+              },
+              required: ["b64_json"],
+              type: "object",
+            },
+            minItems: 1,
+            type: "array",
+          },
+          model: { type: "string" },
+          usage: {
+            additionalProperties: false,
+            properties: { cost: { type: ["number", "null"] }, is_byok: { const: true, type: "boolean" } },
+            required: ["cost", "is_byok"],
+            type: "object",
+          },
+        },
+        required: ["created", "data", "model", "usage"],
+        type: "object",
+      },
+      ImageGenerationReference: {
+        additionalProperties: false,
+        properties: {
+          image_url: {
+            additionalProperties: false,
+            properties: {
+              url: {
+                description: "HTTP(S) image URL or supported base64 image data URL.",
+                format: "uri",
+                type: "string",
+              },
+            },
+            required: ["url"],
+            type: "object",
+          },
+          type: { const: "image_url" },
+        },
+        required: ["type", "image_url"],
+        type: "object",
+      },
+      ImageModel: {
+        additionalProperties: false,
+        properties: {
+          architecture: { type: "object" },
+          canonical_slug: { type: "string" },
+          created: { type: "number" },
+          description: { type: "string" },
+          endpoints: { type: "string" },
+          id: { type: "string" },
+          name: { type: "string" },
+          supported_parameters: { type: "object" },
+          supports_streaming: { const: false, type: "boolean" },
+        },
+        required: ["architecture", "canonical_slug", "created", "description", "endpoints", "id", "name", "supported_parameters", "supports_streaming"],
+        type: "object",
+      },
+      ProviderRouting: {
+        additionalProperties: false,
+        properties: {
+          options: {
+            additionalProperties: { additionalProperties: true, type: "object" },
+            properties: {
+              pippit: {
+                additionalProperties: false,
+                properties: {
+                  byok_id: { format: "uuid", type: "string" },
+                  thread_id: { minLength: 1, type: "string" },
+                },
+                type: "object",
+              },
+            },
+            type: "object",
+          },
+        },
+        type: "object",
+      },
       ByokActiveSelection: {
         additionalProperties: false,
         description:

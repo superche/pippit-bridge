@@ -10,7 +10,7 @@ if (entryArgument === undefined) {
 if (!isAbsolute(entryArgument)) throw new Error("The plugin entry path must be absolute.")
 const entryPath = resolve(entryArgument)
 const pluginManifest = JSON.parse(await readFile(join(dirname(entryPath), ".codex-plugin", "plugin.json"), "utf8"))
-if (pluginManifest.version !== "0.2.13") throw new Error("The packaged Codex plugin manifest version is unexpected.")
+if (pluginManifest.version !== "0.2.16") throw new Error("The packaged Codex plugin manifest version is unexpected.")
 
 const dataRoot = await mkdtemp(join(tmpdir(), "pippit-packed-runtime-"))
 await rm(dataRoot, { force: true, recursive: true })
@@ -44,6 +44,8 @@ try {
     request(3, "resources/list"),
     request(4, "resources/read", { uri: "ui://widget/pippit-video-job-v13.html" }),
     request(5, "tools/call", { arguments: {}, name: "pippit_list_access_keys" }),
+    request(6, "resources/read", { uri: "ui://widget/pippit-image-result-v4.html" }),
+    request(7, "resources/read", { uri: "ui://widget/pippit-image-result-v3.html" }),
   ]
   const run = await new Promise((resolveRun, rejectRun) => {
     const child = spawn(process.execPath, [entryPath], {
@@ -87,15 +89,35 @@ try {
   const listedResources = responses.find((response) => response.id === 3)?.result?.resources ?? []
   const widgetResource = responses.find((response) => response.id === 4)?.result?.contents?.[0]
   const toolCall = responses.find((response) => response.id === 5)?.result
-  if (responses.find((response) => response.id === 1)?.result?.serverInfo?.version !== "0.2.13") {
+  const imageWidgetResource = responses.find((response) => response.id === 6)?.result?.contents?.[0]
+  const legacyImageWidgetResource = responses.find((response) => response.id === 7)?.result?.contents?.[0]
+  if (responses.find((response) => response.id === 1)?.result?.serverInfo?.version !== "0.2.16") {
     throw new Error("The packaged MCP server version is unexpected.")
   }
-  if (tools.length !== 11 || !tools.some((tool) => tool.name === "pippit_add_access_key")) {
+  const expectedTools = [
+    "pippit_add_access_key",
+    "pippit_generate_image",
+    "pippit_generate_video",
+    "pippit_get_image",
+    "pippit_read_image",
+    "pippit_read_video_chunk",
+    "pippit_reveal_image",
+    "pippit_resolve_latest_video",
+  ]
+  if (!expectedTools.every((name) => tools.some((tool) => tool.name === name))) {
     throw new Error("The packaged MCP tool surface is incomplete.")
   }
+  const imageTool = tools.find((tool) => tool.name === "pippit_generate_image")
+  const getImageTool = tools.find((tool) => tool.name === "pippit_get_image")
+  const readImageTool = tools.find((tool) => tool.name === "pippit_read_image")
+  const revealImageTool = tools.find((tool) => tool.name === "pippit_reveal_image")
   const chunkTool = tools.find((tool) => tool.name === "pippit_read_video_chunk")
   const resolveLatestTool = tools.find((tool) => tool.name === "pippit_resolve_latest_video")
   if (
+    JSON.stringify(readImageTool?._meta?.ui?.visibility) !== JSON.stringify(["app"]) ||
+    readImageTool?._meta?.["openai/widgetAccessible"] !== true ||
+    JSON.stringify(revealImageTool?._meta?.ui?.visibility) !== JSON.stringify(["app"]) ||
+    revealImageTool?._meta?.["openai/widgetAccessible"] !== true ||
     JSON.stringify(chunkTool?._meta?.ui?.visibility) !== JSON.stringify(["app"]) ||
     chunkTool?._meta?.["openai/widgetAccessible"] !== true
   ) {
@@ -115,7 +137,8 @@ try {
     throw new Error("The packaged MCP tools do not bind the shared widget.")
   }
   if (
-    listedResources[0]?.uri !== "ui://widget/pippit-video-job-v13.html" ||
+    !listedResources.some((resource) => resource.uri === "ui://widget/pippit-video-job-v13.html") ||
+    !listedResources.some((resource) => resource.uri === "ui://widget/pippit-image-result-v4.html") ||
     widgetResource?.mimeType !== "text/html;profile=mcp-app" ||
     !widgetResource?.text?.includes("pippit-video-editor") ||
     !widgetResource?.text?.includes("function newAnnotationId()") ||
@@ -124,6 +147,23 @@ try {
     widgetResource?.text?.includes("newIdempotencyKey()")
   ) {
     throw new Error("The packaged MCP widget resource is incomplete.")
+  }
+  if (
+    imageTool?._meta?.ui?.resourceUri !== "ui://widget/pippit-image-result-v4.html" ||
+    imageTool?._meta?.["openai/outputTemplate"] !== "ui://widget/pippit-image-result-v4.html" ||
+    getImageTool?._meta?.ui?.resourceUri !== "ui://widget/pippit-image-result-v4.html" ||
+    getImageTool?._meta?.["openai/outputTemplate"] !== "ui://widget/pippit-image-result-v4.html" ||
+    imageWidgetResource?.mimeType !== "text/html;profile=mcp-app" ||
+    !imageWidgetResource?.text?.includes("function resultImages(rawResult)") ||
+    !imageWidgetResource?.text?.includes("function infinityPoint(step)") ||
+    !imageWidgetResource?.text?.includes("pippit_read_image") ||
+    !imageWidgetResource?.text?.includes("pippit_get_image") ||
+    !imageWidgetResource?.text?.includes("pippit_reveal_image") ||
+    !imageWidgetResource?.text?.includes("current.mcp_tool_result") ||
+    legacyImageWidgetResource?.uri !== "ui://widget/pippit-image-result-v3.html" ||
+    legacyImageWidgetResource?.text !== imageWidgetResource.text
+  ) {
+    throw new Error("The packaged MCP image widget resource is incomplete.")
   }
   if (toolCall?.isError === true) {
     throw new Error(`The packaged MCP could not call its auto-bootstrapped local Facade: ${JSON.stringify(toolCall.structuredContent?.error ?? toolCall.content)}`)
@@ -150,7 +190,7 @@ try {
 
   process.stdout.write(`${JSON.stringify({
     account_count: toolCall?.structuredContent?.data?.length ?? 0,
-    server_version: "0.2.13",
+    server_version: "0.2.16",
     tool_count: tools.length,
     widget_resource: true,
   })}\n`)

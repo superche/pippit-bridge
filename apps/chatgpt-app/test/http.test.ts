@@ -113,7 +113,7 @@ describe("ChatGPT App HTTP server", () => {
     expect(await initialized.json()).toMatchObject({
       id: 1,
       jsonrpc: "2.0",
-      result: { serverInfo: { name: "pippit-chatgpt-app", version: "0.2.13" } },
+      result: { serverInfo: { name: "pippit-chatgpt-app", version: "0.2.16" } },
     })
 
     const toolsResponse = await fetch(`${baseUrl}/mcp`, {
@@ -130,6 +130,8 @@ describe("ChatGPT App HTTP server", () => {
       result?: { tools?: Array<{ _meta?: Record<string, unknown>; name?: string; securitySchemes?: unknown }> }
     }
     expect(toolsBody.result?.tools?.map((tool) => tool.name)).toEqual([
+      CHATGPT_TOOL_NAMES.imageList,
+      CHATGPT_TOOL_NAMES.imageGenerate,
       CHATGPT_TOOL_NAMES.list,
       CHATGPT_TOOL_NAMES.generate,
       CHATGPT_TOOL_NAMES.get,

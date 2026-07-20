@@ -21,9 +21,15 @@ export {
   type PippitFacadeManagementClientOptions,
   type PippitFacadeOperation,
   type PippitFrameImage,
+  type PippitGenerateImageToolInput,
   type PippitGenerateVideoToolInput,
   type PippitGetVideoToolInput,
   type PippitImageUrlReference,
+  type PippitImageGenerateRequest,
+  type PippitImageGenerationData,
+  type PippitImageGenerationResponse,
+  type PippitImageModel,
+  type PippitImageModelList,
   type PippitInputReference,
   type PippitProviderOptions,
   type PippitSwitchAccessKeyToolInput,
@@ -104,6 +110,10 @@ export {
   type PippitToolRuntimeOptions,
 } from "./tools.ts"
 export {
+  PIPPIT_IMAGE_WIDGET_HTML,
+  PIPPIT_IMAGE_WIDGET_URI,
+} from "./image-widget.ts"
+export {
   PIPPIT_WIDGET_HTML,
   PIPPIT_WIDGET_URI,
   adjustWidgetRegionFromKey,
@@ -128,6 +138,7 @@ export {
 export {
   PIPPIT_WIDGET_MIME_TYPE,
   extractPippitWidgetJob,
+  pippitImageWidgetResourceMetadata,
   pippitWidgetListResources,
   pippitWidgetReadResource,
   pippitWidgetResourceMetadata,

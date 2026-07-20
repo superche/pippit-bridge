@@ -95,12 +95,17 @@ describe("Pippit widget media server", () => {
       expect((metadata?.ui as { csp?: { resourceDomains?: string[] } } | undefined)?.csp?.resourceDomains).toEqual([
         "blob:",
       ])
-      await expect(media.listResourceTemplates?.()).resolves.toMatchObject({
-        resourceTemplates: [{
+      const templates = await media.listResourceTemplates?.() as { resourceTemplates?: unknown[] }
+      expect(templates.resourceTemplates).toEqual(expect.arrayContaining([
+        expect.objectContaining({
           mimeType: "video/mp4",
           uriTemplate: "pippit-video://artifact/{artifact_id}{?length,offset}",
-        }],
-      })
+        }),
+        expect.objectContaining({
+          mimeType: "image/*",
+          uriTemplate: "pippit-image://artifact/{artifact_id}.{extension}",
+        }),
+      ]))
       expect(await readResourceBytes(media, preview.resourceUri, bytes.byteLength)).toEqual(bytes)
       await expect(media.readChunk(preview.resourceUri, 3, 3)).resolves.toEqual({
         blob: Buffer.from(bytes.slice(3, 6)).toString("base64"),
@@ -114,6 +119,71 @@ describe("Pippit widget media server", () => {
       expect(downloadVideo).toHaveBeenCalledOnce()
     } finally {
       await media.close()
+    }
+  })
+
+  it("atomically persists generated images and restores them through a stable local resource", async () => {
+    const root = await artifactRoot()
+    const bytes = Buffer.from("generated-image", "utf8")
+    const first = createPippitWidgetMediaServer({
+      artifactRoot: root,
+      backend: { async downloadVideo() { throw new Error("not used") } },
+    })
+    if (first.prepareImage === undefined) throw new Error("Missing image persistence in test.")
+    const prepared = await first.prepareImage(bytes.toString("base64"), "image/jpeg")
+    expect(prepared.resourceUri).toMatch(/^pippit-image:\/\/artifact\/[a-f0-9]{64}\.jpg$/u)
+    expect(prepared.localPath).toBe(join(root, prepared.filename))
+    expect(prepared.bytes).toBe(bytes.byteLength)
+    expect(await artifactFiles(root)).toEqual([prepared.localPath])
+    expect(await readFile(prepared.localPath)).toEqual(bytes)
+    const resource = await first.readResource(prepared.resourceUri) as {
+      contents?: Array<{ blob?: string; mimeType?: string; uri?: string }>
+    }
+    expect(resource.contents?.[0]).toEqual({
+      blob: bytes.toString("base64"),
+      mimeType: "image/jpeg",
+      uri: prepared.resourceUri,
+    })
+    await first.close()
+
+    const restarted = createPippitWidgetMediaServer({
+      artifactRoot: root,
+      backend: { async downloadVideo() { throw new Error("not used") } },
+    })
+    try {
+      const restored = await restarted.readImage?.(prepared.resourceUri)
+      expect(restored).toEqual({
+        blob: bytes.toString("base64"),
+        bytes: bytes.byteLength,
+        filename: prepared.filename,
+        mimeType: "image/jpeg",
+        resourceUri: prepared.resourceUri,
+      })
+      await expect(restarted.readResource(prepared.resourceUri.replace(".jpg", ".png"))).resolves.toBeUndefined()
+    } finally {
+      await restarted.close()
+    }
+  })
+
+  it("rejects invalid or oversized generated image artifacts without leaving partial files", async () => {
+    for (const [data, mimeType] of [
+      ["not-base64", "image/jpeg"],
+      [Buffer.from("image").toString("base64"), "image/gif"],
+      [Buffer.from("too-large").toString("base64"), "image/png"],
+    ] as const) {
+      const root = await artifactRoot()
+      const media = createPippitWidgetMediaServer({
+        artifactRoot: root,
+        backend: { async downloadVideo() { throw new Error("not used") } },
+        maxArtifactBytes: mimeType === "image/png" ? 2 : 1024,
+        maxInlinePreviewBytes: mimeType === "image/png" ? 2 : 1024,
+      })
+      try {
+        await expect(media.prepareImage?.(data, mimeType)).rejects.toThrow()
+        expect(await artifactFiles(root)).toEqual([])
+      } finally {
+        await media.close()
+      }
     }
   })
 

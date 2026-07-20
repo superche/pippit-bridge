@@ -30,6 +30,50 @@ describe("PippitFacadeClient", () => {
     await expect(client.generateVideo({ model: "pippit/seedance-2.0", prompt: "A comet" })).resolves.toMatchObject(job)
   })
 
+  it("lists image models and parses OpenRouter-compatible generated image data", async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer facade-key")
+      if (url.endsWith("/api/v1/images/models")) {
+        return new Response(JSON.stringify({
+          data: [{
+            architecture: { input_modalities: ["text", "image"], output_modalities: ["image"] },
+            canonical_slug: "pippit/seedream-5.0",
+            created: 0,
+            description: "Seedream",
+            endpoints: "/api/v1/images/models/pippit/seedream-5.0/endpoints",
+            id: "pippit/seedream-5.0",
+            name: "Pippit: Seedream 5.0",
+            supported_parameters: { n: { max: 10, min: 1, type: "range" } },
+            supports_streaming: false,
+          }],
+        }))
+      }
+      expect(url).toBe("https://bridge.example.test/api/v1/images")
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        model: "pippit/seedream-5.0",
+        prompt: "A red bird",
+      })
+      return new Response(JSON.stringify({
+        created: 1_780_000_000,
+        data: [{ b64_json: "aW1hZ2U=" }],
+        model: "pippit/seedream-5.0",
+        usage: { cost: null, is_byok: true },
+      }))
+    })
+    const client = new PippitFacadeClient({ apiKey: "facade-key", baseUrl: "https://bridge.example.test", fetchImpl })
+
+    await expect(client.listImageModels()).resolves.toMatchObject({
+      data: [{ id: "pippit/seedream-5.0", supports_streaming: false }],
+    })
+    await expect(client.generateImage({
+      model: "pippit/seedream-5.0",
+      prompt: "A red bird",
+    })).resolves.toMatchObject({
+      data: [{ b64_json: "aW1hZ2U=" }],
+      model: "pippit/seedream-5.0",
+    })
+  })
+
   it("submits video edits only through the runtime route and bearer", async () => {
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
       expect(url).toBe("https://bridge.example.test/api/v1/videos/edits")

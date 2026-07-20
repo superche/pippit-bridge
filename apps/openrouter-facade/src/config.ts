@@ -35,6 +35,8 @@ const envSchema = z.object({
   CONTENT_STREAM_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(PIPPIT_DEFAULT_TIMEOUT_MS),
   FACADE_API_KEY_SHA256_ALLOWLIST: sha256Allowlist,
   HOST: z.string().min(1).default("127.0.0.1"),
+  IMAGE_GENERATION_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(3_000),
+  IMAGE_GENERATION_TIMEOUT_MS: z.coerce.number().int().positive().default(PIPPIT_DEFAULT_TIMEOUT_MS),
   JOB_SIGNING_KEY_HEX: z.string().trim().toLowerCase().default(""),
   PIPPIT_BASE_URL: z.url().default("https://xyq.jianying.com"),
   PIPPIT_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(PIPPIT_DEFAULT_TIMEOUT_MS),
