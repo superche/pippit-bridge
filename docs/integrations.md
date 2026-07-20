@@ -2,6 +2,8 @@
 
 本项目以通用 MCP package 作为能力真源，再提供三种集成形式：stdio MCP、投影安全子集并增加 widget 的 ChatGPT App，以及直接启动同一 stdio server 的 Codex plugin。
 
+**这些集成面按单用户、本机优先架构设计。** Codex plugin 和 OpenCode plugin 是主要产品入口；stdio MCP、loopback Facade 与 ChatGPT developer-mode App 默认服务于同一用户和同一台受信主机。当前项目不把公共多用户托管、租户隔离、分布式状态或横向扩容作为交付目标。
+
 ## 共同前置与能力边界
 
 三种 wrapper 都不直连 Pippit 上游，而是复用同一个 OpenRouter-style facade 能力层：
@@ -30,7 +32,7 @@ export PIPPIT_FACADE_API_KEY='<facade-api-key>'
 | 工具 | 作用 | 可用形式 |
 | --- | --- | --- |
 | `pippit_list_video_models` | 读取 facade 的视频模型与能力目录 | stdio MCP、ChatGPT App、Codex plugin |
-| `pippit_generate_video` | 以必填 `idempotency_key` 异步提交视频任务；支持 facade 的 URL 参考素材、首尾帧、`byok_id` 与 `thread_id` | stdio MCP、ChatGPT App、Codex plugin |
+| `pippit_generate_video` | 异步提交视频任务；可选 `idempotency_key` 仅用于异常恢复；支持 facade 的 URL 参考素材、首尾帧、`byok_id` 与 `thread_id` | stdio MCP、ChatGPT App、Codex plugin |
 | `pippit_edit_video_segment` | 将已完成结果作为唯一视频参考，把最多 30 秒的选段、时间点和归一化矩形标注编译为提示词，重新生成一个异步视频任务 | stdio MCP、ChatGPT App、Codex plugin |
 | `pippit_get_video` | 根据 facade `job_id` 轮询任务 | stdio MCP、ChatGPT App、Codex plugin |
 | `pippit_download_video` | 为已自动落盘的完成结果创建一个自定义相对路径副本；不覆盖已有文件 | stdio MCP、Codex plugin |
@@ -40,6 +42,8 @@ export PIPPIT_FACADE_API_KEY='<facade-api-key>'
 | `pippit_delete_access_key` | 显式确认后删除 facade 加密 store 中的账号 | stdio MCP、Codex plugin |
 
 参考图片/视频/音频只是视频生成的输入。本包没有宣告文本模型、图片生成、语音生成或转录工具。
+
+`idempotency_key` 是 MCP/OpenCode plugin 的可选异常恢复字段，不属于 Facade/OpenRouter API。缺省时每次调用均独立提交；显式提供时，MCP 或 OpenCode 才在自己的私有账本中合并同 key 同请求、检测冲突并跨重启恢复。`submitting` 后的未知结果只能执行 fail-closed at-most-once retry policy，不能宣称 provider-level exactly-once。详见 [持久化幂等](./idempotency.md)。
 
 ## 1. 通用 stdio MCP package
 

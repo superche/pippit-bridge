@@ -2,6 +2,8 @@
 
 `@pippit-bridge/mcp-server` is the shared Pippit video capability layer for generic stdio MCP clients and the `pippit-video` Codex plugin. It provides model discovery, asynchronous video generation, reference-guided regeneration, polling, confined downloads, and facade-backed account add/list/switch/delete.
 
+This package is designed for one local user on a trusted host. Its shared loopback runtime and private file stores are not a multi-tenant service boundary and do not provide distributed coordination or cross-machine state.
+
 ## Local zero-configuration mode
 
 Run `pippit-mcp` without `PIPPIT_FACADE_*` variables. MCP initialization and `tools/list` are side-effect free. The first actual tool call creates or reconnects to a user-level, loopback-only Facade runtime with private generated internal keys and an encrypted BYOK store. Multiple MCP/Codex processes share one runtime; state lives outside plugin caches and project directories and is preserved by a normal plugin uninstall.
@@ -34,4 +36,4 @@ The public GitHub marketplace at `superche/pippit-bridge` installs the plugin me
 
 The plugin manifest configures Codex MCP tool calls for a 12-hour timeout. The same default applies to facade requests, reference preparation, generation/regeneration submission, result materialization, and widget video-tool calls. Generic MCP hosts may have their own shorter outer timeout and must opt into an equivalent limit separately.
 
-See [the integration guide](../../docs/integrations.md) for ChatGPT App deployment, production OAuth boundaries, and the full tool matrix.
+`idempotency_key` is an optional MCP-level abnormal-recovery field. It is never sent to the Facade. Keyless calls are independent submissions; explicitly keyed calls use the MCP-owned private ledger under `PIPPIT_BRIDGE_HOME/idempotency`. See [the integration guide](../../docs/integrations.md) and [the durable idempotency contract](../../docs/idempotency.md).

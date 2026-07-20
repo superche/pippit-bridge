@@ -2,6 +2,7 @@ import { access, mkdtemp, readFile, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
+import { MemoryIdempotencyStore } from "@pippit-bridge/core"
 import {
   createPippitToolRuntime,
   getPippitToolDefinition,
@@ -47,6 +48,8 @@ describe("Pippit tool runtime", () => {
     )
     const runtime = createPippitToolRuntime({ client: backend(), outputRoot: "/tmp/pippit-test" })
     expect(runtime.listTools().map((tool) => tool.name)).toEqual(PIPPIT_RUNTIME_TOOL_NAMES)
+    expect(PIPPIT_TOOL_DEFINITIONS_BY_NAME.pippit_generate_video.inputSchema.required).not.toContain("idempotency_key")
+    expect(PIPPIT_TOOL_DEFINITIONS_BY_NAME.pippit_edit_video_segment.inputSchema.required).not.toContain("idempotency_key")
     expect(getPippitToolDefinition("pippit_add_access_key").inputSchema).toMatchObject({
       additionalProperties: false,
       properties: { account_name: expect.any(Object) },
@@ -63,6 +66,30 @@ describe("Pippit tool runtime", () => {
     expect(generateVideo).toHaveBeenCalledTimes(1)
     const conflict = await runtime.callTool("pippit_generate_video", { ...first, prompt: "A moon" })
     expect(conflict.isError).toBe(true)
+  })
+
+  it("does not require a recovery key or deduplicate ordinary repeated submissions", async () => {
+    const generateVideo = vi.fn(async () => ({ id: "job-1", polling_url: "/poll", status: "pending" as const }))
+    const runtime = createPippitToolRuntime({ client: backend({ generateVideo }), outputRoot: "/tmp/pippit-test" })
+    const request = { model: "pippit/seedance-2.0", prompt: "Generate this again intentionally" }
+
+    await runtime.callTool("pippit_generate_video", request)
+    await runtime.callTool("pippit_generate_video", request)
+
+    expect(generateVideo).toHaveBeenCalledTimes(2)
+  })
+
+  it("replays an explicit recovery key from the MCP-owned durable store", async () => {
+    const generateVideo = vi.fn(async () => ({ id: "job-recovered", polling_url: "/poll", status: "pending" as const }))
+    const client = backend({ generateVideo })
+    const idempotencyStore = new MemoryIdempotencyStore({ hmacKey: Buffer.alloc(32, 4) })
+    const options = { client, idempotencyScope: "facade-identity", idempotencyStore, outputRoot: "/tmp/pippit-test" }
+    const request = { idempotency_key: "recover-this-call", model: "pippit/seedance-2.0", prompt: "Recover me" }
+
+    await createPippitToolRuntime(options).callTool("pippit_generate_video", request)
+    await createPippitToolRuntime(options).callTool("pippit_generate_video", request)
+
+    expect(generateVideo).toHaveBeenCalledTimes(1)
   })
 
   it("rejects mixed frame and general references", async () => {

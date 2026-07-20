@@ -263,11 +263,13 @@ describe("Pippit local runtime bootstrap", () => {
     const secrets = await lstat(join(dataRoot, "runtime-secrets.json"))
     const ready = await lstat(join(dataRoot, "facade-ready.json"))
     const store = await lstat(join(dataRoot, "byok", "credentials.json"))
+    const idempotencySecret = await lstat(join(dataRoot, "idempotency", "secret-v1.json"))
     if (process.platform !== "win32") {
       expect(directory.mode & 0o777).toBe(0o700)
       expect(secrets.mode & 0o777).toBe(0o600)
       expect(ready.mode & 0o777).toBe(0o600)
       expect(store.mode & 0o777).toBe(0o600)
+      expect(idempotencySecret.mode & 0o777).toBe(0o600)
     }
 
     const secretDocument = JSON.parse(await readFile(join(dataRoot, "runtime-secrets.json"), "utf8")) as {
@@ -304,6 +306,21 @@ describe("Pippit local runtime bootstrap", () => {
     expectToolCallError(result, "missing_encryption_keys")
     await expect(readFile(storePath, "utf8")).resolves.toBe("{\"existing\":true}\n")
     await expect(lstat(join(dataRoot, "runtime-secrets.json"))).rejects.toMatchObject({ code: "ENOENT" })
+    await expect(lstat(join(dataRoot, "facade-ready.json"))).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it("does not replace the HMAC key when an idempotency store already exists", async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), "pippit-missing-idempotency-secret-"))
+    cleanupRoots.add(dataRoot)
+    const storePath = join(dataRoot, "idempotency", "mcp-v1.json")
+    await mkdir(dirname(storePath), { mode: 0o700, recursive: true })
+    await writeFile(storePath, "{\"existing\":true}\n", { encoding: "utf8", mode: 0o600 })
+
+    const result = await runPlugin(dataRoot, listAccessKeysRequests())
+
+    expectToolCallError(result, "missing_idempotency_key")
+    await expect(readFile(storePath, "utf8")).resolves.toBe("{\"existing\":true}\n")
+    await expect(lstat(join(dataRoot, "idempotency", "secret-v1.json"))).rejects.toMatchObject({ code: "ENOENT" })
     await expect(lstat(join(dataRoot, "facade-ready.json"))).rejects.toMatchObject({ code: "ENOENT" })
   })
 

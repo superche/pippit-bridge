@@ -19,6 +19,7 @@ import type {
   PippitVideoModelList,
 } from "./contracts.ts"
 import { PippitFacadeError } from "./client.ts"
+import type { IdempotencyStore } from "@pippit-bridge/core"
 import {
   createPippitAccessKeyEnrollmentServer,
   type PippitAccessKeyEnrollmentBackend,
@@ -99,6 +100,8 @@ export interface PippitToolRuntimeOptions {
   readonly enrollmentPort?: number
   readonly enrollmentServer?: PippitAccessKeyEnrollmentBackend
   readonly enrollmentTtlMs?: number
+  readonly idempotencyScope?: string
+  readonly idempotencyStore?: IdempotencyStore
   readonly managementClient?: PippitFacadeManagementBackend
   readonly maxDownloadBytes?: number
   readonly outputRoot?: string
@@ -233,7 +236,7 @@ export const PIPPIT_TOOL_DEFINITIONS: readonly PippitToolDefinition[] = [
           type: "array",
         },
         idempotency_key: {
-          description: "Required caller-chosen key for process-local deduplication. Reuse only for the exact same request.",
+          description: "Optional recovery key. Reuse it only when retrying the exact same submission after an abnormal interruption.",
           maxLength: 200,
           minLength: 1,
           type: "string",
@@ -250,7 +253,7 @@ export const PIPPIT_TOOL_DEFINITIONS: readonly PippitToolDefinition[] = [
         seed: { maximum: 4294967295, minimum: -1, type: "integer" },
         thread_id: { description: "Optional Pippit thread to continue through the facade.", type: "string" },
       },
-      required: ["idempotency_key", "model", "prompt"],
+      required: ["model", "prompt"],
       type: "object",
     },
     name: "pippit_generate_video",
@@ -347,7 +350,12 @@ export const PIPPIT_TOOL_DEFINITIONS: readonly PippitToolDefinition[] = [
           type: "array",
         },
         byok_id: { description: "Optional facade-managed BYOK credential identifier.", type: "string" },
-        idempotency_key: { maxLength: 200, minLength: 1, type: "string" },
+        idempotency_key: {
+          description: "Optional recovery key. Reuse it only after an abnormal interruption of this exact regeneration.",
+          maxLength: 200,
+          minLength: 1,
+          type: "string",
+        },
         model: { minLength: 1, type: "string" },
         prompt: { description: "Optional overall instruction for the regenerated video.", maxLength: 20000, minLength: 1, type: "string" },
         resolution: { type: "string" },
@@ -365,7 +373,7 @@ export const PIPPIT_TOOL_DEFINITIONS: readonly PippitToolDefinition[] = [
         source_job_id: { minLength: 1, type: "string" },
         thread_id: { type: "string" },
       },
-      required: ["annotations", "idempotency_key", "model", "segment", "source_job_id"],
+      required: ["annotations", "model", "segment", "source_job_id"],
       type: "object",
     },
     name: "pippit_edit_video_segment",
@@ -525,6 +533,10 @@ function nonEmptyString(value: unknown, name: string, maximum = 8_192): string {
   return normalized
 }
 
+function idempotencyKey(value: unknown): string {
+  return nonEmptyString(value, "idempotency_key", 200)
+}
+
 function optionalInteger(value: unknown, name: string, minimum: number, maximum: number): number | undefined {
   if (value === undefined) return undefined
   if (!Number.isSafeInteger(value) || Number(value) < minimum || Number(value) > maximum) {
@@ -629,7 +641,7 @@ function parseGenerateInput(value: unknown): PippitGenerateVideoToolInput {
     ...(value.byok_id === undefined ? {} : { byok_id: nonEmptyString(value.byok_id, "byok_id", 256) }),
     ...(value.duration === undefined ? {} : { duration: optionalInteger(value.duration, "duration", 1, 3_600) as number }),
     ...(frameImages === undefined ? {} : { frame_images: frameImages }),
-    idempotency_key: nonEmptyString(value.idempotency_key, "idempotency_key", 200),
+    ...(value.idempotency_key === undefined ? {} : { idempotency_key: idempotencyKey(value.idempotency_key) }),
     ...(inputReferences === undefined ? {} : { input_references: inputReferences }),
     model: nonEmptyString(value.model, "model", 256),
     prompt,
@@ -697,7 +709,7 @@ function parseEditInput(value: unknown): PippitEditVideoSegmentToolInput {
   return {
     annotations,
     ...(value.byok_id === undefined ? {} : { byok_id: nonEmptyString(value.byok_id, "byok_id", 256) }),
-    idempotency_key: nonEmptyString(value.idempotency_key, "idempotency_key", 200),
+    ...(value.idempotency_key === undefined ? {} : { idempotency_key: idempotencyKey(value.idempotency_key) }),
     model: nonEmptyString(value.model, "model", 256),
     ...(prompt === undefined ? {} : { prompt }),
     ...(value.resolution === undefined ? {} : { resolution: nonEmptyString(value.resolution, "resolution", 64) }),
@@ -926,6 +938,9 @@ export function createPippitToolRuntime(options: PippitToolRuntimeOptions): Pipp
   if (options.managementClient === undefined && options.enrollmentServer !== undefined) {
     throw new Error("enrollmentServer requires managementClient.")
   }
+  if (options.idempotencyStore !== undefined && !options.idempotencyScope?.trim()) {
+    throw new Error("idempotencyScope is required when idempotencyStore is configured.")
+  }
   const outputRoot = resolve(options.outputRoot ?? PIPPIT_DEFAULT_OUTPUT_DIRECTORY)
   const dedupe = new Map<string, DedupeEntry>()
   const enrollmentServer = options.managementClient === undefined
@@ -937,11 +952,12 @@ export function createPippitToolRuntime(options: PippitToolRuntimeOptions): Pipp
       })
 
   const submit = (
-    idempotencyKey: string,
+    idempotencyKey: string | undefined,
     operation: "edit" | "generate",
     request: PippitVideoEditRequest | PippitVideoGenerateRequest,
     create: () => Promise<PippitVideoGenerationJob>,
   ): Promise<PippitVideoGenerationJob> => {
+    if (idempotencyKey === undefined) return create()
     const fingerprint = JSON.stringify({ operation, request })
     const existing = dedupe.get(idempotencyKey)
     if (existing !== undefined) {
@@ -957,9 +973,48 @@ export function createPippitToolRuntime(options: PippitToolRuntimeOptions): Pipp
       }
       dedupe.delete(settledKey)
     }
+    const durableSubmission = async (): Promise<PippitVideoGenerationJob> => {
+      if (options.idempotencyStore === undefined) return create()
+      const begun = await options.idempotencyStore.begin({
+        key: idempotencyKey,
+        operation: operation === "generate" ? "mcp_generate_video" : "mcp_edit_video",
+        request,
+        scope: options.idempotencyScope as string,
+      })
+      if (begun.kind === "replay") return begun.response as PippitVideoGenerationJob
+      if (begun.kind === "conflict") {
+        throw new ToolInputError("idempotency_key was already used for a different recovery request.")
+      }
+      if (begun.kind === "in_progress") {
+        throw new ToolInputError(`The recovery request for this idempotency_key is still ${begun.phase}.`)
+      }
+      if (begun.kind === "indeterminate") {
+        throw new ToolInputError("The previous submission may have reached Pippit. Do not retry automatically; inspect the original task first.")
+      }
+      if (begun.kind === "failed") {
+        throw new ToolInputError(`The previous recovery request failed (${begun.errorCode}).`)
+      }
+      await options.idempotencyStore.markSubmitting(begun.recordId)
+      let response: PippitVideoGenerationJob
+      try {
+        response = await create()
+      } catch (error) {
+        const ambiguous = !(error instanceof PippitFacadeError) ||
+          ["ABORTED", "INVALID_RESPONSE", "NETWORK_ERROR", "TIMEOUT"].includes(error.code)
+        if (ambiguous) await options.idempotencyStore.markIndeterminate(begun.recordId)
+        else await options.idempotencyStore.markFailed(begun.recordId, error.code.toLowerCase())
+        throw error
+      }
+      try {
+        await options.idempotencyStore.markSubmitted(begun.recordId, response)
+      } catch {
+        throw new ToolInputError("Pippit accepted the task, but its recovery record could not be saved. Do not retry automatically.")
+      }
+      return response
+    }
     const entry: DedupeEntry = {
       fingerprint,
-      promise: create(),
+      promise: durableSubmission(),
       settled: false,
     }
     dedupe.set(idempotencyKey, entry)
@@ -1050,7 +1105,7 @@ export function createPippitToolRuntime(options: PippitToolRuntimeOptions): Pipp
       }
     },
     async close() {
-      await enrollmentServer?.close()
+      await Promise.all([enrollmentServer?.close(), options.idempotencyStore?.close()])
     },
     listTools() {
       return options.managementClient === undefined

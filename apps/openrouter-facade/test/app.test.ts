@@ -473,6 +473,7 @@ describe("OpenRouter video facade", () => {
       $ref: "#/components/parameters/OptionalFacadeApiKeyHash",
     })
     expect(response.json().paths["/api/v1/videos/edits"]).toHaveProperty("post")
+    expect(response.json().components.parameters).not.toHaveProperty("IdempotencyKey")
     expect(response.json().components.schemas.VideoEditRequest.required).toEqual([
       "model",
       "segment",
@@ -512,6 +513,20 @@ describe("OpenRouter video facade", () => {
     expect(response.statusCode).toBe(200)
     expect(response.json().data).toHaveLength(4)
     expect(response.json().data[0]).not.toHaveProperty("upstreamModel")
+  })
+
+  it("does not assign idempotency semantics to an unrelated HTTP header", async () => {
+    const harness = createHarness()
+    const request = {
+      headers: { ...bearer(FACADE_KEY), "idempotency-key": "not-a-facade-contract" },
+      method: "POST" as const,
+      payload: { model: "pippit/seedance-2.0", prompt: "two intentional submissions" },
+      url: "/api/v1/videos",
+    }
+
+    expect((await harness.app.inject(request)).statusCode).toBe(202)
+    expect((await harness.app.inject(request)).statusCode).toBe(202)
+    expect(harness.pippit.submitRun).toHaveBeenCalledTimes(2)
   })
 
   it("uploads image, video, and audio with the stored AK before submit_run", async () => {

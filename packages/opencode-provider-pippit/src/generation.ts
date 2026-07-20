@@ -25,6 +25,7 @@ export interface PippitReferenceInput {
 
 export interface GenerateVideoInput {
   readonly accessKey: string
+  readonly afterSubmit?: (result: PippitToolResult) => Promise<void>
   readonly aspectRatio?: string
   readonly duration?: number
   readonly firstFrame?: string
@@ -39,6 +40,7 @@ export interface GenerateVideoInput {
   readonly seed?: number
   readonly signal?: AbortSignal
   readonly waitForCompletion?: boolean
+  readonly beforeSubmit?: () => Promise<void>
 }
 
 export interface GetVideoInput {
@@ -317,6 +319,7 @@ export class PippitVideoService {
     validateGenerateInput(input)
     const model = validateModel(input)
     const references = await prepareReferences(input, this.pippit, this.remoteLoader)
+    await input.beforeSubmit?.()
     const submitted = await this.pippit.submitRun({
       accessKey: input.accessKey,
       request: {
@@ -344,6 +347,7 @@ export class PippitVideoService {
       threadId: submitted.run.threadId,
       ...(submitted.webThreadLink === undefined ? {} : { webThreadLink: submitted.webThreadLink }),
     }
+    await input.afterSubmit?.(base)
     if (input.waitForCompletion === false) return base
     return this.get({
       accessKey: input.accessKey,
