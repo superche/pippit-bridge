@@ -64,11 +64,22 @@ CI 或短期隔离环境可设置 `PIPPIT_ACCESS_KEY`。它覆盖新任务的 ac
 
 ## 本地未发布包验证
 
-在仓库根目录执行。发布包的运行入口是自包含 bundle；只有 OpenCode 宿主 API 保持 external，因此不依赖尚未发布的本仓库 core/MCP 构建：
+直接验证 checkout 时，在仓库根目录构建后让 OpenCode 加载绝对 file URL：
 
 ```bash
-npm pack -w @pippit-bridge/opencode-plugin
-opencode plugin /absolute/path/to/pippit-bridge-opencode-plugin-0.1.2.tgz --global
+npm run build -w @pippit-bridge/opencode-plugin
 ```
+
+```json
+{
+  "plugin": [
+    "file:///absolute/path/to/pippit-bridge/packages/opencode-provider-pippit/dist/plugin.mjs"
+  ]
+}
+```
+
+也可以执行 `npm pack -w @pippit-bridge/opencode-plugin`，再在消费方的 OpenCode dependency 目录用 `npm install /absolute/path/to/pippit-bridge-opencode-plugin-0.1.2.tgz` 安装，并在配置中使用 `@pippit-bridge/opencode-plugin`。OpenCode 1.18.3 的 `opencode plugin <local-tgz>` 会错误地把 tgz 当目录读取 manifest，因此本地 tgz 不使用该 CLI 子命令。
+
+发布包的运行入口是自包含 bundle；只有 OpenCode 宿主 API 保持 external，因此不依赖尚未发布的本仓库 core/MCP 构建。
 
 当前修复在明确确认前不会发布到 npm。
