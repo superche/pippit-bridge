@@ -27,7 +27,7 @@ apps/chatgpt-app ------------------------+
   |-- Apps SDK regeneration widget       |
   `-- short-lived signed media proxy     |
 
-packages/opencode-provider-pippit -------+
+packages/opencode-provider-pippit -------+  (@pippit-bridge/opencode-provider)
   |-- OpenCode AuthHook
   |-- global multi-account AK keyring
   |-- pippit_manage_access_keys
@@ -81,7 +81,7 @@ Local runtime state lives in a platform user-data directory (macOS `~/Library/Ap
 
 The encrypted facade BYOK state stores active credential selections keyed by the runtime Facade API Key SHA-256. This makes the selection consistent across stdio MCP, Codex and the ChatGPT App when they intentionally share one runtime identity. MCP account list/delete also carry that hash only on the server-to-server management hop; the facade filters list results and performs scoped delete checks atomically, while the unscoped Management API retains administrator-wide behavior. An explicit `provider.options.pippit.byok_id` still wins. Without an explicit id, an active selection is fail-closed: a missing, disabled or ineligible selected credential is not silently replaced by another account. Existing signed job ids remain bound to the credential/key version used at submission.
 
-The Codex plugin root is `packages/mcp-server-pippit`. Its `.codex-plugin/plugin.json`, `.mcp.json`, `plugin-entry.mjs`, skills, assets, stdio runtime, and bundled local Facade are installed as one self-contained unit. The shim prefers compiled `dist/stdio.js` in an npm package and falls back to `src/stdio.ts` in an unbuilt repo checkout; a packaged install neither resolves monorepo siblings nor runs `npm install` on first start. The repo marketplace at `.agents/plugins/marketplace.json` points to that package; no second copy of the MCP implementation is maintained. Codex has no trusted arbitrary postinstall/secret-injection surface here, so automatic setup occurs on first capability use.
+The Codex plugin root is `packages/mcp-server-pippit`. Its `.codex-plugin/plugin.json`, `.mcp.json`, `plugin-entry.mjs`, skills, assets, stdio runtime, and bundled local Facade are installed as one self-contained unit. The shim prefers compiled `dist/stdio.js` in an npm package and falls back to `src/stdio.ts` in an unbuilt repo checkout; a packaged install neither resolves monorepo siblings nor runs `npm install` on first start. The public GitHub marketplace at `.agents/plugins/marketplace.json` resolves the plugin from the versioned `@pippit-bridge/mcp-server` npm tarball; no local filesystem path is part of the end-user install contract. Codex has no trusted arbitrary postinstall/secret-injection surface here, so automatic setup occurs on first capability use.
 
 The local ChatGPT App resolves the same user-level Facade and internal media-signing key at server startup, but explicitly removes the Management key before building its configuration. It registers only `/mcp`, a versioned result/regeneration widget resource, the four safe canonical video tools, and the app-only latest-video resolver. Its current `noauth` declaration is a developer-mode boundary for local or controlled-tunnel use. A public, multi-user deployment still requires a reachable HTTPS service, a separately registered real App ID, OAuth 2.1 MCP resource-server validation, scopes, per-user mapping, remote persistence, and a secret manager; local plugin installation cannot create those production identity surfaces.
 

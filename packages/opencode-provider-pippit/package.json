@@ -1,5 +1,5 @@
 {
-  "name": "opencode-provider-pippit",
+  "name": "@pippit-bridge/opencode-provider",
   "version": "0.1.1",
   "description": "OpenCode auth and native video tools for Pippit (小云雀)",
   "type": "module",
@@ -7,6 +7,9 @@
   "sideEffects": false,
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "files": [
     "dist",

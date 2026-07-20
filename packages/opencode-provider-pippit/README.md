@@ -1,4 +1,4 @@
-# opencode-provider-pippit
+# @pippit-bridge/opencode-provider
 
 OpenCode plugin for Pippit (小云雀) video generation. It uses OpenCode's standard plugin surfaces:
 
@@ -11,12 +11,18 @@ Pippit's current public API is an asynchronous media API, not an AI SDK language
 
 ## Install
 
-Add the package to the global or project OpenCode config:
+Install the package into the global OpenCode config:
+
+```bash
+opencode plugin @pippit-bridge/opencode-provider --global
+```
+
+Or add it to the global or project OpenCode config:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-provider-pippit"]
+  "plugin": ["@pippit-bridge/opencode-provider"]
 }
 ```
 
@@ -50,7 +56,7 @@ When Pippit exposes the device-authorization contract described in `docs/opencod
 {
   "plugin": [
     [
-      "opencode-provider-pippit",
+      "@pippit-bridge/opencode-provider",
       {
         "deviceAuthorization": {
           "authorizationURL": "https://xyq.jianying.com/developer/ak/device_authorization",

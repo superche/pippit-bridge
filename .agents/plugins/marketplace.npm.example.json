@@ -1,5 +1,5 @@
 {
-  "name": "pippit-bridge-release",
+  "name": "pippit-bridge",
   "interface": {
     "displayName": "Pippit Bridge"
   },
