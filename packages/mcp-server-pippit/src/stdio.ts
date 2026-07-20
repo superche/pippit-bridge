@@ -53,9 +53,50 @@ export interface PippitStdioServerOptions {
 }
 
 export const PIPPIT_READ_VIDEO_CHUNK_TOOL_NAME = "pippit_read_video_chunk"
+export const PIPPIT_READ_IMAGE_TOOL_NAME = "pippit_read_image"
 export { PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME } from "./widget-lineage.ts"
 
 const MAX_VIDEO_CHUNK_BYTES = 1024 * 1024
+const PIPPIT_READ_IMAGE_TOOL_DEFINITION: PippitToolDefinition = {
+  _meta: {
+    ui: { visibility: ["app"] },
+    "openai/widgetAccessible": true,
+  },
+  annotations: {
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+    readOnlyHint: true,
+    title: "Read saved image",
+  },
+  description: "Read one persistent local Pippit image for the Pippit image widget.",
+  inputSchema: {
+    additionalProperties: false,
+    properties: {
+      resource_uri: {
+        pattern: "^pippit-image://artifact/[a-f0-9]{64}\\.(?:jpg|png|webp)$",
+        type: "string",
+      },
+    },
+    required: ["resource_uri"],
+    type: "object",
+  },
+  name: PIPPIT_READ_IMAGE_TOOL_NAME as PippitToolDefinition["name"],
+  outputSchema: {
+    additionalProperties: false,
+    properties: {
+      blob: { contentEncoding: "base64", type: "string" },
+      bytes: { minimum: 1, type: "integer" },
+      filename: { type: "string" },
+      mime_type: { enum: ["image/jpeg", "image/png", "image/webp"], type: "string" },
+      resource_uri: { type: "string" },
+    },
+    required: ["resource_uri", "filename", "bytes", "mime_type", "blob"],
+    type: "object",
+  },
+  title: "Read saved image",
+}
+
 const PIPPIT_READ_VIDEO_CHUNK_TOOL_DEFINITION: PippitToolDefinition = {
   _meta: {
     ui: { visibility: ["app"] },
@@ -131,6 +172,17 @@ interface ReadVideoChunkInput {
   readonly length: number
   readonly offset: number
   readonly resourceUri: string
+}
+
+function parseReadImageInput(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  if (
+    Object.keys(record).length !== 1 ||
+    typeof record.resource_uri !== "string" ||
+    !/^pippit-image:\/\/artifact\/[a-f0-9]{64}\.(?:jpg|png|webp)$/u.test(record.resource_uri)
+  ) return undefined
+  return record.resource_uri
 }
 
 function parseResolveLatestVideoInput(value: unknown): string | undefined {
@@ -211,6 +263,20 @@ function localMediaUnavailable(): PippitMcpCallToolResult {
     structuredContent: {
       error: {
         code: "local_media_unavailable",
+        message,
+      },
+    },
+  }
+}
+
+function localImageUnavailable(): PippitMcpCallToolResult {
+  const message = "The image completed upstream but could not be saved as a local file. Retry only if the user explicitly approves another potentially billable generation."
+  return {
+    content: [{ text: message, type: "text" }],
+    isError: true,
+    structuredContent: {
+      error: {
+        code: "local_image_unavailable",
         message,
       },
     },
@@ -325,6 +391,30 @@ function withWidgetRuntime(
 ): PippitToolRuntime {
   return {
     async callTool(name, argumentsValue) {
+      if (name === PIPPIT_READ_IMAGE_TOOL_NAME) {
+        const resourceUri = parseReadImageInput(argumentsValue)
+        if (resourceUri === undefined) {
+          return localVideoChunkFailure("invalid_arguments", "Invalid saved image request.")
+        }
+        try {
+          const image = await widgetMedia.readImage?.(resourceUri)
+          if (image === undefined) {
+            return localVideoChunkFailure("local_image_unavailable", "The saved local image is unavailable.")
+          }
+          return {
+            content: [],
+            structuredContent: {
+              blob: image.blob,
+              bytes: image.bytes,
+              filename: image.filename,
+              mime_type: image.mimeType,
+              resource_uri: image.resourceUri,
+            },
+          }
+        } catch {
+          return localVideoChunkFailure("local_image_unavailable", "The saved local image is unavailable.")
+        }
+      }
       if (name === PIPPIT_READ_VIDEO_CHUNK_TOOL_NAME) {
         const input = parseReadVideoChunkInput(argumentsValue)
         if (input === undefined) {
@@ -406,9 +496,15 @@ function withWidgetRuntime(
       const result = await toolCall
       await lineageCompletion?.catch(() => undefined)
       try {
-        return await projectPippitWidgetResult(result, (jobId, index) => widgetMedia.preparePreview(jobId, index))
+        return await projectPippitWidgetResult(
+          result,
+          (jobId, index) => widgetMedia.preparePreview(jobId, index),
+          widgetMedia.prepareImage === undefined
+            ? undefined
+            : (data, mimeType) => widgetMedia.prepareImage!(data, mimeType),
+        )
       } catch {
-        return localMediaUnavailable()
+        return name === "pippit_generate_image" ? localImageUnavailable() : localMediaUnavailable()
       }
     },
     async close() {
@@ -421,6 +517,7 @@ function withWidgetRuntime(
     listTools() {
       return [
         ...withPippitWidgetTools(runtime.listTools()),
+        PIPPIT_READ_IMAGE_TOOL_DEFINITION,
         PIPPIT_READ_VIDEO_CHUNK_TOOL_DEFINITION,
         PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_DEFINITION,
       ]

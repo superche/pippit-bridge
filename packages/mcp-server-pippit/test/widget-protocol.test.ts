@@ -34,6 +34,7 @@ describe("Pippit widget protocol", () => {
     expect((imageMetadata?.ui as { resourceUri?: string } | undefined)?.resourceUri).toBe(PIPPIT_IMAGE_WIDGET_URI)
     expect(imageMetadata?.["ui/resourceUri"]).toBe(PIPPIT_IMAGE_WIDGET_URI)
     expect(imageMetadata?.["openai/outputTemplate"]).toBe(PIPPIT_IMAGE_WIDGET_URI)
+    expect(imageMetadata?.["openai/widgetAccessible"]).toBe(true)
     for (const name of ["pippit_generate_video", "pippit_get_video", "pippit_edit_video_segment"]) {
       const metadata = definitions.find((definition) => definition.name === name)?._meta
       expect((metadata?.ui as { resourceUri?: string } | undefined)?.resourceUri).toBe(PIPPIT_WIDGET_URI)
@@ -45,6 +46,37 @@ describe("Pippit widget protocol", () => {
     }
     expect(definitions.find((definition) => definition.name === "pippit_list_video_models")?._meta).toBeUndefined()
     expect(definitions.find((definition) => definition.name === "pippit_download_video")?._meta).toBeUndefined()
+  })
+
+  it("projects Codex images to persistent local resource identities without exposing local paths", async () => {
+    const prepareImage = vi.fn(async () => ({
+      bytes: 5,
+      filename: `pippit-image-${"a".repeat(64)}.jpg`,
+      localPath: "/Users/test/Movies/Pippit/private-image.jpg",
+      mimeType: "image/jpeg",
+      resourceUri: `pippit-image://artifact/${"a".repeat(64)}.jpg`,
+    }))
+    const projected = await projectPippitWidgetResult({
+      content: [
+        { text: "Generated 1 image.", type: "text" },
+        { data: "aW1hZ2U=", mimeType: "image/jpeg", type: "image" },
+      ],
+      structuredContent: { created: 1_780_000_000, model: "pippit/seedream-5.0" },
+    }, undefined, prepareImage)
+
+    expect(prepareImage).toHaveBeenCalledWith("aW1hZ2U=", "image/jpeg")
+    expect(projected._meta?.["pippit/images"]).toEqual([
+      {
+        bytes: 5,
+        filename: `pippit-image-${"a".repeat(64)}.jpg`,
+        index: 0,
+        kind: "image",
+        mime_type: "image/jpeg",
+        resource_uri: `pippit-image://artifact/${"a".repeat(64)}.jpg`,
+      },
+    ])
+    expect(JSON.stringify(projected._meta)).not.toContain("localPath")
+    expect(JSON.stringify(projected._meta)).not.toContain("/Users/test")
   })
 
   it("projects generated images into widget-only downloadable attachments", async () => {
@@ -150,7 +182,10 @@ describe("Pippit widget protocol", () => {
     })
     expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("Download original")
     expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("toolResponseMetadata")
+    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain('request("resources/read"')
+    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain('"pippit_read_image"')
     expect(PIPPIT_IMAGE_WIDGET_HTML).not.toContain("http://127.0.0.1")
+    expect(PIPPIT_IMAGE_WIDGET_HTML).not.toContain("file://")
     const resource = pippitWidgetReadResource(PIPPIT_WIDGET_URI)
     expect(resource).toMatchObject({
       contents: [{ mimeType: PIPPIT_WIDGET_MIME_TYPE, text: PIPPIT_WIDGET_HTML, uri: PIPPIT_WIDGET_URI }],

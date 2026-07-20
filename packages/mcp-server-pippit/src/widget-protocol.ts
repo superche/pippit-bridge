@@ -70,6 +70,19 @@ export type PippitWidgetPreviewUrlFactory = (
   index: number,
 ) => Promise<PippitWidgetPreparedPreview | string> | PippitWidgetPreparedPreview | string
 
+export interface PippitWidgetPreparedImage {
+  readonly bytes: number
+  readonly filename: string
+  readonly localPath: string
+  readonly mimeType: string
+  readonly resourceUri: string
+}
+
+export type PippitWidgetImageFactory = (
+  data: string,
+  mimeType: string,
+) => Promise<PippitWidgetPreparedImage> | PippitWidgetPreparedImage
+
 export interface PippitWidgetResourceMetadataOptions {
   readonly domain?: string
   readonly origin?: string
@@ -141,30 +154,44 @@ function imageExtension(mimeType: string): string {
   return "png"
 }
 
-function widgetImages(result: PippitMcpCallToolResult): readonly Readonly<Record<string, unknown>>[] {
+async function widgetImages(
+  result: PippitMcpCallToolResult,
+  prepareImage?: PippitWidgetImageFactory,
+): Promise<readonly Readonly<Record<string, unknown>>[]> {
   if (result.isError === true) return []
   const created = typeof result.structuredContent?.created === "number" &&
     Number.isSafeInteger(result.structuredContent.created)
     ? result.structuredContent.created
     : 0
-  return result.content
+  const images = result.content
     .filter((block): block is Extract<(typeof result.content)[number], { type: "image" }> => block.type === "image")
-    .map((block, index) => ({
-      data: block.data,
-      filename: `pippit-image-${created}-${index + 1}.${imageExtension(block.mimeType)}`,
+  const projected: Readonly<Record<string, unknown>>[] = []
+  for (const [index, block] of images.entries()) {
+    const prepared = await prepareImage?.(block.data, block.mimeType)
+    projected.push({
+      ...(prepared === undefined
+        ? { data: block.data }
+        : {
+            bytes: prepared.bytes,
+            resource_uri: prepared.resourceUri,
+          }),
+      filename: prepared?.filename ?? `pippit-image-${created}-${index + 1}.${imageExtension(block.mimeType)}`,
       index,
       kind: "image",
-      mime_type: block.mimeType,
-    }))
+      mime_type: prepared?.mimeType ?? block.mimeType,
+    })
+  }
+  return projected
 }
 
 export async function projectPippitWidgetResult(
   result: PippitMcpCallToolResult,
   previewUrl?: PippitWidgetPreviewUrlFactory,
+  prepareImage?: PippitWidgetImageFactory,
 ): Promise<PippitMcpCallToolResult> {
   const rawJob = extractPippitWidgetJob(result.structuredContent)
   const previews: PippitWidgetMediaPreview[] = []
-  const images = widgetImages(result)
+  const images = await widgetImages(result, prepareImage)
   if (previewUrl !== undefined && result.isError !== true && rawJob?.status === "completed") {
     for (let index = 0; index < (rawJob.unsigned_urls?.length ?? 0); index += 1) {
       const prepared = await previewUrl(rawJob.id, index)
@@ -183,7 +210,7 @@ export async function projectPippitWidgetResult(
   }
   const sanitizedMetaValue = sanitizePippitWidgetValue(result._meta ?? {}) as Readonly<Record<string, unknown>>
   const sanitizedMeta = Object.fromEntries(
-    Object.entries(sanitizedMetaValue).filter(([key]) => key !== "pippit/media"),
+    Object.entries(sanitizedMetaValue).filter(([key]) => key !== "pippit/images" && key !== "pippit/media"),
   )
   return {
     content: sanitizeContent(result.content),
@@ -222,6 +249,7 @@ export function withPippitWidgetTools(
           "openai/outputTemplate": PIPPIT_IMAGE_WIDGET_URI,
           "openai/toolInvocation/invoked": invoked,
           "openai/toolInvocation/invoking": invoking,
+          "openai/widgetAccessible": true,
         },
       }
     }
