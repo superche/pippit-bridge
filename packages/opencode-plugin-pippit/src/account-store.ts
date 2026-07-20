@@ -1,25 +1,22 @@
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import { constants } from "node:fs"
 import { lstat, mkdir, open, rename, unlink, type FileHandle } from "node:fs/promises"
 import { basename, dirname, isAbsolute, join } from "node:path"
 import { z } from "zod"
 import {
   accessKeyFingerprint,
-  isManagedAuthSentinel,
   maskedAccessKey,
   normalizeAccessKey,
 } from "./access-key.js"
 
 const STORE_FORMAT = "pippit-opencode-account-store"
-const STORE_VERSION = 1
+const STORE_VERSION = 2
 const MAX_ACCOUNTS = 100
 const MAX_FILE_BYTES = 8 * 1024 * 1024
 const MAX_RUN_BINDINGS = 1_000
 const MAX_TOMBSTONES = 100
 const LOCK_RETRY_ATTEMPTS = 40
 const LOCK_RETRY_DELAY_MS = 25
-
-export const PIPPIT_ACCOUNT_NAME_METADATA = "account_name"
 
 function containsControlCharacter(value: string): boolean {
   return /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(value)
@@ -52,13 +49,6 @@ const storedAccountSchema = z
     updated_at: z.iso.datetime(),
   })
   .strict()
-const pendingConfigurationSchema = z
-  .object({
-    account_name: accountNameSchema,
-    baseline_auth_marker: z.string().min(1).max(160).nullable(),
-    created_at: z.iso.datetime(),
-  })
-  .strict()
 const storedRunBindingSchema = z
   .object({
     account_id: z.uuid(),
@@ -73,20 +63,15 @@ const storedTombstoneSchema = z
     fingerprint: fingerprintSchema,
   })
   .strict()
-const storedStateSchema = z
-  .object({
-    accounts: z.array(storedAccountSchema).max(MAX_ACCOUNTS),
-    active_account_id: z.uuid().nullable(),
-    format: z.literal(STORE_FORMAT),
-    last_seen_auth_marker: z.string().min(1).max(160).nullable(),
-    pending_configuration: pendingConfigurationSchema.nullable(),
-    revision: z.number().int().nonnegative(),
-    run_bindings: z.array(storedRunBindingSchema).max(MAX_RUN_BINDINGS),
-    tombstones: z.array(storedTombstoneSchema).max(MAX_TOMBSTONES),
-    version: z.literal(STORE_VERSION),
-  })
-  .strict()
-  .superRefine((state, context) => {
+function validateStateRelationships(
+  state: {
+    readonly accounts: readonly z.output<typeof storedAccountSchema>[]
+    readonly active_account_id: string | null
+    readonly run_bindings: readonly z.output<typeof storedRunBindingSchema>[]
+    readonly tombstones: readonly z.output<typeof storedTombstoneSchema>[]
+  },
+  context: z.core.$RefinementCtx,
+): void {
     const ids = state.accounts.map((account) => account.id)
     if (new Set(ids).size !== ids.length) {
       context.addIssue({ code: "custom", message: "Pippit account ids must be unique." })
@@ -120,17 +105,45 @@ const storedStateSchema = z
     if (tombstoneFingerprints.some((fingerprint) => fingerprints.includes(fingerprint))) {
       context.addIssue({ code: "custom", message: "Pippit tombstones must reference deleted Access Keys." })
     }
+}
+
+const storedStateSchema = z
+  .object({
+    accounts: z.array(storedAccountSchema).max(MAX_ACCOUNTS),
+    active_account_id: z.uuid().nullable(),
+    format: z.literal(STORE_FORMAT),
+    revision: z.number().int().nonnegative(),
+    run_bindings: z.array(storedRunBindingSchema).max(MAX_RUN_BINDINGS),
+    tombstones: z.array(storedTombstoneSchema).max(MAX_TOMBSTONES),
+    version: z.literal(STORE_VERSION),
   })
+  .strict()
+  .superRefine(validateStateRelationships)
+
+const legacyStoredStateSchema = z
+  .object({
+    accounts: z.array(storedAccountSchema).max(MAX_ACCOUNTS),
+    active_account_id: z.uuid().nullable(),
+    format: z.literal(STORE_FORMAT),
+    last_seen_auth_marker: z.string().min(1).max(160).nullable(),
+    pending_configuration: z
+      .object({
+        account_name: accountNameSchema,
+        baseline_auth_marker: z.string().min(1).max(160).nullable(),
+        created_at: z.iso.datetime(),
+      })
+      .strict()
+      .nullable(),
+    revision: z.number().int().nonnegative(),
+    run_bindings: z.array(storedRunBindingSchema).max(MAX_RUN_BINDINGS),
+    tombstones: z.array(storedTombstoneSchema).max(MAX_TOMBSTONES),
+    version: z.literal(1),
+  })
+  .strict()
 
 type StoredAccount = z.output<typeof storedAccountSchema>
 export type StoredPippitAccountState = z.output<typeof storedStateSchema>
 type StoredState = StoredPippitAccountState
-
-export interface StoredOpenCodeAuth {
-  readonly key?: string
-  readonly metadata?: Readonly<Record<string, string>>
-  readonly type: string
-}
 
 export interface PippitAccountSelector {
   readonly accountId?: string
@@ -149,7 +162,6 @@ export interface PippitAccountSummary {
 export interface PippitAccountList {
   readonly accounts: readonly PippitAccountSummary[]
   readonly activeAccountId?: string
-  readonly pendingAccountName?: string
 }
 
 export interface PippitCredentialSelection {
@@ -168,7 +180,6 @@ export interface DeletedPippitAccount {
 export interface PippitAccountInspection {
   readonly account: PippitAccountSummary
   readonly boundRunCount: number
-  readonly fingerprint: string
 }
 
 export interface PippitAccountInspectionOptions {
@@ -208,13 +219,26 @@ function emptyState(): StoredState {
     accounts: [],
     active_account_id: null,
     format: STORE_FORMAT,
-    last_seen_auth_marker: null,
-    pending_configuration: null,
     revision: 0,
     run_bindings: [],
     tombstones: [],
     version: STORE_VERSION,
   }
+}
+
+function parseStoredState(value: unknown): StoredState {
+  const current = storedStateSchema.safeParse(value)
+  if (current.success) return current.data
+  const legacy = legacyStoredStateSchema.parse(value)
+  return storedStateSchema.parse({
+    accounts: legacy.accounts,
+    active_account_id: legacy.active_account_id,
+    format: legacy.format,
+    revision: legacy.revision + 1,
+    run_bindings: legacy.run_bindings,
+    tombstones: legacy.tombstones,
+    version: STORE_VERSION,
+  })
 }
 
 function cloneState(state: StoredState): StoredState {
@@ -231,40 +255,6 @@ function isNodeError(error: unknown, code: string): boolean {
 
 function accountNameKey(value: string): string {
   return normalizeAccountName(value).toLocaleLowerCase("en-US")
-}
-
-function authMetadataAccountName(auth: StoredOpenCodeAuth): string | undefined {
-  const value = auth.metadata?.[PIPPIT_ACCOUNT_NAME_METADATA]
-  if (value === undefined) return undefined
-  try {
-    return normalizeAccountName(value)
-  } catch {
-    return undefined
-  }
-}
-
-function authMarker(accessKey: string, accountName: string | undefined): string {
-  const metadataDigest = createHash("sha256").update(accountName ?? "", "utf8").digest("hex")
-  return `${accessKeyFingerprint(accessKey)}.${metadataDigest}`
-}
-
-function storedAuthValue(auth: StoredOpenCodeAuth | undefined): {
-  readonly accessKey: string
-  readonly accountName?: string
-  readonly fingerprint: string
-  readonly marker: string
-} | undefined {
-  if (auth?.type !== "api" || typeof auth.key !== "string" || isManagedAuthSentinel(auth.key)) {
-    return undefined
-  }
-  const accessKey = normalizeAccessKey(auth.key)
-  const accountName = authMetadataAccountName(auth)
-  return {
-    accessKey,
-    ...(accountName === undefined ? {} : { accountName }),
-    fingerprint: accessKeyFingerprint(accessKey),
-    marker: authMarker(accessKey, accountName),
-  }
 }
 
 function publicAccount(account: StoredAccount, activeAccountId: string | null): PippitAccountSummary {
@@ -376,10 +366,6 @@ export function normalizeAccountName(value: string): string {
   } catch {
     throw new Error("Pippit account name must be 1 to 80 visible characters.")
   }
-}
-
-export function storedAuthFingerprint(auth: StoredOpenCodeAuth | undefined): string | undefined {
-  return storedAuthValue(auth)?.fingerprint
 }
 
 export class MemoryPippitAccountStore implements PippitAccountStore {
@@ -530,7 +516,7 @@ export class FilePippitAccountStore implements PippitAccountStore {
         throw new Error("The Pippit account store has an invalid size.")
       }
       const value: unknown = JSON.parse(await handle.readFile({ encoding: "utf8" }))
-      return storedStateSchema.parse(value)
+      return parseStoredState(value)
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("The Pippit account store")) throw error
       throw new Error("The Pippit account store is malformed.")
@@ -587,56 +573,14 @@ export class PippitAccountManager {
     this.now = dependencies.now ?? (() => new Date())
   }
 
-  async beginConfiguration(accountName: string, auth: StoredOpenCodeAuth | undefined): Promise<void> {
-    const name = normalizeAccountName(accountName)
-    const observedBaselineMarker = storedAuthValue(auth)?.marker
-    const createdAt = this.timestamp()
-    await this.store.update((state) => {
-      const baselineMarker = observedBaselineMarker ?? state.last_seen_auth_marker
-      return {
-        result: undefined,
-        state: changedState(state, {
-          pending_configuration: {
-            account_name: name,
-            baseline_auth_marker: baselineMarker,
-            created_at: createdAt,
-          },
-        }),
-      }
-    })
-  }
-
-  async reconcile(auth: StoredOpenCodeAuth | undefined): Promise<PippitAccountSummary | undefined> {
-    const value = storedAuthValue(auth)
-    if (value === undefined) return undefined
+  async addAccount(accountName: string, accessKey: string): Promise<PippitAccountSummary> {
     const now = this.timestamp()
     return this.store.update((state) => {
-      const pending = state.pending_configuration
-      if (pending !== null && value.marker === pending.baseline_auth_marker) {
-        return { result: undefined, state }
+      const upserted = upsertAccount(state, { accessKey, accountName, now })
+      return {
+        result: publicAccount(upserted.account, upserted.state.active_account_id),
+        state: upserted.state,
       }
-      if (pending === null && value.marker === state.last_seen_auth_marker) {
-        return { result: undefined, state }
-      }
-      if (
-        pending === null &&
-        state.tombstones.some((tombstone) => tombstone.fingerprint === value.fingerprint)
-      ) {
-        return {
-          result: undefined,
-          state: changedState(state, { last_seen_auth_marker: value.marker }),
-        }
-      }
-      const accountName =
-        pending?.account_name ??
-        value.accountName ??
-        `Pippit ${maskedAccessKey(value.accessKey)} ${value.fingerprint.slice(0, 8)}`
-      const upserted = upsertAccount(state, { accessKey: value.accessKey, accountName, now })
-      const next = changedState(upserted.state, {
-        last_seen_auth_marker: value.marker,
-        pending_configuration: null,
-      })
-      return { result: publicAccount(upserted.account, next.active_account_id), state: next }
     })
   }
 
@@ -645,20 +589,12 @@ export class PippitAccountManager {
     return {
       accounts: state.accounts.map((account) => publicAccount(account, state.active_account_id)),
       ...(state.active_account_id === null ? {} : { activeAccountId: state.active_account_id }),
-      ...(state.pending_configuration === null
-        ? {}
-        : { pendingAccountName: state.pending_configuration.account_name }),
     }
   }
 
   async hasManagedState(): Promise<boolean> {
     const state = await this.store.read()
-    return (
-      state.revision > 0 ||
-      state.accounts.length > 0 ||
-      state.pending_configuration !== null ||
-      state.tombstones.length > 0
-    )
+    return state.revision > 0 || state.accounts.length > 0 || state.tombstones.length > 0
   }
 
   async resolveActive(): Promise<PippitCredentialSelection | undefined> {
@@ -684,7 +620,6 @@ export class PippitAccountManager {
     return {
       account: publicAccount(account, state.active_account_id),
       boundRunCount: state.run_bindings.filter((binding) => binding.account_id === account.id).length,
-      fingerprint: account.fingerprint,
     }
   }
 
@@ -711,9 +646,6 @@ export class PippitAccountManager {
       const next = changedState(state, {
         accounts,
         active_account_id: account.id === state.active_account_id ? null : state.active_account_id,
-        last_seen_auth_marker: state.last_seen_auth_marker?.startsWith(`${account.fingerprint}.`)
-          ? null
-          : state.last_seen_auth_marker,
         tombstones,
       })
       return {

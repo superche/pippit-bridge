@@ -66,7 +66,10 @@ describe("Pippit loopback Access Key enrollment", () => {
 
       const replay = await fetch(enrollment.enrollment_url, {
         body: new URLSearchParams({ access_key: "another-secret" }),
-        headers: { "content-type": "application/x-www-form-urlencoded" },
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: new URL(enrollment.enrollment_url).origin,
+        },
         method: "POST",
       })
       expect(replay.status).toBe(410)
@@ -95,6 +98,12 @@ describe("Pippit loopback Access Key enrollment", () => {
         expect(rejected.status).toBe(403)
         await expect(rejected.text()).resolves.toContain("请求来源校验失败")
       }
+      const missingOrigin = await fetch(enrollment.enrollment_url, {
+        body: new URLSearchParams({ access_key: "pippit-super-secret" }),
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        method: "POST",
+      })
+      expect(missingOrigin.status).toBe(403)
       expect(managementClient.addAccessKey).not.toHaveBeenCalled()
 
       const accepted = await submit(new URL(enrollment.enrollment_url).origin)
@@ -195,7 +204,10 @@ describe("Pippit loopback Access Key enrollment", () => {
       const enrollment = await server.createEnrollment("limit")
       const response = await fetch(enrollment.enrollment_url, {
         body: new URLSearchParams({ access_key: "x".repeat(256) }),
-        headers: { "content-type": "application/x-www-form-urlencoded" },
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: new URL(enrollment.enrollment_url).origin,
+        },
         method: "POST",
       })
       expect(response.status).toBe(413)

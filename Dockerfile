@@ -13,7 +13,7 @@ COPY package.json package-lock.json ./
 COPY apps/openrouter-facade/package.json ./apps/openrouter-facade/package.json
 COPY packages/core/package.json ./packages/core/package.json
 COPY packages/sdk/package.json ./packages/sdk/package.json
-COPY packages/opencode-provider-pippit/package.json ./packages/opencode-provider-pippit/package.json
+COPY packages/opencode-plugin-pippit/package.json ./packages/opencode-plugin-pippit/package.json
 RUN npm ci --omit=dev --ignore-scripts
 COPY --from=build /app/apps/openrouter-facade/dist ./apps/openrouter-facade/dist
 COPY --from=build /app/packages/core/dist ./packages/core/dist

@@ -4,7 +4,7 @@
 
 ## Scope and positioning
 
-Pippit Bridge is a **single-user, local-first plugin bridge**. Its primary products are the Codex `pippit-video` plugin and `opencode-provider-pippit`; the loopback Facade and local ChatGPT developer app are supporting integration surfaces. This design therefore uses private user-level files and a single-writer process model. It does not introduce a database, distributed lock, multi-tenant namespace, OAuth identity, or cross-machine coordination.
+Pippit Bridge is a **single-user, local-first plugin bridge**. Its primary products are the Codex `pippit-video` plugin and `@pippit-bridge/opencode-plugin`; the loopback Facade and local ChatGPT developer app are supporting integration surfaces. This design therefore uses private user-level files and a single-writer process model. It does not introduce a database, distributed lock, multi-tenant namespace, OAuth identity, or cross-machine coordination.
 
 Codex and generic stdio MCP submit through the Facade but own recovery state in the MCP module. OpenCode submits directly to Pippit and owns a separate ledger over the same record contract. Neither plugin changes the Facade/OpenRouter protocol merely to share recovery state.
 
