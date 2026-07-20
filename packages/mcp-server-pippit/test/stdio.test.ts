@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { mkdtemp, readFile, readdir, rm, symlink } from "node:fs/promises"
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { PassThrough } from "node:stream"
@@ -33,31 +33,65 @@ describe("Pippit stdio entrypoint", () => {
 
   it("starts the Codex plugin shim through the packaged compiled runtime", async () => {
     const packageRoot = fileURLToPath(new URL("..", import.meta.url))
+    const installedRoot = await mkdtemp(join(tmpdir(), "pippit-installed-plugin-"))
     const manifest = JSON.parse(await readFile(join(packageRoot, ".mcp.json"), "utf8")) as {
       mcpServers?: { "pippit-video"?: { args?: string[]; tool_timeout_sec?: number } }
     }
     expect(manifest.mcpServers?.["pippit-video"]?.args).toEqual(["./plugin-entry.mjs"])
     expect(manifest.mcpServers?.["pippit-video"]?.tool_timeout_sec).toBe(43_200)
 
-    const result = await new Promise<{ code: number | null; stderr: string; stdout: string }>((resolve, reject) => {
-      const child = spawn(process.execPath, [join(packageRoot, "plugin-entry.mjs")], {
-        cwd: packageRoot,
-        env: {
-          PATH: process.env.PATH ?? "",
-          PIPPIT_FACADE_API_KEY: "runtime-test-key",
-          PIPPIT_FACADE_BASE_URL: "http://127.0.0.1:3000",
+    try {
+      await mkdir(join(installedRoot, "dist"), { recursive: true })
+      await Promise.all([
+        cp(join(packageRoot, "package.json"), join(installedRoot, "package.json")),
+        cp(join(packageRoot, "plugin-entry.mjs"), join(installedRoot, "plugin-entry.mjs")),
+        cp(join(packageRoot, "dist", "plugin-stdio.mjs"), join(installedRoot, "dist", "plugin-stdio.mjs")),
+        cp(join(packageRoot, "dist", "local-facade-daemon.mjs"), join(installedRoot, "dist", "local-facade-daemon.mjs")),
+      ])
+      const protocol = [
+        {
+          id: 1,
+          jsonrpc: "2.0",
+          method: "initialize",
+          params: {
+            capabilities: {},
+            clientInfo: { name: "isolated-plugin-test", version: "1" },
+            protocolVersion: "2025-11-25",
+          },
         },
-        stdio: ["pipe", "pipe", "pipe"],
+        { id: 2, jsonrpc: "2.0", method: "tools/list", params: {} },
+      ]
+
+      const result = await new Promise<{ code: number | null; stderr: string; stdout: string }>((resolve, reject) => {
+        const child = spawn(process.execPath, [join(installedRoot, "plugin-entry.mjs")], {
+          cwd: installedRoot,
+          env: {
+            PATH: process.env.PATH ?? "",
+            PIPPIT_FACADE_API_KEY: "runtime-test-key",
+            PIPPIT_FACADE_BASE_URL: "http://127.0.0.1:3000",
+          },
+          stdio: ["pipe", "pipe", "pipe"],
+        })
+        let stderr = ""
+        let stdout = ""
+        child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk })
+        child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk })
+        child.once("error", reject)
+        child.once("close", (code) => resolve({ code, stderr, stdout }))
+        child.stdin.end(`${protocol.map((message) => JSON.stringify(message)).join("\n")}\n`)
       })
-      let stderr = ""
-      let stdout = ""
-      child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk })
-      child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk })
-      child.once("error", reject)
-      child.once("close", (code) => resolve({ code, stderr, stdout }))
-      child.stdin.end()
-    })
-    expect(result).toEqual({ code: 0, stderr: "", stdout: "" })
+      expect(result.code).toBe(0)
+      expect(result.stderr).toBe("")
+      const responses = result.stdout
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { id: number; result?: { serverInfo?: { name?: string }; tools?: { name?: string }[] } })
+      expect(responses.find((response) => response.id === 1)?.result?.serverInfo?.name).toBe("pippit-video")
+      expect(responses.find((response) => response.id === 2)?.result?.tools)
+        .toContainEqual(expect.objectContaining({ name: "pippit_list_video_models" }))
+    } finally {
+      await rm(installedRoot, { force: true, recursive: true })
+    }
   })
 
   it("resolves a regenerated descendant after the original widget is recreated", async () => {

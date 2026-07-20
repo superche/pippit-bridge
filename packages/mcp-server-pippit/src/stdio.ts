@@ -14,6 +14,7 @@ import {
 import { createPippitMcpMessageHandler, type JsonRpcResponse } from "./protocol.ts"
 import {
   PippitLocalRuntimeError,
+  openPippitMcpIdempotencyStore,
   resolvePippitLocalRuntimePaths,
   resolvePippitRuntimeEnvironment,
 } from "./local-runtime.ts"
@@ -40,6 +41,7 @@ import {
   projectPippitWidgetResult,
   withPippitWidgetTools,
 } from "./widget-protocol.ts"
+import type { IdempotencyStore } from "@pippit-bridge/core"
 
 export interface PippitStdioServerOptions {
   readonly env?: NodeJS.ProcessEnv
@@ -223,13 +225,15 @@ interface ConfiguredRuntime {
 
 function createConfiguredRuntime(
   env: NodeJS.ProcessEnv,
+  idempotencyStore: IdempotencyStore,
 ): ConfiguredRuntime {
   const configured = parsePippitMcpOptions(env)
   const managementOptions = facadeManagementClientOptions(configured)
   const client = new PippitFacadeClient(facadeClientOptions(configured))
+  const lineageScope = createHash("sha256").update(configured.facadeApiKey, "utf8").digest("hex")
   return {
     client,
-    lineageScope: createHash("sha256").update(configured.facadeApiKey, "utf8").digest("hex"),
+    lineageScope,
     runtime: createPippitToolRuntime({
       client,
       enrollmentPort: configured.enrollmentPort,
@@ -237,6 +241,8 @@ function createConfiguredRuntime(
       ...(managementOptions === undefined
         ? {}
         : { managementClient: new PippitFacadeManagementClient(managementOptions) }),
+      idempotencyScope: lineageScope,
+      idempotencyStore,
       outputRoot: configured.outputRoot,
     }),
   }
@@ -265,7 +271,10 @@ function createLazyPippitToolRuntime(env: NodeJS.ProcessEnv): {
 
   const initialize = (): Promise<ConfiguredRuntime> => {
     configuredPromise ??= resolvePippitRuntimeEnvironment(env)
-      .then((resolved) => createConfiguredRuntime(resolved.environment))
+      .then(async (resolved) => createConfiguredRuntime(
+        resolved.environment,
+        await openPippitMcpIdempotencyStore(env),
+      ))
       .then((configured) => {
         configuredRuntime = configured
         return configured

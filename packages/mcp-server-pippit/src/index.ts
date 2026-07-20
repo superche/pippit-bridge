@@ -52,9 +52,11 @@ export {
   PIPPIT_LOCAL_RUNTIME_VERSION,
   PippitLocalRuntimeError,
   ensurePippitLocalRuntime,
+  openPippitMcpIdempotencyStore,
   resolvePippitLocalRuntimePaths,
   resolvePippitRuntimeEnvironment,
   type PippitLocalRuntimePaths,
+  type LocalRuntimeIdempotencySecret,
   type PippitResolvedRuntimeEnvironment,
 } from "./local-runtime.ts"
 export {

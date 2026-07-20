@@ -44,6 +44,8 @@ Pippit Bridge 是小云雀（Pippit）的 API gateway 与 adapter monorepo。当
 - `@pippit-bridge/chatgpt-app`：使用 Streamable HTTP `/mcp` 与 Apps SDK widget 的 ChatGPT App。
 - `pippit-video`：从公开 GitHub marketplace 安装的 Codex plugin；公开快照携带 manifest、skill 与启动 shim，运行时使用 npm 上的同一个 stdio MCP server。
 
+**架构定位：这是面向单个本地用户的 plugin bridge，不是多租户 SaaS。** 主要产品面是 Codex `pippit-video` plugin 与 `opencode-provider-pippit`；通用 MCP、loopback Facade 和本地 ChatGPT developer app 服务于同一用户、同一台受信主机上的接入与调试。项目不以多用户 OAuth、租户隔离、分布式锁、横向扩容或跨机器状态同步为当前目标。
+
 **当前三种封装的媒体能力都只覆盖视频。** 图片、视频和音频可以作为视频生成的参考素材，但这不代表已提供文本、图片生成、语音生成或转录工具。通用 MCP 与 Codex plugin 另外提供 facade 账号管理；ChatGPT App 的 `noauth` developer-mode surface 不暴露这组管理工具。
 
 ```text
@@ -98,6 +100,8 @@ npm run dev:chatgpt-app
 Codex plugin 的 manifest 是声明式配置，宿主没有可安全生成/注入 secret 的 install/postinstall hook；因此这里的“安装自动处理”落在首次实际能力调用，而不是安装期间执行任意代码。ChatGPT developer/production App 仍必须部署为可达 HTTPS endpoint、在 ChatGPT 注册真实 app ID；生产多用户形态还必须增加 OAuth 与远程 secret manager，不能由本地 plugin 安装代替。
 
 完整的 MCP client 配置、ChatGPT developer-mode 注册、Codex marketplace 安装命令、生产 OAuth 要求和 `.app.json` 真实 ID 边界见 [三种集成形式](./docs/integrations.md)。
+
+`pippit_generate_video` 与 `pippit_edit_video_segment` 的 `idempotency_key` 是可选异常恢复键，不属于 Facade/OpenRouter 协议。缺省时每次调用都是独立的新提交；显式复用同一恢复键时，MCP/Codex 或 OpenCode plugin 才在各自私有账本中执行跨重启恢复。完整边界见 [持久化幂等设计](./docs/idempotency.md)。
 
 ## OpenCode provider
 

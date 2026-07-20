@@ -201,7 +201,7 @@ export interface PippitGenerateVideoToolInput {
   readonly byok_id?: string
   readonly duration?: number
   readonly frame_images?: readonly PippitFrameImage[]
-  readonly idempotency_key: string
+  readonly idempotency_key?: string
   readonly input_references?: readonly PippitInputReference[]
   readonly model: string
   readonly prompt: string
@@ -217,7 +217,7 @@ export interface PippitGetVideoToolInput {
 export interface PippitEditVideoSegmentToolInput {
   readonly annotations: readonly PippitVideoEditAnnotation[]
   readonly byok_id?: string
-  readonly idempotency_key: string
+  readonly idempotency_key?: string
   readonly model: string
   readonly prompt?: string
   readonly resolution?: string

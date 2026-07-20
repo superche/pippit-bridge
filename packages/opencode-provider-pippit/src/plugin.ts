@@ -1,4 +1,10 @@
-import { createPublicHttpFetcher, createReferenceLoader, VIDEO_MODELS } from "@pippit-bridge/core"
+import {
+  createPublicHttpFetcher,
+  createReferenceLoader,
+  type IdempotencyBeginResult,
+  type IdempotencyStore,
+  VIDEO_MODELS,
+} from "@pippit-bridge/core"
 import { PippitApiError, PippitClient } from "@pippit-bridge/sdk"
 import {
   tool,
@@ -35,6 +41,7 @@ import {
   PIPPIT_PROVIDER_ID,
   parsePluginOptions,
 } from "./options.js"
+import { LazyOpenCodeIdempotencyStore } from "./idempotency.js"
 
 type MutableProviderConfig = {
   env?: string[]
@@ -44,6 +51,7 @@ type MutableProviderConfig = {
 
 export interface PippitPluginDependencies {
   readonly accounts?: PippitAccountManager
+  readonly idempotency?: IdempotencyStore
   readonly videos?: Pick<PippitVideoService, "generate" | "get">
 }
 
@@ -122,6 +130,37 @@ function createDefaultAccountManager(input: PluginInput): PippitAccountManager {
   return new PippitAccountManager(store)
 }
 
+function createDefaultIdempotencyStore(input: PluginInput): IdempotencyStore {
+  return new LazyOpenCodeIdempotencyStore(async () => {
+    const response = await input.client.path.get()
+    const statePath = response.data?.state
+    if (typeof statePath !== "string" || statePath.trim() === "") {
+      throw new Error("OpenCode did not provide a global state path for the Pippit idempotency store.")
+    }
+    return statePath
+  })
+}
+
+function idempotencyError(result: Exclude<IdempotencyBeginResult, { readonly kind: "replay" | "started" }>): Error {
+  if (result.kind === "conflict") return new Error("idempotency_key was already used for a different Pippit request.")
+  if (result.kind === "in_progress") return new Error(`The Pippit request for this idempotency_key is still ${result.phase}.`)
+  if (result.kind === "indeterminate") {
+    return new Error("The previous Pippit submission may have been accepted. Do not retry automatically; inspect the original task and use a new key only after reconciliation.")
+  }
+  return new Error(`The previous Pippit request for this idempotency_key failed (${result.errorCode}).`)
+}
+
+function ambiguousSubmissionError(error: unknown): boolean {
+  return !(error instanceof PippitApiError) || ["ABORTED", "INVALID_RESPONSE", "NETWORK_ERROR", "TIMEOUT"].includes(error.code)
+}
+
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0)
+    return codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)
+  })
+}
+
 function accountSelector(input: {
   readonly account_id?: string | undefined
   readonly account_name?: string | undefined
@@ -186,6 +225,7 @@ async function initializePippitPlugin(
 ): Promise<Hooks> {
   const options = parsePluginOptions(rawOptions)
   const accounts = dependencies.accounts ?? createDefaultAccountManager(input)
+  const idempotency = dependencies.idempotency ?? createDefaultIdempotencyStore(input)
   const credentials = new PippitCredentialSource(accounts)
   const pippit = new PippitClient({ baseUrl: options.baseURL, timeoutMs: options.requestTimeoutMs })
   const remoteLoader = createReferenceLoader({
@@ -413,6 +453,13 @@ async function initializePippitPlugin(
             .describe(`Aspect ratio supported by the selected model. Catalog values: ${supportedAspectRatios}.`),
           duration: schema.number().int().min(1).max(3_600).optional(),
           first_frame: schema.string().min(1).optional(),
+          idempotency_key: schema
+            .string()
+            .min(1)
+            .max(200)
+            .refine((value) => !hasControlCharacter(value), "idempotency_key must not contain control characters")
+            .optional()
+            .describe("Optional recovery key. Reuse it only after an abnormal interruption of this exact submission."),
           last_frame: schema.string().min(1).optional(),
           max_wait_seconds: schema
             .number()
@@ -461,23 +508,83 @@ async function initializePippitPlugin(
           context.metadata({ title: `Pippit · ${args.model}`, metadata: { model: args.model } })
           try {
             const credential = await credentials.readRuntimeCredential()
-            const result = await videos.generate({
-              accessKey: credential.accessKey,
-              ...(args.aspect_ratio === undefined ? {} : { aspectRatio: args.aspect_ratio }),
-              ...(args.duration === undefined ? {} : { duration: args.duration }),
-              ...(args.first_frame === undefined ? {} : { firstFrame: args.first_frame }),
-              ...(args.last_frame === undefined ? {} : { lastFrame: args.last_frame }),
-              maxWaitSeconds: args.max_wait_seconds,
-              model: args.model,
-              ...(args.output_directory === undefined ? {} : { outputDirectory: args.output_directory }),
-              prompt: args.prompt,
-              ...(args.references === undefined ? {} : { references: args.references }),
-              ...(args.resolution === undefined ? {} : { resolution: args.resolution }),
-              rootDirectory: context.worktree,
-              ...(args.seed === undefined ? {} : { seed: args.seed }),
-              signal: context.abort,
-              waitForCompletion: args.wait_for_completion,
-            })
+            const begun = args.idempotency_key === undefined
+              ? undefined
+              : await idempotency.begin({
+                  key: args.idempotency_key,
+                  operation: "pippit_generate_video",
+                  request: {
+                    account_identity: credential.accountId ?? credential.accessKey,
+                    ...(args.aspect_ratio === undefined ? {} : { aspect_ratio: args.aspect_ratio }),
+                    ...(args.duration === undefined ? {} : { duration: args.duration }),
+                    ...(args.first_frame === undefined ? {} : { first_frame: args.first_frame }),
+                    ...(args.last_frame === undefined ? {} : { last_frame: args.last_frame }),
+                    model: args.model,
+                    prompt: args.prompt,
+                    ...(args.references === undefined ? {} : { references: args.references }),
+                    ...(args.resolution === undefined ? {} : { resolution: args.resolution }),
+                    ...(args.seed === undefined ? {} : { seed: args.seed }),
+                    worktree: context.worktree,
+                  },
+                  scope: "opencode-global-pippit-state",
+                })
+            if (begun !== undefined && begun.kind !== "started" && begun.kind !== "replay") {
+              throw idempotencyError(begun)
+            }
+            let crossedSubmissionBoundary = false
+            let durablySubmitted = begun?.kind === "replay"
+            let result: PippitToolResult
+            if (begun?.kind === "replay") {
+              result = begun.response as PippitToolResult
+            } else {
+              const recordId = begun?.recordId
+              try {
+                result = await videos.generate({
+                  accessKey: credential.accessKey,
+                  ...(recordId === undefined
+                    ? {}
+                    : {
+                        afterSubmit: async (submittedResult: PippitToolResult) => {
+                          await idempotency.markSubmitted(recordId, submittedResult)
+                          durablySubmitted = true
+                        },
+                        beforeSubmit: async () => {
+                          await idempotency.markSubmitting(recordId)
+                          crossedSubmissionBoundary = true
+                        },
+                      }),
+                  ...(args.aspect_ratio === undefined ? {} : { aspectRatio: args.aspect_ratio }),
+                  ...(args.duration === undefined ? {} : { duration: args.duration }),
+                  ...(args.first_frame === undefined ? {} : { firstFrame: args.first_frame }),
+                  ...(args.last_frame === undefined ? {} : { lastFrame: args.last_frame }),
+                  maxWaitSeconds: args.max_wait_seconds,
+                  model: args.model,
+                  ...(args.output_directory === undefined ? {} : { outputDirectory: args.output_directory }),
+                  prompt: args.prompt,
+                  ...(args.references === undefined ? {} : { references: args.references }),
+                  ...(args.resolution === undefined ? {} : { resolution: args.resolution }),
+                  rootDirectory: context.worktree,
+                  ...(args.seed === undefined ? {} : { seed: args.seed }),
+                  signal: context.abort,
+                  waitForCompletion: args.wait_for_completion,
+                })
+                if (recordId !== undefined && !durablySubmitted) {
+                  if (!crossedSubmissionBoundary) await idempotency.markSubmitting(recordId)
+                  await idempotency.markSubmitted(recordId, result)
+                  durablySubmitted = true
+                }
+              } catch (error) {
+                if (recordId !== undefined && !durablySubmitted) {
+                  if (crossedSubmissionBoundary && ambiguousSubmissionError(error)) {
+                    await idempotency.markIndeterminate(recordId)
+                  } else {
+                    const errorCode = error instanceof PippitApiError ? error.code.toLowerCase() : "generation_failed"
+                    await idempotency.markFailed(recordId, errorCode)
+                  }
+                }
+                throw error
+              }
+            }
             let binding: { readonly persisted: boolean; readonly warning?: string } | undefined
             if (credential.accountId !== undefined) {
               try {

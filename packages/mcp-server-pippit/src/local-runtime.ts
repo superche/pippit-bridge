@@ -17,12 +17,15 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { defaultPippitOutputDirectory } from "./options.ts"
+import { FileIdempotencyStore, type IdempotencyStore } from "@pippit-bridge/core"
 
 export const PIPPIT_LOCAL_RUNTIME_SCHEMA_VERSION = 1
 // Advance only when the bundled daemon changes; the package/plugin version may move independently.
 export const PIPPIT_LOCAL_RUNTIME_VERSION = "0.2.5"
 
 const CONFIG_FILE_NAME = "runtime-secrets.json"
+const IDEMPOTENCY_SECRET_FILE_NAME = "secret-v1.json"
+const IDEMPOTENCY_STORE_FILE_NAME = "mcp-v1.json"
 const READY_FILE_NAME = "facade-ready.json"
 const LOCK_FILE_NAME = "bootstrap.lock"
 const MAX_STATE_FILE_BYTES = 64 * 1024
@@ -57,6 +60,11 @@ interface LocalRuntimeReadyPayload {
   readonly started_at: string
 }
 
+export interface LocalRuntimeIdempotencySecret {
+  readonly idempotency_hmac_key_hex: string
+  readonly schema_version: 1
+}
+
 interface LocalRuntimeReadyDescriptor extends LocalRuntimeReadyPayload {
   readonly signature: string
 }
@@ -78,6 +86,9 @@ export interface PippitLocalRuntimePaths {
   readonly byokStorePath: string
   readonly configPath: string
   readonly dataRoot: string
+  readonly idempotencyDirectory: string
+  readonly idempotencySecretPath: string
+  readonly idempotencyStorePath: string
   readonly outputRoot: string
   readonly readyPath: string
 }
@@ -319,6 +330,18 @@ function newSecrets(): LocalRuntimeSecrets {
     management_api_key: randomApiKey(),
     schema_version: PIPPIT_LOCAL_RUNTIME_SCHEMA_VERSION,
   }
+}
+
+function parseIdempotencySecret(value: unknown): LocalRuntimeIdempotencySecret {
+  if (
+    !isRecord(value) ||
+    value.schema_version !== PIPPIT_LOCAL_RUNTIME_SCHEMA_VERSION ||
+    typeof value.idempotency_hmac_key_hex !== "string" ||
+    !HEX_KEY_PATTERN.test(value.idempotency_hmac_key_hex)
+  ) {
+    throw new PippitLocalRuntimeError("invalid_idempotency_secret", "The local idempotency secret is invalid.")
+  }
+  return value as unknown as LocalRuntimeIdempotencySecret
 }
 
 function readyPayload(value: LocalRuntimeReadyDescriptor): LocalRuntimeReadyPayload {
@@ -746,9 +769,30 @@ export function resolvePippitLocalRuntimePaths(
     byokStorePath: join(byokDirectory, "credentials.json"),
     configPath: join(dataRoot, CONFIG_FILE_NAME),
     dataRoot,
+    idempotencyDirectory: join(dataRoot, "idempotency"),
+    idempotencySecretPath: join(dataRoot, "idempotency", IDEMPOTENCY_SECRET_FILE_NAME),
+    idempotencyStorePath: join(dataRoot, "idempotency", IDEMPOTENCY_STORE_FILE_NAME),
     outputRoot,
     readyPath: join(dataRoot, READY_FILE_NAME),
   }
+}
+
+async function readOrCreateIdempotencySecret(paths: PippitLocalRuntimePaths): Promise<LocalRuntimeIdempotencySecret> {
+  if (await pathExists(paths.idempotencySecretPath)) {
+    return parseIdempotencySecret(await readPrivateJson(paths.idempotencySecretPath, "Local idempotency secret"))
+  }
+  if (await pathExists(paths.idempotencyStorePath)) {
+    throw new PippitLocalRuntimeError(
+      "missing_idempotency_key",
+      "An existing idempotency store has no matching HMAC key; refusing to replace it.",
+    )
+  }
+  const secret = {
+    idempotency_hmac_key_hex: randomHexKey(),
+    schema_version: PIPPIT_LOCAL_RUNTIME_SCHEMA_VERSION,
+  } as const
+  await writePrivateJsonAtomically(paths.idempotencySecretPath, secret)
+  return secret
 }
 
 async function readOrCreateSecrets(paths: PippitLocalRuntimePaths): Promise<LocalRuntimeSecrets> {
@@ -1003,11 +1047,13 @@ export async function ensurePippitLocalRuntime(options: {
   const paths = resolvePippitLocalRuntimePaths(env)
   await ensurePrivateDirectory(paths.dataRoot, "Pippit local runtime data directory")
   await ensurePrivateDirectory(paths.byokDirectory, "Pippit BYOK directory")
+  await ensurePrivateDirectory(paths.idempotencyDirectory, "Pippit idempotency directory")
   await ensureOutputDirectory(paths.outputRoot)
 
   const lock = await acquireBootstrapLock(paths.bootstrapLockPath)
   try {
     const secrets = await readOrCreateSecrets(paths)
+    await readOrCreateIdempotencySecret(paths)
     let ready = await readReadyConnection(paths, secrets, fetchImplementation)
     if (ready === undefined) {
       const startedPid = await startLocalFacadeDaemon(paths, options.daemonModuleUrl)
@@ -1063,6 +1109,24 @@ export async function readPippitLocalRuntimeSecretsForDaemon(
     throw new PippitLocalRuntimeError("invalid_config_path", "Local runtime config path must be absolute.")
   }
   return parseSecrets(await readPrivateJson(configPath, "Local runtime secrets"))
+}
+
+export async function openPippitMcpIdempotencyStore(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<IdempotencyStore> {
+  const paths = resolvePippitLocalRuntimePaths(env)
+  await ensurePrivateDirectory(paths.dataRoot, "Pippit local runtime data directory")
+  await ensurePrivateDirectory(paths.idempotencyDirectory, "Pippit idempotency directory")
+  const lock = await acquireBootstrapLock(paths.bootstrapLockPath)
+  try {
+    const secret = await readOrCreateIdempotencySecret(paths)
+    return new FileIdempotencyStore({
+      filePath: paths.idempotencyStorePath,
+      hmacKey: Buffer.from(secret.idempotency_hmac_key_hex, "hex"),
+    })
+  } finally {
+    await releaseBootstrapLock(paths.bootstrapLockPath, lock)
+  }
 }
 
 export async function writePippitLocalRuntimeReadyDescriptor(

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { VIDEO_MODELS } from "@pippit-bridge/core"
+import { MemoryIdempotencyStore, VIDEO_MODELS } from "@pippit-bridge/core"
 import type { Config } from "@opencode-ai/plugin"
 import { MemoryPippitAccountStore, PippitAccountManager } from "../src/account-store.js"
 import { PIPPIT_MANAGED_AUTH_SENTINEL } from "../src/access-key.js"
@@ -249,6 +249,53 @@ describe("Pippit OpenCode plugin", () => {
       status: "pending",
       warning: expect.stringContaining("Do not retry"),
     })
+  })
+
+  it("replays OpenCode generation by idempotency key and conflicts before a changed submission", async () => {
+    const accounts = new PippitAccountManager(new MemoryPippitAccountStore())
+    await accounts.beginConfiguration("工作", undefined)
+    await accounts.reconcile({ key: "ak-idempotency-test", type: "api" })
+    const generate = vi.fn(async () => ({
+      model: "pippit/seedance-2.0",
+      runId: "run-idempotent",
+      status: "pending" as const,
+      threadId: "thread-idempotent",
+    }))
+    const hooks = await createPippitPlugin({
+      accounts,
+      idempotency: new MemoryIdempotencyStore({ hmacKey: Buffer.alloc(32, 8) }),
+      videos: {
+        generate,
+        get: vi.fn(async () => ({ runId: "unused", status: "pending" as const, threadId: "unused" })),
+      },
+    })({} as never)
+    const execute = hooks.tool?.pippit_generate_video?.execute
+    if (execute === undefined) throw new Error("Expected the Pippit generate tool")
+    const context = {
+      abort: new AbortController().signal,
+      ask: vi.fn(async () => undefined),
+      metadata: vi.fn(),
+      worktree: "/tmp/pippit-idempotency-test",
+    } as never
+    const args = {
+      idempotency_key: "same-open-code-key",
+      max_wait_seconds: 43_200,
+      model: "pippit/seedance-2.0",
+      prompt: "submit once",
+      wait_for_completion: false,
+    } as const
+
+    const first = await execute(args, context)
+    const replay = await execute(args, context)
+    await expect(execute({ ...args, prompt: "changed request" }, context)).rejects.toThrow("different Pippit request")
+    await accounts.beginConfiguration("个人", undefined)
+    await accounts.reconcile({ key: "ak-idempotency-second-account", type: "api" })
+    await expect(execute(args, context)).rejects.toThrow("different Pippit request")
+
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(typeof replay === "string" ? replay : replay.output)).toMatchObject(
+      JSON.parse(typeof first === "string" ? first : first.output),
+    )
   })
 
   it("asks before a default get operation writes a video into the worktree", async () => {

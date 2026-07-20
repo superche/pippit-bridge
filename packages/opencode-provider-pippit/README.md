@@ -7,6 +7,8 @@ OpenCode plugin for Pippit (小云雀) video generation. It uses OpenCode's stan
 - `pippit_generate_video` and `pippit_get_video` native tools
 - the shared Pippit model catalog from this monorepo
 
+This plugin is a single-user local integration. Its global keyring and idempotency ledger belong to the current OpenCode user state; they are not tenant-isolated or synchronized across machines.
+
 Pippit's current public API is an asynchronous media API, not an AI SDK language model. The package therefore does not pretend that a video model implements OpenCode's `LanguageModelV3` contract.
 
 ## Install
@@ -45,6 +47,8 @@ For CI or a short-lived isolated environment, `PIPPIT_ACCESS_KEY` is also suppor
 Ask OpenCode to generate a Pippit video. The plugin asks on every potentially billable submission and separately before downloading into the worktree; neither permission can be permanently allowed. The API origin is pinned to the official Pippit origin. HTTP(S) references receive private-network and media-signature checks. Local references and output directories are constrained to the current worktree, and repeated downloads choose a collision-safe filename without overwriting existing files.
 
 Every managed-account submission attempts to pin `run_id + thread_id` to the account used for submission. Switching accounts affects new runs; polling an existing bound run resolves its original account. If persistence fails after the upstream submission succeeds, the generation result is still returned with `account_binding_persisted: false`, a do-not-retry warning, and the `account_id` that can be supplied to a later get operation. If the bound account has been deleted, polling fails closed instead of silently using another AK.
+
+The generation tool accepts an optional caller-chosen `idempotency_key` only for abnormal recovery. Without it, every invocation is a new submission. With it, the private HMAC-authenticated ledger at `<OpenCode state>/pippit/idempotency-v1.json` can replay the recorded run after restart; changed payloads or accounts conflict, and a crash after the paid submission boundary becomes `indeterminate` instead of auto-retrying. See [the durable idempotency contract](../../docs/idempotency.md).
 
 The default output directory is `.pippit/outputs`.
 
