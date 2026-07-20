@@ -4,7 +4,7 @@ import { spawn } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 
-const distEntry = new URL("./dist/stdio.js", import.meta.url)
+const distEntry = new URL("./dist/plugin-stdio.mjs", import.meta.url)
 const bundledDaemon = new URL("./dist/local-facade-daemon.mjs", import.meta.url)
 
 async function runPublishedPackage() {

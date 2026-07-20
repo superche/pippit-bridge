@@ -126,7 +126,7 @@ try {
     throw new Error("The packaged MCP widget resource is incomplete.")
   }
   if (toolCall?.isError === true) {
-    throw new Error("The packaged MCP could not call its auto-bootstrapped local Facade.")
+    throw new Error(`The packaged MCP could not call its auto-bootstrapped local Facade: ${JSON.stringify(toolCall.structuredContent?.error ?? toolCall.content)}`)
   }
 
   const descriptor = JSON.parse(await readFile(join(dataRoot, "facade-ready.json"), "utf8"))
