@@ -33,7 +33,7 @@ apps/chatgpt-app ------------------------+
   |-- Apps SDK regeneration widget       |
   `-- short-lived signed media proxy     |
 
-packages/opencode-provider-pippit -------+  (@pippit-bridge/opencode-plugin)
+packages/opencode-plugin-pippit ---------+  (@pippit-bridge/opencode-plugin)
   |-- custom tools only; no LLM provider/auth hook
   |-- reuses MCP package loopback enrollment server
   |-- global multi-account AK keyring

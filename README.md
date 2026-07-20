@@ -57,7 +57,7 @@ pippit-bridge
 │   ├── core
 │   ├── sdk
 │   ├── mcp-server-pippit
-│   └── opencode-provider-pippit
+│   └── opencode-plugin-pippit
 ├── .agents/plugins/marketplace.json
 └── docs
 ```
@@ -139,7 +139,7 @@ opencode plugin @pippit-bridge/opencode-plugin --global
 
 `PIPPIT_ACCESS_KEY` 仍用于 CI/短期隔离环境，并覆盖新任务使用的本地 active 账号；管理工具会把这个 override 明确返回。已持久绑定的历史 `run_id + thread_id` 始终优先使用原账号，不会被后来设置的环境变量或 active 切换静默改写；若原账号已删除则 fail closed。完整 loopback 协议、威胁模型与验收标准见 [OpenCode AK 绑定设计](./docs/opencode-ak-binding.md)。
 
-OpenCode 包的安装与 options 见 [packages/opencode-provider-pippit/README.md](./packages/opencode-provider-pippit/README.md)。
+OpenCode 包的安装与 options 见 [packages/opencode-plugin-pippit/README.md](./packages/opencode-plugin-pippit/README.md)。
 
 ## OpenRouter facade
 

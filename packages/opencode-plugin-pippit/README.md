@@ -73,7 +73,7 @@ npm run build -w @pippit-bridge/opencode-plugin
 ```json
 {
   "plugin": [
-    "file:///absolute/path/to/pippit-bridge/packages/opencode-provider-pippit/dist/plugin.mjs"
+    "file:///absolute/path/to/pippit-bridge/packages/opencode-plugin-pippit/dist/plugin.mjs"
   ]
 }
 ```
