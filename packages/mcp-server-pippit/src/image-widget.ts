@@ -18,17 +18,26 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
     img { display: block; width: 100%; height: auto; max-height: 72vh; object-fit: contain; background: color-mix(in srgb, Canvas 88%, CanvasText 12%); }
     figcaption { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; }
     .filename { min-width: 0; overflow: hidden; color: color-mix(in srgb, CanvasText 65%, transparent); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-    .loading { min-height: 180px; display: grid; place-items: center; color: color-mix(in srgb, CanvasText 62%, transparent); font-size: 12px; }
     a { flex: none; border-radius: 9px; padding: 7px 10px; background: CanvasText; color: Canvas; font-size: 12px; font-weight: 650; text-decoration: none; }
     [hidden] { display: none !important; }
     #empty { margin: 0; padding: 18px; border: 1px dashed color-mix(in srgb, CanvasText 20%, transparent); border-radius: 12px; color: color-mix(in srgb, CanvasText 65%, transparent); text-align: center; }
+    .loading-view { display: grid; min-height: 300px; place-content: center; justify-items: center; gap: 22px; text-align: center; }
+    .loading-status { margin: 0; color: color-mix(in srgb, CanvasText 62%, transparent); font-size: 14px; font-weight: 500; letter-spacing: -.01em; line-height: 20px; }
+    .infinity-loader { display: grid; grid-template-columns: repeat(5, 8px); grid-template-rows: repeat(5, 8px); gap: 6px; width: 64px; height: 64px; place-content: center; color: CanvasText; }
+    .infinity-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .08; transition: opacity 40ms linear; }
+    @media (max-width: 640px) { .loading-view { min-height: 240px; } }
+    @media (prefers-reduced-motion: reduce) { .infinity-dot { transition: none; } }
   </style>
 </head>
 <body>
   <main>
-    <header><h1>Pippit image result</h1><span id="summary">Loading…</span></header>
-    <section id="gallery" aria-live="polite"></section>
-    <p id="empty" hidden>The generated image could not be displayed.</p>
+    <section id="loading-view" class="loading-view" role="status" aria-live="polite">
+      <div id="infinity-loader" class="infinity-loader" aria-hidden="true"></div>
+      <p id="loading-status" class="loading-status">Preparing the local image preview…</p>
+    </section>
+    <header id="result-header" hidden><h1>Pippit image result</h1><span id="summary"></span></header>
+    <section id="gallery" aria-live="polite" hidden></section>
+    <p id="empty" hidden>The saved local image could not be loaded.</p>
   </main>
   <script>
     (function () {
@@ -44,9 +53,23 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
       var bootstrapResult;
       var renderGeneration = 0;
       var destroyed = false;
+      var loaderStep = 0;
+      var loaderTimer;
+      var loadingView = document.getElementById("loading-view");
+      var loadingStatus = document.getElementById("loading-status");
+      var infinityLoader = document.getElementById("infinity-loader");
+      var resultHeader = document.getElementById("result-header");
       var summary = document.getElementById("summary");
       var gallery = document.getElementById("gallery");
       var empty = document.getElementById("empty");
+      var loaderDots = [];
+
+      for (var dotIndex = 0; dotIndex < 25; dotIndex += 1) {
+        var dot = document.createElement("span");
+        dot.className = "infinity-dot";
+        infinityLoader.append(dot);
+        loaderDots.push(dot);
+      }
 
       function post(message) {
         if (!destroyed) window.parent.postMessage(message, "*");
@@ -75,16 +98,120 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
         objectUrls.forEach(function (url) { URL.revokeObjectURL(url); });
         objectUrls = [];
       }
+      function infinityPoint(step) {
+        var t = (step % 48) / 48 * Math.PI * 2;
+        return { x: Math.sin(t), y: 0.58 * Math.sin(2 * t) };
+      }
+      function infinityInfluence(dot, head) {
+        var dx = dot.x - head.x;
+        var dy = dot.y - head.y;
+        return Math.exp(-(dx * dx + dy * dy) / 0.19);
+      }
+      function paintInfinityLoader() {
+        var reduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        var headA = infinityPoint(loaderStep);
+        var headB = infinityPoint(loaderStep + 24);
+        var trailA = infinityPoint(loaderStep - 4);
+        var trailB = infinityPoint(loaderStep + 20);
+        loaderDots.forEach(function (dot, index) {
+          var row = Math.floor(index / 5);
+          var col = index % 5;
+          var point = { x: (col - 2) / 2, y: (2 - row) / 2 };
+          var lead = Math.max(infinityInfluence(point, headA), infinityInfluence(point, headB));
+          var trail = Math.max(infinityInfluence(point, trailA), infinityInfluence(point, trailB));
+          var center = Math.exp(-(point.x * point.x + point.y * point.y) / 0.05) * (0.45 + 0.55 * lead);
+          dot.style.opacity = String(reduced ? Math.min(1, 0.1 + lead * 0.28) : Math.min(1, 0.08 + 0.32 * trail + 0.62 * lead + 0.16 * center));
+        });
+      }
+      function startInfinityLoader() {
+        if (loaderTimer || loadingView.hidden) return;
+        paintInfinityLoader();
+        if (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+        loaderTimer = window.setInterval(function () {
+          loaderStep = (loaderStep + 1) % 48;
+          paintInfinityLoader();
+        }, 36);
+      }
+      function stopInfinityLoader() {
+        window.clearInterval(loaderTimer);
+        loaderTimer = undefined;
+      }
+      function showLoading() {
+        loadingView.hidden = false;
+        resultHeader.hidden = true;
+        gallery.hidden = true;
+        empty.hidden = true;
+        loadingStatus.textContent = "Preparing the local image preview…";
+        startInfinityLoader();
+        reportSize();
+      }
+      function showResults(count) {
+        stopInfinityLoader();
+        loadingView.hidden = true;
+        resultHeader.hidden = false;
+        gallery.hidden = false;
+        empty.hidden = true;
+        summary.textContent = count === 1 ? "1 image" : String(count) + " images";
+        reportSize();
+      }
+      function showTerminal(message) {
+        stopInfinityLoader();
+        loadingView.hidden = true;
+        resultHeader.hidden = true;
+        gallery.hidden = true;
+        empty.textContent = message;
+        empty.hidden = false;
+        reportSize();
+      }
       function imageBlob(data, mimeType) {
         var decoded = window.atob(data);
         var bytes = new Uint8Array(decoded.length);
         for (var index = 0; index < decoded.length; index += 1) bytes[index] = decoded.charCodeAt(index);
         return new Blob([bytes], { type: mimeType });
       }
-      function validImage(value) {
-        return value && typeof value === "object" &&
-          (typeof value.resource_uri === "string" || typeof value.data === "string") &&
-          typeof value.filename === "string" && /^(?:image\/png|image\/jpeg|image\/webp)$/.test(value.mime_type);
+      function imageExtension(mimeType) {
+        if (mimeType === "image/jpeg") return "jpg";
+        if (mimeType === "image/webp") return "webp";
+        return "png";
+      }
+      function normalizeImage(value, index) {
+        if (!value || typeof value !== "object") return undefined;
+        var mimeType = value.mime_type || value.media_type || value.mimeType;
+        if (!/^(?:image\/png|image\/jpeg|image\/webp)$/.test(mimeType)) return undefined;
+        if (typeof value.resource_uri !== "string" && typeof value.data !== "string") return undefined;
+        return {
+          data: value.data,
+          filename: typeof value.filename === "string" ? value.filename : "pippit-image-" + String(index + 1) + "." + imageExtension(mimeType),
+          mime_type: mimeType,
+          resource_uri: value.resource_uri
+        };
+      }
+      function normalizeResult(value) {
+        var current = value;
+        for (var depth = 0; depth < 3; depth += 1) {
+          if (!current || typeof current !== "object") break;
+          if (current.result && typeof current.result === "object") current = current.result;
+          else if (current.toolResult && typeof current.toolResult === "object") current = current.toolResult;
+          else break;
+        }
+        return current && typeof current === "object" ? current : {};
+      }
+      function resultImages(rawResult) {
+        var result = normalizeResult(rawResult);
+        var metadata = result._meta && typeof result._meta === "object" ? result._meta : {};
+        var metadataImages = Array.isArray(metadata["pippit/images"]) ? metadata["pippit/images"] : [];
+        var normalized = metadataImages.map(normalizeImage).filter(Boolean);
+        if (normalized.length > 0) return normalized;
+        var structured = result.structuredContent && typeof result.structuredContent === "object"
+          ? result.structuredContent
+          : result;
+        var structuredImages = Array.isArray(structured.images) ? structured.images : [];
+        normalized = structuredImages.map(normalizeImage).filter(Boolean);
+        if (normalized.length > 0) return normalized;
+        var contentImages = Array.isArray(result.content)
+          ? result.content.filter(function (item) { return item && item.type === "image"; })
+          : [];
+        return contentImages.map(normalizeImage).filter(Boolean);
       }
       function resourceBlob(result, image) {
         var contents = result && Array.isArray(result.contents) ? result.contents : [];
@@ -128,9 +255,7 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
       }
       async function loadFigure(image, index, generation) {
         var figure = document.createElement("figure");
-        var loading = document.createElement("div");
-        loading.className = "loading";
-        loading.textContent = "Loading local image…";
+        figure.hidden = true;
         var preview = document.createElement("img");
         preview.alt = "Generated Pippit image " + String(index + 1);
         preview.loading = index === 0 ? "eager" : "lazy";
@@ -144,43 +269,54 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
         download.textContent = "Download original";
         download.hidden = true;
         caption.append(filename, download);
-        figure.append(loading, preview, caption);
+        figure.append(preview, caption);
         gallery.append(figure);
         try {
           var data = await imageData(image);
-          if (destroyed || generation !== renderGeneration) return;
+          if (destroyed || generation !== renderGeneration) return false;
           var url = URL.createObjectURL(imageBlob(data, image.mime_type));
           objectUrls.push(url);
-          preview.src = url;
-          preview.hidden = false;
           download.href = url;
           download.hidden = false;
-          loading.remove();
-          preview.addEventListener("load", reportSize, { once: true });
+          var loaded = await new Promise(function (resolve) {
+            preview.addEventListener("load", function () { resolve(true); }, { once: true });
+            preview.addEventListener("error", function () { resolve(false); }, { once: true });
+            preview.src = url;
+          });
+          if (!loaded || destroyed || generation !== renderGeneration) return false;
+          preview.hidden = false;
+          figure.hidden = false;
+          reportSize();
+          return true;
         } catch (_error) {
-          loading.textContent = "The saved local image could not be loaded.";
+          return false;
         }
-        reportSize();
       }
-      function render(result) {
+      async function render(rawResult) {
+        var result = normalizeResult(rawResult);
         bootstrapResult = result;
         var generation = ++renderGeneration;
         releaseUrls();
         gallery.replaceChildren();
-        var metadata = result && result._meta && typeof result._meta === "object" ? result._meta : {};
-        var images = Array.isArray(metadata["pippit/images"])
-          ? metadata["pippit/images"].filter(validImage)
-          : [];
-        summary.textContent = images.length === 1 ? "1 image" : String(images.length) + " images";
-        empty.hidden = images.length !== 0;
-        images.forEach(function (image, index) {
-          void loadFigure(image, index, generation);
-        });
-        reportSize();
+        showLoading();
+        if (!protocolReady && !(window.openai && typeof window.openai.callTool === "function")) return;
+        var images = resultImages(result);
+        if (images.length === 0) {
+          showTerminal("The generated image result did not include a local preview.");
+          return;
+        }
+        var loaded = await Promise.all(images.map(function (image, index) {
+          return loadFigure(image, index, generation);
+        }));
+        if (destroyed || generation !== renderGeneration) return;
+        var loadedCount = loaded.filter(Boolean).length;
+        if (loadedCount === 0) showTerminal("The saved local image could not be loaded.");
+        else showResults(loadedCount);
       }
       function useOpenAiResult() {
         if (!window.openai) return;
-        render({
+        if (window.openai.toolResponseMetadata === undefined && window.openai.toolOutput === undefined) return;
+        void render({
           _meta: window.openai.toolResponseMetadata || {},
           structuredContent: window.openai.toolOutput
         });
@@ -195,13 +331,14 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
           else state.resolve(event.data.result);
           return;
         }
-        if (event.data.method === "ui/notifications/tool-result") render(event.data.params || {});
+        if (event.data.method === "ui/notifications/tool-result") void render(event.data.params || {});
         if (event.data.method === "ui/resource-teardown") {
           if (event.data.id !== undefined) {
             window.parent.postMessage({ jsonrpc: "2.0", id: event.data.id, result: {} }, "*");
           }
           destroyed = true;
           renderGeneration += 1;
+          stopInfinityLoader();
           releaseUrls();
           pending.forEach(function (state) { state.reject(new Error("Widget was closed.")); });
           pending.clear();
@@ -221,11 +358,12 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
         serverResourcesAvailable = Boolean(capabilities.serverResources);
         serverToolsAvailable = Boolean(capabilities.serverTools);
         post({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
-        if (bootstrapResult) render(bootstrapResult);
+        if (bootstrapResult) void render(bootstrapResult);
       }).catch(function () {
         protocolReady = false;
         useOpenAiResult();
       });
+      startInfinityLoader();
     })();
   </script>
 </body>

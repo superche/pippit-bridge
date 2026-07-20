@@ -260,7 +260,12 @@ export const PIPPIT_TOOL_DEFINITIONS: readonly PippitToolDefinition[] = [
         images: {
           items: {
             additionalProperties: false,
-            properties: { media_type: { type: "string" } },
+            properties: {
+              bytes: { minimum: 0, type: "integer" },
+              filename: { type: "string" },
+              media_type: { type: "string" },
+              resource_uri: { pattern: "^pippit-image://artifact/", type: "string" },
+            },
             required: ["media_type"],
             type: "object",
           },

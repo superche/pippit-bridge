@@ -184,6 +184,29 @@ async function widgetImages(
   return projected
 }
 
+function projectStructuredImages(
+  structuredContent: Readonly<Record<string, unknown>> | undefined,
+  images: readonly Readonly<Record<string, unknown>>[],
+): Readonly<Record<string, unknown>> | undefined {
+  if (structuredContent === undefined) return undefined
+  const localImages = images.filter((image) => typeof image.resource_uri === "string")
+  if (localImages.length === 0) return structuredContent
+  const existingImages = Array.isArray(structuredContent.images) ? structuredContent.images : []
+  return {
+    ...structuredContent,
+    images: localImages.map((image, index) => {
+      const existing = existingImages[index]
+      return {
+        ...(existing !== null && typeof existing === "object" && !Array.isArray(existing) ? existing : {}),
+        bytes: image.bytes,
+        filename: image.filename,
+        media_type: image.mime_type,
+        resource_uri: image.resource_uri,
+      }
+    }),
+  }
+}
+
 export async function projectPippitWidgetResult(
   result: PippitMcpCallToolResult,
   previewUrl?: PippitWidgetPreviewUrlFactory,
@@ -212,13 +235,17 @@ export async function projectPippitWidgetResult(
   const sanitizedMeta = Object.fromEntries(
     Object.entries(sanitizedMetaValue).filter(([key]) => key !== "pippit/images" && key !== "pippit/media"),
   )
+  const sanitizedStructuredContent = result.structuredContent === undefined
+    ? undefined
+    : sanitizePippitWidgetValue(result.structuredContent) as Readonly<Record<string, unknown>>
+  const projectedStructuredContent = projectStructuredImages(sanitizedStructuredContent, images)
   return {
     content: sanitizeContent(result.content),
     ...(result.isError === undefined ? {} : { isError: result.isError }),
-    ...(result.structuredContent === undefined
+    ...(projectedStructuredContent === undefined
       ? {}
       : {
-          structuredContent: sanitizePippitWidgetValue(result.structuredContent) as Readonly<Record<string, unknown>>,
+          structuredContent: projectedStructuredContent,
         }),
     ...(
       Object.keys(sanitizedMeta).length === 0 && previews.length === 0 && images.length === 0

@@ -297,7 +297,12 @@ export const PIPPIT_VIDEO_JOB_OUTPUT_SHAPE = {
 
 export const PIPPIT_IMAGE_OUTPUT_SHAPE = {
   created: z.number().int().nonnegative(),
-  images: z.array(z.object({ media_type: z.string() }).strict()).min(1),
+  images: z.array(z.object({
+    bytes: z.number().int().nonnegative().optional(),
+    filename: z.string().optional(),
+    media_type: z.string(),
+    resource_uri: z.string().startsWith("pippit-image://artifact/").optional(),
+  }).strict()).min(1),
   model: z.string(),
   usage: z.object({ cost: z.number().nullable(), is_byok: z.boolean() }).strict(),
 }

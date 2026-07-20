@@ -75,8 +75,20 @@ describe("Pippit widget protocol", () => {
         resource_uri: `pippit-image://artifact/${"a".repeat(64)}.jpg`,
       },
     ])
+    expect(projected.structuredContent).toEqual({
+      created: 1_780_000_000,
+      images: [{
+        bytes: 5,
+        filename: `pippit-image-${"a".repeat(64)}.jpg`,
+        media_type: "image/jpeg",
+        resource_uri: `pippit-image://artifact/${"a".repeat(64)}.jpg`,
+      }],
+      model: "pippit/seedream-5.0",
+    })
     expect(JSON.stringify(projected._meta)).not.toContain("localPath")
     expect(JSON.stringify(projected._meta)).not.toContain("/Users/test")
+    expect(JSON.stringify(projected.structuredContent)).not.toContain("localPath")
+    expect(JSON.stringify(projected.structuredContent)).not.toContain("/Users/test")
   })
 
   it("projects generated images into widget-only downloadable attachments", async () => {
@@ -102,6 +114,20 @@ describe("Pippit widget protocol", () => {
         mime_type: "image/jpeg",
       },
     ])
+    expect(projected.structuredContent).toEqual({
+      created: 1_780_000_000,
+      images: [{ media_type: "image/jpeg" }],
+      model: "pippit/seedream-5.0-pro",
+    })
+  })
+
+  it("lets the image widget recover structured local previews and uses the Infinity Run loader", () => {
+    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("structured.images")
+    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("current.result")
+    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("current.toolResult")
+    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("infinityPoint")
+    expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("repeat(5, 8px)")
+    expect(PIPPIT_IMAGE_WIDGET_HTML).not.toContain("0 images")
   })
 
   it("projects completed outputs into widget-only signed media and removes facade URLs", async () => {

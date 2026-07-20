@@ -179,6 +179,13 @@ describe("Pippit stdio entrypoint", () => {
         }),
       ])
       expect(images[0]).not.toHaveProperty("data")
+      expect(callResult.structuredContent).toMatchObject({
+        images: [{
+          filename: images[0]!.filename,
+          media_type: "image/jpeg",
+          resource_uri: images[0]!.resource_uri,
+        }],
+      })
       expect(await readdir(outputRoot)).toEqual([images[0]!.filename])
       expect(await readFile(join(outputRoot, images[0]!.filename))).toEqual(Buffer.from("image"))
 
