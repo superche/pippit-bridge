@@ -147,7 +147,7 @@ facade 返回的 content URL 仍需要 `Authorization: Bearer <PIPPIT_FACADE_API
 
 media token 只绑定 `job_id`、结果 index 和过期时间，不包含 Facade API Key。但它在过期前仍是 bearer capability，不应写入日志或发送给 widget/ChatGPT 以外的接收方。
 
-结果完成后，Widget 可在 intrinsic video content 上选择最多 30 秒的提示范围，在当前帧拖拽矩形、输入局部注释并形成时间戳 chip，再填写整体指令。点击 Regenerate video 后只调用共享的 `pippit_edit_video_segment`；当前完整视频由 facade 解析为唯一参考，Widget 参数只有 source job/index 与结构化 guidance metadata，不包含 preview URL、本地绝对路径、Facade API Key 或 Pippit AK。Widget 为相同 source 与 guidance 生成稳定的 SHA-256 幂等键，先同步交出 `tools/call`，再请求 `inline` display mode；因此显示模式切换即使卸载 iframe，同一插件进程内的编辑重试仍会复用已提交任务，而不会再次产生付费生成。所有生成相关调用保留 12 小时上限。不支持标准调用时才 capability-detect `window.openai.callTool`。
+结果完成后，Widget 可在 intrinsic video content 上选择最多 30 秒的提示范围，在当前帧拖拽矩形、输入局部注释并形成时间戳 chip，再填写整体指令。点击 Regenerate video 后只调用共享的 `pippit_edit_video_segment`；当前完整视频由 facade 解析为唯一参考，Widget 参数只有 source job/index 与结构化 guidance metadata，不包含 preview URL、本地绝对路径、Facade API Key 或 Pippit AK。Widget 为相同 source 与 guidance 生成稳定的 SHA-256 幂等键。服务端在提交成功后持久记录 source job 到新 job 的私有 lineage；widget 重建时先调用 app-only `pippit_resolve_latest_video`，再通过 canonical `pippit_get_video` 加载最新后代。因此显示模式切换、旧 bootstrap 结果回放或 stdio 重启都不会把已成功的 regenerate 结果退回上一个视频。`window.openai.widgetState` 只作为兼容缓存，不是权威状态。所有生成相关调用保留 12 小时上限。不支持标准调用时才 capability-detect `window.openai.callTool`。
 
 当前 `noauth` App 即使运行在 loopback/tunnel，也不会注册 `pippit_*_access_key` 工具。否则任何能访问 endpoint 的调用方都能借用服务端 Management API Key 修改全局凭证。未来只有在 OAuth 2.1、scope 与 per-user credential isolation 全部完成后，才应把脱敏 list/switch/delete 投影到 ChatGPT；raw AK enrollment 仍应走独立安全页面。
 
@@ -203,9 +203,9 @@ codex plugin list --json
 
 plugin 包内的 stdio server 与 Facade daemon bundle 是自包含的，安装 plugin 不需要在 plugin cache 中再运行 `npm install`、build 或写环境变量。`.mcp.json` 通过 `plugin-entry.mjs` 启动；安装和 MCP discovery 不生成 key，第一次实际工具调用才启动用户级共享 runtime。plugin 升级后，下一次实际调用会先认证已有 daemon 的 challenge proof 与 runtime version；旧版本 daemon 会在 bootstrap lock 内自动停止并替换，持久化 key 与账号不变。需要外部部署时，仍可从启动 Codex 的 secret 环境中显式提供完整 Facade 配置。
 
-生成、查询和参考视频重新生成工具共享同一个 MCP App widget resource。widget 会自动轮询 pending/in-progress job；`pippit_get_video` 到达 `completed` 后，stdio/plugin 进程先把完整 MP4 原子保存为普通本地文件，再通过 MCP Apps `resources/read` 分块传给 widget 并创建 `blob:` 播放地址。Codex 不要求模型另行生成 `file://` 可视化；本地绝对路径、facade content URL、API key 与 `unsigned_urls` 不进入 Widget 或 model-visible 结果。stdin 重启不改变本地 artifact identity，文件继续保留；用户需要自定文件名或额外路径时再调用下载工具。
+生成、查询和参考视频重新生成工具共享同一个 MCP App widget resource。widget 会自动轮询 pending/in-progress job；打开旧结果时先通过 model-hidden 的 `pippit_resolve_latest_video` 找到最新 regenerate job，宿主随后回放的旧 tool result 不能覆盖它。`pippit_get_video` 到达 `completed` 后，stdio/plugin 进程先把完整 MP4 原子保存为普通本地文件，再通过 MCP Apps `resources/read` 分块传给 widget 并创建 `blob:` 播放地址。Codex 不要求模型另行生成 `file://` 可视化；本地绝对路径、facade content URL、API key 与 `unsigned_urls` 不进入 Widget 或 model-visible 结果。stdin 重启不改变本地 artifact identity 或 regenerate lineage，文件继续保留；用户需要自定文件名或额外路径时再调用下载工具。
 
-上面的 repo-local marketplace 是开发入口：从干净 checkout 测试前先运行 `npm run build -w @pippit-bridge/mcp-server`，因为 Codex 会复制 source 目录且不会替它执行 npm lifecycle。正式分发应先发布由 `prepack` 生成自包含 artifact 的 `@pippit-bridge/mcp-server@0.2.11`，再使用 [npm marketplace example](../.agents/plugins/marketplace.npm.example.json) 的 `source: "npm"` 形式；Codex 下载该 tarball 时同样不会运行 lifecycle scripts。
+上面的 repo-local marketplace 是开发入口：从干净 checkout 测试前先运行 `npm run build -w @pippit-bridge/mcp-server`，因为 Codex 会复制 source 目录且不会替它执行 npm lifecycle。正式分发应先发布由 `prepack` 生成自包含 artifact 的 `@pippit-bridge/mcp-server@0.2.12`，再使用 [npm marketplace example](../.agents/plugins/marketplace.npm.example.json) 的 `source: "npm"` 形式；Codex 下载该 tarball 时同样不会运行 lifecycle scripts。
 
 进入 Codex 后可用 `/plugins` 检查/enable plugin。安装或更新后开始一个新 session，再请求 `pippit-video` 列出模型、生成或查询视频；完成结果会自动保存本地 MP4 并展示 widget，只有需要额外自定义文件名或路径副本时才请求下载。
 

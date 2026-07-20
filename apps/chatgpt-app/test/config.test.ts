@@ -18,6 +18,7 @@ describe("parseChatGptAppConfig", () => {
       host: "127.0.0.1",
       mediaTtlSeconds: 300,
       port: 8787,
+      runtimeDataRoot: expect.any(String),
     })
     expect(mediaPreviewsEnabled(config)).toBe(false)
   })
@@ -92,6 +93,7 @@ describe("parseChatGptAppConfig", () => {
       facadeBaseUrl: "http://127.0.0.1:43123",
       mediaSigningKeyHex: "b".repeat(64),
       publicBaseUrl: "https://apps.example.test",
+      runtimeDataRoot: "/tmp/pippit-bridge-test",
     })
     expect(config).not.toHaveProperty("PIPPIT_FACADE_MANAGEMENT_API_KEY")
     expect(config).not.toHaveProperty("managementApiKey")

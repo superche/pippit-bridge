@@ -43,6 +43,26 @@ export function classifyPreviewUpdate(
   return hasInitializedDraft ? "renewed-url" : "new-source"
 }
 
+export function shouldAcceptWidgetJobResult(
+  activeJobId: string | undefined,
+  incomingJobId: string,
+  regenerationPending: boolean,
+  authoritativeTransition = false,
+): boolean {
+  if (authoritativeTransition) return true
+  if (regenerationPending) return false
+  return activeJobId === undefined || activeJobId === incomingJobId
+}
+
+export function resolveWidgetModel(
+  currentModel: string | undefined,
+  incomingModel: unknown,
+): string | undefined {
+  return typeof incomingModel === "string" && incomingModel.trim() !== ""
+    ? incomingModel
+    : currentModel
+}
+
 export function reconcileWidgetDraftForDuration(
   draft: WidgetDraftState,
   nextDurationMs: number,
@@ -145,7 +165,7 @@ export function adjustWidgetRegionFromKey(
   return { handled: true, region: next }
 }
 
-export const PIPPIT_WIDGET_URI = "ui://widget/pippit-video-job-v12.html"
+export const PIPPIT_WIDGET_URI = "ui://widget/pippit-video-job-v13.html"
 
 /**
  * A dependency-free MCP App. Business actions always call the shared MCP
@@ -685,6 +705,8 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       "use strict";
 
       var classifyPreviewUpdate = ${classifyPreviewUpdate.toString()};
+      var shouldAcceptWidgetJobResult = ${shouldAcceptWidgetJobResult.toString()};
+      var resolveWidgetModel = ${resolveWidgetModel.toString()};
       var reconcileWidgetDraftForDuration = ${reconcileWidgetDraftForDuration.toString()};
       var mergeWidgetDraftForMediaRefresh = ${mergeWidgetDraftForMediaRefresh.toString()};
       var widgetDraftPayloadEquals = ${widgetDraftPayloadEquals.toString()};
@@ -701,11 +723,13 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         "pippit_generate_video",
         "pippit_get_video",
         "pippit_download_video",
-        "pippit_edit_video_segment"
+        "pippit_edit_video_segment",
+        "pippit_resolve_latest_video"
       ]);
       var RETRY_SAFE_TOOL_NAMES = new Set([
         "pippit_get_video",
-        "pippit_read_video_chunk"
+        "pippit_read_video_chunk",
+        "pippit_resolve_latest_video"
       ]);
       var protocolVersion = "2026-01-26";
       var nextId = 1;
@@ -716,6 +740,14 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       var serverToolsAvailable = false;
       var resourceBridgeDemoted = false;
       var hostContext = {};
+      var rootJobId;
+      var restoringJobId;
+      var bootstrapResult;
+      var latestResolutionInFlight = false;
+      var latestResolutionComplete = false;
+      var latestResolutionRetryMs = 2000;
+      var latestResolutionRetryTimer;
+      var latestRestoreTimer;
       var activeJobId;
       var activeModel;
       var activeStatus = "pending";
@@ -1777,14 +1809,25 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         updateSubmitState();
       }
 
-      function render(result) {
+      function render(result, authoritativeTransition) {
         if (!result || typeof result !== "object") return;
         var job = findJob(result.structuredContent, 0);
+        if (!job) return;
+        if (!shouldAcceptWidgetJobResult(activeJobId, job.id, submitting, authoritativeTransition === true)) return;
+        if (authoritativeTransition === true) {
+          latestResolutionComplete = true;
+          latestResolutionInFlight = false;
+          latestResolutionRetryMs = 2000;
+          restoringJobId = undefined;
+          window.clearTimeout(latestResolutionRetryTimer);
+          latestResolutionRetryTimer = undefined;
+          window.clearTimeout(latestRestoreTimer);
+          latestRestoreTimer = undefined;
+        }
         var meta = result._meta && typeof result._meta === "object" ? result._meta : {};
         var media = Array.isArray(meta["pippit/media"]) ? meta["pippit/media"] : [];
-        if (!job) return;
         activeJobId = job.id;
-        activeModel = typeof job.model === "string" ? job.model : activeModel;
+        activeModel = resolveWidgetModel(activeModel, job.model);
         activeStatus = typeof job.status === "string" ? job.status : "pending";
         var preview = media.find(function (item) {
           return item && item.kind === "video" && (
@@ -1804,6 +1847,126 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           setPreview(job, preview);
         }
         updateSubmitState();
+      }
+
+      function storedActiveJobId(bootstrapJobId) {
+        var state = window.openai && window.openai.widgetState;
+        if (!state || typeof state !== "object" || state.pippit_video_state_version !== 1) return;
+        if (state.root_job_id !== bootstrapJobId || typeof state.active_job_id !== "string") return;
+        return state.active_job_id;
+      }
+
+      function persistActiveJobId(jobId) {
+        if (!rootJobId || !window.openai || typeof window.openai.setWidgetState !== "function") return;
+        void Promise.resolve(window.openai.setWidgetState({
+          active_job_id: jobId,
+          pippit_video_state_version: 1,
+          root_job_id: rootJobId
+        })).catch(function () {});
+      }
+
+      function widgetToolTransportAvailable() {
+        return serverToolsAvailable || Boolean(window.openai && typeof window.openai.callTool === "function");
+      }
+
+      function retryStoredJob(result, storedJobId) {
+        restoringJobId = storedJobId;
+        statusElement.textContent = "Reconnecting to the latest regenerated video…";
+        window.clearTimeout(latestRestoreTimer);
+        latestRestoreTimer = window.setTimeout(function () {
+          latestRestoreTimer = undefined;
+          if (destroyed || restoringJobId !== storedJobId) return;
+          restoringJobId = undefined;
+          renderBootstrapFallback(result);
+        }, pollDelayMs);
+      }
+
+      function renderBootstrapFallback(result) {
+        if (!result || typeof result !== "object" || !rootJobId) return;
+        var storedJobId = storedActiveJobId(rootJobId);
+        if (!storedJobId || storedJobId === rootJobId) {
+          render(result);
+          return;
+        }
+        if (activeJobId === storedJobId || restoringJobId === storedJobId) return;
+        restoringJobId = storedJobId;
+        showLoading("pending");
+        statusElement.textContent = "Loading the latest regenerated video…";
+        void callTool("pippit_get_video", { job_id: storedJobId }).then(function (latestResult) {
+          if (destroyed || restoringJobId !== storedJobId) return;
+          restoringJobId = undefined;
+          var latestJob = latestResult && !latestResult.isError
+            ? findJob(latestResult.structuredContent, 0)
+            : undefined;
+          if (!latestJob || latestJob.id !== storedJobId) {
+            retryStoredJob(result, storedJobId);
+            return;
+          }
+          render(latestResult, true);
+        }).catch(function () {
+          if (destroyed || restoringJobId !== storedJobId) return;
+          retryStoredJob(result, storedJobId);
+        });
+      }
+
+      function retryLatestResolution() {
+        latestResolutionInFlight = false;
+        showLoading("pending");
+        statusElement.textContent = "Reconnecting to the latest video…";
+        window.clearTimeout(latestResolutionRetryTimer);
+        latestResolutionRetryTimer = window.setTimeout(function () {
+          latestResolutionRetryTimer = undefined;
+          if (destroyed || latestResolutionComplete) return;
+          resolveLatestBootstrap();
+        }, latestResolutionRetryMs);
+        latestResolutionRetryMs = Math.min(10000, Math.max(3000, Math.round(latestResolutionRetryMs * 1.6)));
+      }
+
+      function resolveLatestBootstrap() {
+        if (
+          destroyed ||
+          latestResolutionComplete ||
+          latestResolutionInFlight ||
+          !bootstrapResult ||
+          !rootJobId ||
+          !widgetToolTransportAvailable()
+        ) return;
+        latestResolutionInFlight = true;
+        showLoading("pending");
+        statusElement.textContent = "Loading the latest video…";
+        void callTool("pippit_resolve_latest_video", { anchor_job_id: rootJobId }).then(function (latestResult) {
+          if (destroyed) return;
+          latestResolutionInFlight = false;
+          var latestJob = latestResult && !latestResult.isError
+            ? findJob(latestResult.structuredContent, 0)
+            : undefined;
+          if (!latestJob) {
+            retryLatestResolution();
+            return;
+          }
+          persistActiveJobId(latestJob.id);
+          render(latestResult, true);
+        }).catch(function () {
+          if (destroyed) return;
+          retryLatestResolution();
+        });
+      }
+
+      function renderBootstrapResult(result) {
+        if (!result || typeof result !== "object") return;
+        var bootstrapJob = findJob(result.structuredContent, 0);
+        if (!bootstrapJob) return;
+        activeModel = resolveWidgetModel(activeModel, bootstrapJob.model);
+        if (!rootJobId) rootJobId = bootstrapJob.id;
+        if (bootstrapJob.id === rootJobId) bootstrapResult = result;
+        if (latestResolutionComplete) {
+          if (restoringJobId) return;
+          render(result);
+          return;
+        }
+        showLoading("pending");
+        statusElement.textContent = "Loading the latest video…";
+        resolveLatestBootstrap();
       }
 
       async function refresh(automatic) {
@@ -1875,7 +2038,8 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
             setEditError(toolErrorText(result));
             return;
           }
-          if (!findJob(result.structuredContent, 0)) {
+          var regeneratedJob = findJob(result.structuredContent, 0);
+          if (!regeneratedJob) {
             showEditor();
             setEditError("Pippit returned an invalid regeneration result.");
             return;
@@ -1885,7 +2049,8 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           editIdempotencyKey = undefined;
           setAnnotationMode(false);
           renderAnnotations();
-          render(result);
+          persistActiveJobId(regeneratedJob.id);
+          render(result, true);
         } catch (error) {
           showEditor();
           setEditError(error instanceof Error ? error.message : String(error));
@@ -1925,7 +2090,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         var output = window.openai.toolOutput;
         var metadata = window.openai.toolResponseMetadata;
         if (output !== undefined || metadata !== undefined) {
-          render({ structuredContent: output, _meta: metadata || {} });
+          renderBootstrapResult({ structuredContent: output, _meta: metadata || {} });
         }
       }
 
@@ -1937,6 +2102,8 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         clearPollTimer();
         clearPreviewRenewal();
         window.clearTimeout(previewRetryTimer);
+        window.clearTimeout(latestResolutionRetryTimer);
+        window.clearTimeout(latestRestoreTimer);
         stopInfinityLoader();
         filmstripGeneration += 1;
         pending.forEach(function (state) {
@@ -1974,7 +2141,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           hostContext = Object.assign({}, hostContext, nextHostContext);
           return;
         }
-        if (message.method === "ui/notifications/tool-result") render(message.params);
+        if (message.method === "ui/notifications/tool-result") renderBootstrapResult(message.params);
       });
 
       for (var loaderIndex = 0; loaderIndex < 25; loaderIndex += 1) {
@@ -2106,7 +2273,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       fallbackTimer = window.setTimeout(useOpenAiInitialResult, 1200);
       request("ui/initialize", {
         protocolVersion: protocolVersion,
-        appInfo: { name: "pippit-video-editor", title: "Pippit video regeneration", version: "0.2.11" },
+        appInfo: { name: "pippit-video-editor", title: "Pippit video regeneration", version: "0.2.12" },
         appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] }
       }).then(function (result) {
         protocolReady = true;
@@ -2118,6 +2285,12 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         serverResourcesAvailable = Boolean(capabilities.serverResources);
         serverToolsAvailable = Boolean(capabilities.serverTools);
         post({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
+        if (!widgetToolTransportAvailable() && bootstrapResult) {
+          latestResolutionComplete = true;
+          renderBootstrapFallback(bootstrapResult);
+        } else {
+          resolveLatestBootstrap();
+        }
         if (pendingPreviewRetry) {
           pendingPreviewRetry = false;
           if (activeJobId && activePreviewMedia && typeof activePreviewMedia.resource_uri === "string") {
@@ -2134,6 +2307,12 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         reportSize();
       }).catch(function () {
         useOpenAiInitialResult();
+        if (!widgetToolTransportAvailable() && bootstrapResult) {
+          latestResolutionComplete = true;
+          renderBootstrapFallback(bootstrapResult);
+        } else {
+          resolveLatestBootstrap();
+        }
         if (pendingPreviewRetry) {
           pendingPreviewRetry = false;
           if (

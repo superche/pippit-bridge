@@ -1,6 +1,7 @@
 import type { AddressInfo } from "node:net"
 import { request as httpRequest, type Server } from "node:http"
 
+import { PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME } from "@pippit-bridge/mcp-server"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
@@ -63,6 +64,7 @@ function config(previews = false): ChatGptAppConfig {
       : {}),
     mediaTtlSeconds: 300,
     port: 8787,
+    runtimeDataRoot: "/tmp/pippit-chatgpt-http-test",
   }
 }
 
@@ -111,7 +113,7 @@ describe("ChatGPT App HTTP server", () => {
     expect(await initialized.json()).toMatchObject({
       id: 1,
       jsonrpc: "2.0",
-      result: { serverInfo: { name: "pippit-chatgpt-app", version: "0.2.11" } },
+      result: { serverInfo: { name: "pippit-chatgpt-app", version: "0.2.12" } },
     })
 
     const toolsResponse = await fetch(`${baseUrl}/mcp`, {
@@ -127,7 +129,13 @@ describe("ChatGPT App HTTP server", () => {
     const toolsBody = await toolsResponse.json() as {
       result?: { tools?: Array<{ _meta?: Record<string, unknown>; name?: string; securitySchemes?: unknown }> }
     }
-    expect(toolsBody.result?.tools?.map((tool) => tool.name)).toEqual(Object.values(CHATGPT_TOOL_NAMES))
+    expect(toolsBody.result?.tools?.map((tool) => tool.name)).toEqual([
+      CHATGPT_TOOL_NAMES.list,
+      CHATGPT_TOOL_NAMES.generate,
+      CHATGPT_TOOL_NAMES.get,
+      PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME,
+      CHATGPT_TOOL_NAMES.edit,
+    ])
     for (const tool of toolsBody.result?.tools ?? []) {
       expect(tool.securitySchemes).toEqual([{ type: "noauth" }])
       expect(tool._meta?.securitySchemes).toEqual([{ type: "noauth" }])

@@ -7,12 +7,14 @@ import {
   PIPPIT_WIDGET_HTML,
   PIPPIT_WIDGET_URI,
   reconcileWidgetDraftForDuration,
+  resolveWidgetModel,
+  shouldAcceptWidgetJobResult,
   widgetDraftPayloadEquals,
 } from "@pippit-bridge/mcp-server"
 
 describe("Pippit MCP App widget", () => {
   it("uses the stable MCP App resource contract", () => {
-    expect(PIPPIT_WIDGET_URI).toBe("ui://widget/pippit-video-job-v12.html")
+    expect(PIPPIT_WIDGET_URI).toBe("ui://widget/pippit-video-job-v13.html")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/initialize")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/notifications/initialized")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/notifications/tool-result")
@@ -36,6 +38,7 @@ describe("Pippit MCP App widget", () => {
       "pippit_get_video",
       "pippit_download_video",
       "pippit_edit_video_segment",
+      "pippit_resolve_latest_video",
     ]) {
       expect(PIPPIT_WIDGET_HTML).toContain(`"${name}"`)
     }
@@ -44,6 +47,8 @@ describe("Pippit MCP App widget", () => {
     expect(PIPPIT_WIDGET_HTML).toContain('request("tools/call", { name: name, arguments: args }, timeoutMs)')
     expect(PIPPIT_WIDGET_HTML).toContain("window.openai.toolOutput")
     expect(PIPPIT_WIDGET_HTML).toContain("window.openai.callTool")
+    expect(PIPPIT_WIDGET_HTML).toContain("window.openai.widgetState")
+    expect(PIPPIT_WIDGET_HTML).toContain("window.openai.setWidgetState")
   })
 
   it("renders only metadata-provided HTTPS or local MCP resource previews", () => {
@@ -169,6 +174,64 @@ describe("Pippit MCP App widget", () => {
     expect(
       classifyPreviewUpdate("job-1", 0, "https://media/one", true, "job-1", 1, "https://media/one"),
     ).toBe("new-source")
+  })
+
+  it("keeps the regenerated job and artifact when bootstrap results replay", () => {
+    type Selection = { artifactUri: string | undefined; jobId: string }
+    const oldDone: Selection = {
+      artifactUri: `pippit-video://artifact/${"a".repeat(64)}`,
+      jobId: "job-old",
+    }
+    const newPending: Selection = { artifactUri: undefined, jobId: "job-new" }
+    const newDone: Selection = {
+      artifactUri: `pippit-video://artifact/${"b".repeat(64)}`,
+      jobId: "job-new",
+    }
+    let selected: Selection | undefined
+    let regenerationPending = false
+    const apply = (incoming: Selection, authoritativeTransition = false): boolean => {
+      const accepted = shouldAcceptWidgetJobResult(
+        selected?.jobId,
+        incoming.jobId,
+        regenerationPending,
+        authoritativeTransition,
+      )
+      if (accepted) selected = incoming
+      return accepted
+    }
+
+    expect(apply(oldDone)).toBe(true)
+    regenerationPending = true
+    expect(apply(oldDone)).toBe(false)
+    expect(apply(newPending)).toBe(false)
+    expect(apply(newPending, true)).toBe(true)
+    regenerationPending = false
+    expect(apply(newDone)).toBe(true)
+    expect(apply(oldDone)).toBe(false)
+    expect(apply(oldDone)).toBe(false)
+    expect(selected).toEqual(newDone)
+    expect(selected?.artifactUri).toBe(newDone.artifactUri)
+
+    expect(shouldAcceptWidgetJobResult(undefined, "A", false)).toBe(true)
+    expect(shouldAcceptWidgetJobResult("A", "A", false)).toBe(true)
+    expect(shouldAcceptWidgetJobResult("A", "A", true)).toBe(false)
+    expect(shouldAcceptWidgetJobResult("A", "B", true)).toBe(false)
+    expect(shouldAcceptWidgetJobResult("A", "B", true, true)).toBe(true)
+    expect(shouldAcceptWidgetJobResult("B", "A", false)).toBe(false)
+    expect(PIPPIT_WIDGET_HTML).toContain("shouldAcceptWidgetJobResult(activeJobId, job.id, submitting")
+    expect(PIPPIT_WIDGET_HTML).toContain("renderBootstrapResult(message.params)")
+    expect(PIPPIT_WIDGET_HTML).toContain("renderBootstrapResult({ structuredContent: output")
+    expect(PIPPIT_WIDGET_HTML).toContain(
+      'callTool("pippit_resolve_latest_video", { anchor_job_id: rootJobId })',
+    )
+    expect(PIPPIT_WIDGET_HTML).toContain('callTool("pippit_get_video", { job_id: storedJobId })')
+    expect(PIPPIT_WIDGET_HTML).toContain("resolveLatestBootstrap();")
+    expect(PIPPIT_WIDGET_HTML).toContain("retryLatestResolution();")
+    expect(PIPPIT_WIDGET_HTML).toContain("activeModel = resolveWidgetModel(activeModel, bootstrapJob.model)")
+    expect(resolveWidgetModel(undefined, "pippit/original")).toBe("pippit/original")
+    expect(resolveWidgetModel("pippit/original", undefined)).toBe("pippit/original")
+    expect(resolveWidgetModel("pippit/original", null)).toBe("pippit/original")
+    expect(resolveWidgetModel("pippit/original", "pippit/regenerated")).toBe("pippit/regenerated")
   })
 
   it("preserves a draft and playhead when a signed media URL is renewed", () => {
@@ -351,7 +414,8 @@ describe("Pippit MCP App widget", () => {
     expect(submitSource.indexOf('callTool("pippit_edit_video_segment", args)')).toBeLessThan(
       submitSource.indexOf('requestDisplayMode("inline")'),
     )
-    expect(submitSource.indexOf("render(result)")).toBeGreaterThan(
+    expect(submitSource).toContain("render(result, true)")
+    expect(submitSource.indexOf("render(result, true)")).toBeGreaterThan(
       submitSource.indexOf('callTool("pippit_edit_video_segment", args)'),
     )
   })

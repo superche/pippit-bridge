@@ -10,11 +10,13 @@ import { describe, expect, it, vi } from "vitest"
 import { defaultPippitOutputDirectory } from "../src/options.ts"
 import {
   PIPPIT_READ_VIDEO_CHUNK_TOOL_NAME,
+  PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME,
   isPippitStdioEntrypoint,
   resolvePippitStdioMediaOutputRoot,
   runPippitStdioServer,
 } from "../src/stdio.ts"
 import { PIPPIT_RUNTIME_TOOL_DEFINITIONS } from "../src/tools.ts"
+import { createInMemoryPippitWidgetLineageStore } from "../src/widget-lineage.ts"
 import { createPippitWidgetMediaServer } from "../src/widget-media.ts"
 import { PIPPIT_WIDGET_URI } from "../src/widget.ts"
 
@@ -56,6 +58,145 @@ describe("Pippit stdio entrypoint", () => {
       child.stdin.end()
     })
     expect(result).toEqual({ code: 0, stderr: "", stdout: "" })
+  })
+
+  it("resolves a regenerated descendant after the original widget is recreated", async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    let stdout = ""
+    output.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk })
+    const definitions = PIPPIT_RUNTIME_TOOL_DEFINITIONS.filter(definition =>
+      definition.name === "pippit_edit_video_segment" || definition.name === "pippit_get_video")
+    const running = runPippitStdioServer({
+      input,
+      output,
+      runtime: {
+        async callTool(name, args) {
+          const jobId = name === "pippit_edit_video_segment"
+            ? "job_regenerated"
+            : (args as { job_id: string }).job_id
+          const job = {
+            id: jobId,
+            model: "pippit/test",
+            polling_url: `/api/v1/videos/${jobId}`,
+            status: name === "pippit_edit_video_segment" ? "pending" : "completed",
+            ...(name === "pippit_get_video" ? { unsigned_urls: ["private"] } : {}),
+          }
+          return { content: [{ text: JSON.stringify(job), type: "text" }], structuredContent: job }
+        },
+        listTools: () => definitions,
+      },
+      widgetLineage: createInMemoryPippitWidgetLineageStore(),
+      widgetMedia: {
+        async close() {},
+        async listResources() { return { resources: [] } },
+        async preparePreview(jobId) {
+          return {
+            bytes: 8,
+            filename: "latest.mp4",
+            localPath: "/private/latest.mp4",
+            resourceUri: `pippit-video://artifact/${(jobId === "job_regenerated" ? "b" : "a").repeat(64)}`,
+          }
+        },
+        async readChunk() { return undefined },
+        async readResource() { return undefined },
+      },
+    })
+    input.write([
+      JSON.stringify({ id: 1, jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-11-25" } }),
+      JSON.stringify({
+        id: 2,
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          arguments: {
+            annotations: [],
+            idempotency_key: "edit-one",
+            model: "pippit/test",
+            prompt: "Make it blue",
+            segment: { end_ms: 5_000, start_ms: 0 },
+            source_job_id: "job_original",
+          },
+          name: "pippit_edit_video_segment",
+        },
+      }),
+      JSON.stringify({
+        id: 3,
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          arguments: { anchor_job_id: "job_original" },
+          name: PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME,
+        },
+      }),
+      "",
+    ].join("\n"))
+    await vi.waitFor(() => expect(stdout.trim().split("\n")).toHaveLength(3))
+    input.end()
+    await running
+
+    const responses = stdout.trim().split("\n").map(line => JSON.parse(line) as {
+      id: number
+      result: { _meta?: Record<string, unknown>; structuredContent?: { id?: string } }
+    })
+    const latest = responses.find(response => response.id === 3)?.result
+    expect(latest?.structuredContent?.id).toBe("job_regenerated")
+    expect((latest?._meta?.["pippit/media"] as Array<{ resource_uri?: string }> | undefined)?.[0]?.resource_uri)
+      .toContain("b")
+  })
+
+  it("fails latest-video resolution instead of silently restoring the anchor", async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    let stdout = ""
+    output.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk })
+    const callTool = vi.fn()
+    const running = runPippitStdioServer({
+      input,
+      output,
+      runtime: {
+        callTool,
+        listTools: () => [],
+      },
+      widgetLineage: {
+        async record() {},
+        async resolve() { throw new Error("corrupt state") },
+        track() {},
+      },
+      widgetMedia: {
+        async close() {},
+        async listResources() { return { resources: [] } },
+        async preparePreview() { throw new Error("unexpected preview") },
+        async readChunk() { return undefined },
+        async readResource() { return undefined },
+      },
+    })
+    input.write([
+      JSON.stringify({ id: 1, jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-11-25" } }),
+      JSON.stringify({
+        id: 2,
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          arguments: { anchor_job_id: "job_original" },
+          name: PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME,
+        },
+      }),
+      "",
+    ].join("\n"))
+    await vi.waitFor(() => expect(stdout.trim().split("\n")).toHaveLength(2))
+    input.end()
+    await running
+
+    const result = (JSON.parse(stdout.trim().split("\n")[1]!) as {
+      result: { isError?: boolean; structuredContent?: { error?: { code?: string } } }
+    }).result
+    expect(result).toMatchObject({
+      isError: true,
+      structuredContent: { error: { code: "latest_video_state_unavailable" } },
+    })
+    expect(callTool).not.toHaveBeenCalled()
+    expect(stdout).not.toContain("corrupt state")
   })
 
   it("recognizes an npm-style bin symlink as the module entrypoint", async () => {

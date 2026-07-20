@@ -72,6 +72,7 @@ const facadeOrigin = `http://127.0.0.1:${facadeAddress.port}`
 
 const pluginEnv = {
   PATH: process.env.PATH ?? "",
+  PIPPIT_BRIDGE_HOME: join(outputRoot, "state"),
   PIPPIT_FACADE_API_KEY: facadeApiKey,
   PIPPIT_FACADE_BASE_URL: facadeOrigin,
   PIPPIT_MCP_OUTPUT_ROOT: outputRoot,
@@ -242,9 +243,9 @@ try {
     clientInfo: { name: "installed-media-smoke", version: "1" },
     protocolVersion: "2025-11-25",
   })
-  if (initialized?.serverInfo?.version !== "0.2.11") throw new Error("Unexpected installed plugin version.")
-  const resource = await rpc("resources/read", { uri: "ui://widget/pippit-video-job-v12.html" })
-  if (!resource?.contents?.[0]?.text?.includes("pippit-video-editor")) throw new Error("Missing v12 widget resource.")
+  if (initialized?.serverInfo?.version !== "0.2.12") throw new Error("Unexpected installed plugin version.")
+  const resource = await rpc("resources/read", { uri: "ui://widget/pippit-video-job-v13.html" })
+  if (!resource?.contents?.[0]?.text?.includes("pippit-video-editor")) throw new Error("Missing v13 widget resource.")
   const result = await rpc("tools/call", {
     arguments: { job_id: "job_installed_media" },
     name: "pippit_get_video",
@@ -253,6 +254,18 @@ try {
   if (result?.isError === true || preview === undefined) throw new Error("The installed plugin did not return local media.")
   if (JSON.stringify(result).includes("local_path") || JSON.stringify(result).includes(outputRoot)) {
     throw new Error("The installed plugin exposed its local output path.")
+  }
+  const latestResult = await rpc("tools/call", {
+    arguments: { anchor_job_id: "job_installed_media" },
+    name: "pippit_resolve_latest_video",
+  })
+  const latestPreview = latestResult?._meta?.["pippit/media"]?.[0]
+  if (
+    latestResult?.isError === true ||
+    latestResult?.structuredContent?.id !== "job_installed_media" ||
+    latestPreview?.resource_uri !== preview.resource_uri
+  ) {
+    throw new Error("The installed plugin latest-video resolver did not return the current local artifact.")
   }
   if (!/^pippit-video-[a-f0-9]{64}\.mp4$/u.test(preview.filename)) {
     throw new Error("The installed plugin returned an invalid opaque media filename.")

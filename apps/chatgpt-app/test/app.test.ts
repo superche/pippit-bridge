@@ -1,11 +1,20 @@
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
-import { PIPPIT_TOOL_DEFINITIONS, PIPPIT_WIDGET_URI } from "@pippit-bridge/mcp-server"
-import { afterEach, describe, expect, it } from "vitest"
+import {
+  PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME,
+  PIPPIT_TOOL_DEFINITIONS,
+  PIPPIT_WIDGET_URI,
+} from "@pippit-bridge/mcp-server"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
   CHATGPT_TOOL_NAMES,
   chatGptEditInputSchema,
+  createChatGptAppRuntime,
   createChatGptAppMcpServer,
   type PippitFacadeClientLike,
   type PippitToolRuntimeLike,
@@ -13,9 +22,12 @@ import {
 import type { ChatGptAppConfig } from "../src/config.js"
 
 const connected: Array<{ close(): Promise<void> }> = []
+const temporaryRoots: string[] = []
 
 afterEach(async () => {
   await Promise.all(connected.splice(0).map((item) => item.close()))
+  await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { force: true, recursive: true })))
+  vi.unstubAllEnvs()
 })
 
 function config(): ChatGptAppConfig {
@@ -28,10 +40,56 @@ function config(): ChatGptAppConfig {
     mediaTtlSeconds: 300,
     port: 8787,
     publicBaseUrl: "https://apps.example.test",
+    runtimeDataRoot: "/tmp/pippit-chatgpt-app-test",
   }
 }
 
 describe("Pippit ChatGPT MCP App", () => {
+  it("persists local latest-video lineage across App runtime restarts", async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), "pippit-chatgpt-lineage-"))
+    temporaryRoots.push(dataRoot)
+    const localConfig = { ...config(), runtimeDataRoot: dataRoot }
+    const first = createChatGptAppRuntime(localConfig)
+    await first.lineage.record("job_original", "job_regenerated")
+    const restarted = createChatGptAppRuntime(localConfig)
+    await expect(restarted.lineage.resolve("job_original")).resolves.toBe("job_regenerated")
+  })
+
+  it("does not silently restore the anchor when latest-video state is unavailable", async () => {
+    const runtime: PippitToolRuntimeLike = { callTool: vi.fn() }
+    const clientDependency: PippitFacadeClientLike = {
+      async downloadVideo() { return new Response("video") },
+    }
+    const { server } = createChatGptAppMcpServer({
+      config: config(),
+      dependencies: {
+        client: clientDependency,
+        lineage: {
+          async record() {},
+          async resolve() { throw new Error("corrupt state") },
+          track() {},
+        },
+        runtime,
+      },
+    })
+    const client = new Client({ name: "test-client", version: "1.0.0" })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    connected.push(client, server)
+    await server.connect(serverTransport)
+    await client.connect(clientTransport)
+
+    const result = await client.callTool({
+      arguments: { anchor_job_id: "job_original" },
+      name: PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME,
+    })
+    expect(result).toMatchObject({
+      isError: true,
+      structuredContent: { error: { code: "latest_video_state_unavailable" } },
+    })
+    expect(runtime.callTool).not.toHaveBeenCalled()
+    expect(JSON.stringify(result)).not.toContain("corrupt state")
+  })
+
   it("registers noauth tools, output schemas, and the MCP App resource", async () => {
     const calls: Array<{ args: unknown; name: string }> = []
     const runtime: PippitToolRuntimeLike = {
@@ -40,10 +98,15 @@ describe("Pippit ChatGPT MCP App", () => {
         if (name === CHATGPT_TOOL_NAMES.list) {
           return { content: [{ type: "text", text: "No models in this test." }], structuredContent: { data: [] } }
         }
+        const requestedJobId = name === CHATGPT_TOOL_NAMES.get &&
+          typeof args === "object" && args !== null &&
+          typeof (args as Record<string, unknown>).job_id === "string"
+          ? (args as Record<string, string>).job_id
+          : undefined
         const job = {
-          id: "job_123",
+          id: name === CHATGPT_TOOL_NAMES.edit ? "job_regenerated" : requestedJobId ?? "job_123",
           model: "pippit/test",
-          polling_url: "/api/v1/videos/job_123",
+          polling_url: "/api/v1/videos/job",
           status: "completed",
           unsigned_urls: ["/api/v1/videos/job_123/content?index=0"],
         }
@@ -66,7 +129,13 @@ describe("Pippit ChatGPT MCP App", () => {
     await client.connect(clientTransport)
 
     const listed = await client.listTools()
-    expect(listed.tools.map((tool) => tool.name)).toEqual(Object.values(CHATGPT_TOOL_NAMES))
+    expect(listed.tools.map((tool) => tool.name)).toEqual([
+      CHATGPT_TOOL_NAMES.list,
+      CHATGPT_TOOL_NAMES.generate,
+      CHATGPT_TOOL_NAMES.get,
+      PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME,
+      CHATGPT_TOOL_NAMES.edit,
+    ])
     expect(listed.tools.some((tool) => /access[_-]?key|byok/iu.test(tool.name))).toBe(false)
     for (const tool of listed.tools) {
       expect(tool._meta?.securitySchemes).toEqual([{ type: "noauth" }])
@@ -76,6 +145,7 @@ describe("Pippit ChatGPT MCP App", () => {
     const generateTool = listed.tools.find((tool) => tool.name === CHATGPT_TOOL_NAMES.generate)
     const getTool = listed.tools.find((tool) => tool.name === CHATGPT_TOOL_NAMES.get)
     const editTool = listed.tools.find((tool) => tool.name === CHATGPT_TOOL_NAMES.edit)
+    const resolveLatestTool = listed.tools.find((tool) => tool.name === PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME)
     expect(listTool?._meta?.ui).toBeUndefined()
     expect(generateTool?.annotations?.openWorldHint).toBe(true)
     expect(generateTool?._meta?.["openai/fileParams"]).toEqual([
@@ -95,6 +165,9 @@ describe("Pippit ChatGPT MCP App", () => {
     expect(generateTool?._meta?.["openai/widgetAccessible"]).toBe(true)
     expect(getTool?._meta?.["openai/widgetAccessible"]).toBe(true)
     expect(editTool?._meta?.["openai/widgetAccessible"]).toBe(true)
+    expect(resolveLatestTool?._meta?.ui).toEqual({ visibility: ["app"] })
+    expect(resolveLatestTool?._meta?.["openai/widgetAccessible"]).toBe(true)
+    expect(resolveLatestTool?._meta?.["openai/outputTemplate"]).toBeUndefined()
 
     for (const tool of [listTool, getTool, editTool]) {
       const shared = PIPPIT_TOOL_DEFINITIONS.find((definition) => definition.name === tool?.name)
@@ -208,6 +281,17 @@ describe("Pippit ChatGPT MCP App", () => {
     expect(edited.structuredContent).not.toHaveProperty("unsigned_urls")
     expect((edited._meta?.["pippit/media"] as unknown[] | undefined)).toHaveLength(1)
     expect(JSON.stringify(edited)).not.toContain("local_path")
+
+    const latest = await client.callTool({
+      arguments: { anchor_job_id: "job_123" },
+      name: PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME,
+    })
+    expect(calls.at(-1)).toEqual({
+      args: { job_id: "job_regenerated" },
+      name: CHATGPT_TOOL_NAMES.get,
+    })
+    expect(latest.structuredContent).toMatchObject({ id: "job_regenerated", status: "completed" })
+    expect((latest._meta?.["pippit/media"] as unknown[] | undefined)).toHaveLength(1)
   })
 
   it("validates edit duration, region bounds, and instruction presence", () => {

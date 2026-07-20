@@ -2,6 +2,7 @@ import { z } from "zod"
 
 import {
   PIPPIT_DEFAULT_FACADE_TIMEOUT_MS,
+  resolvePippitLocalRuntimePaths,
   resolvePippitRuntimeEnvironment,
   type PippitResolvedRuntimeEnvironment,
 } from "@pippit-bridge/mcp-server"
@@ -104,6 +105,7 @@ export interface ChatGptAppConfig {
   readonly mediaTtlSeconds: number
   readonly port: number
   readonly publicBaseUrl?: string
+  readonly runtimeDataRoot: string
 }
 
 export type PippitRuntimeEnvironmentResolver = (
@@ -133,6 +135,7 @@ export function parseChatGptAppConfig(env: NodeJS.ProcessEnv = {}): ChatGptAppCo
     ...(parsed.CHATGPT_APP_PUBLIC_BASE_URL === undefined
       ? {}
       : { publicBaseUrl: trimTrailingSlash(parsed.CHATGPT_APP_PUBLIC_BASE_URL) }),
+    runtimeDataRoot: resolvePippitLocalRuntimePaths(env).dataRoot,
   }
 }
 
@@ -166,7 +169,10 @@ export async function resolveChatGptAppConfig(
     configEnvironment.CHATGPT_APP_MEDIA_SIGNING_KEY_HEX = resolved.local.mediaSigningKeyHex
   }
 
-  return parseChatGptAppConfig(configEnvironment)
+  const config = parseChatGptAppConfig(configEnvironment)
+  return resolved.local === undefined
+    ? config
+    : { ...config, runtimeDataRoot: resolved.local.dataRoot }
 }
 
 export function mediaPreviewsEnabled(

@@ -108,6 +108,8 @@ export {
   classifyPreviewUpdate,
   mergeWidgetDraftForMediaRefresh,
   reconcileWidgetDraftForDuration,
+  resolveWidgetModel,
+  shouldAcceptWidgetJobResult,
   widgetDraftPayloadEquals,
   type PreviewUpdateKind,
   type WidgetDraftAnnotation,
@@ -115,7 +117,15 @@ export {
   type WidgetRegion,
 } from "./widget.ts"
 export {
+  PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME,
+  createInMemoryPippitWidgetLineageStore,
+  createPersistentPippitWidgetLineageStore,
+  type PippitPersistentWidgetLineageStoreOptions,
+  type PippitWidgetLineageStore,
+} from "./widget-lineage.ts"
+export {
   PIPPIT_WIDGET_MIME_TYPE,
+  extractPippitWidgetJob,
   pippitWidgetListResources,
   pippitWidgetReadResource,
   pippitWidgetResourceMetadata,
@@ -123,6 +133,7 @@ export {
   sanitizePippitWidgetValue,
   withPippitWidgetTools,
   type PippitWidgetMediaPreview,
+  type PippitWidgetJobLike,
   type PippitWidgetPreparedPreview,
   type PippitWidgetPreviewUrlFactory,
   type PippitWidgetResourceMetadataOptions,

@@ -23,6 +23,7 @@ const LEGACY_PIPPIT_WIDGET_URIS = new Set([
   "ui://widget/pippit-video-job-v9.html",
   "ui://widget/pippit-video-job-v10.html",
   "ui://widget/pippit-video-job-v11.html",
+  "ui://widget/pippit-video-job-v12.html",
 ])
 
 const INVOCATION_STATUS: Readonly<Record<string, readonly [string, string]>> = {
@@ -31,7 +32,7 @@ const INVOCATION_STATUS: Readonly<Record<string, readonly [string, string]>> = {
   pippit_get_video: ["Refreshing Pippit video…", "Pippit video refreshed"],
 }
 
-interface JobLike {
+export interface PippitWidgetJobLike {
   readonly id: string
   readonly status: string
   readonly unsigned_urls?: readonly string[]
@@ -67,7 +68,7 @@ export interface PippitWidgetResourceMetadataOptions {
   readonly origin?: string
 }
 
-function extractJob(value: unknown, depth = 0): JobLike | undefined {
+export function extractPippitWidgetJob(value: unknown, depth = 0): PippitWidgetJobLike | undefined {
   if (depth > 6 || value === null || typeof value !== "object" || Array.isArray(value)) return undefined
   const object = value as Record<string, unknown>
   const id = typeof object.id === "string" ? object.id : object.job_id
@@ -81,7 +82,7 @@ function extractJob(value: unknown, depth = 0): JobLike | undefined {
     }
   }
   for (const nested of Object.values(object)) {
-    const job = extractJob(nested, depth + 1)
+    const job = extractPippitWidgetJob(nested, depth + 1)
     if (job !== undefined) return job
   }
   return undefined
@@ -130,7 +131,7 @@ export async function projectPippitWidgetResult(
   result: PippitMcpCallToolResult,
   previewUrl?: PippitWidgetPreviewUrlFactory,
 ): Promise<PippitMcpCallToolResult> {
-  const rawJob = extractJob(result.structuredContent)
+  const rawJob = extractPippitWidgetJob(result.structuredContent)
   const previews: PippitWidgetMediaPreview[] = []
   if (previewUrl !== undefined && result.isError !== true && rawJob?.status === "completed") {
     for (let index = 0; index < (rawJob.unsigned_urls?.length ?? 0); index += 1) {

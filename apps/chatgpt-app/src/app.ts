@@ -1,4 +1,5 @@
-import { resolve } from "node:path"
+import { createHash } from "node:crypto"
+import { join, resolve } from "node:path"
 
 import {
   RESOURCE_MIME_TYPE,
@@ -14,12 +15,17 @@ import {
 import {
   PIPPIT_WIDGET_HTML,
   PIPPIT_WIDGET_URI,
+  PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME,
   PIPPIT_TOOL_DEFINITIONS,
   PippitFacadeClient,
+  createInMemoryPippitWidgetLineageStore,
+  createPersistentPippitWidgetLineageStore,
   createPippitToolRuntime,
+  extractPippitWidgetJob,
   pippitWidgetResourceMetadata,
   projectPippitWidgetResult,
   type PippitMcpCallToolResult,
+  type PippitWidgetLineageStore,
   type PippitWidgetMediaPreview,
 } from "@pippit-bridge/mcp-server"
 import { z } from "zod"
@@ -255,6 +261,7 @@ export interface PippitFacadeClientLike {
 
 export interface ChatGptAppDependencies {
   readonly client: PippitFacadeClientLike
+  readonly lineage?: PippitWidgetLineageStore
   readonly runtime: PippitToolRuntimeLike
 }
 
@@ -267,6 +274,7 @@ export interface ChatGptAppMcpOptions {
 
 export interface ChatGptAppRuntime {
   readonly client: PippitFacadeClientLike
+  readonly lineage: PippitWidgetLineageStore
   readonly mediaSigner?: MediaTokenSigner
   readonly runtime: PippitToolRuntimeLike
 }
@@ -415,6 +423,7 @@ export function createChatGptAppRuntime(
   if (dependencies !== undefined) {
     return {
       client: dependencies.client,
+      lineage: dependencies.lineage ?? createInMemoryPippitWidgetLineageStore(),
       ...(mediaPreviewsEnabled(config)
         ? {
             mediaSigner: createMediaTokenSigner({
@@ -433,6 +442,10 @@ export function createChatGptAppRuntime(
   })
   return {
     client,
+    lineage: createPersistentPippitWidgetLineageStore({
+      root: join(config.runtimeDataRoot, "widget-state", "lineage-v1"),
+      scope: createHash("sha256").update(config.facadeApiKey, "utf8").digest("hex"),
+    }),
     ...(mediaPreviewsEnabled(config)
       ? {
           mediaSigner: createMediaTokenSigner({
@@ -462,7 +475,7 @@ export function createChatGptAppMcpServer(options: ChatGptAppMcpOptions): {
 } {
   const { config } = options
   const appRuntime = createChatGptAppRuntime(config, options.dependencies)
-  const server = new McpServer({ name: "pippit-chatgpt-app", version: "0.2.11" })
+  const server = new McpServer({ name: "pippit-chatgpt-app", version: "0.2.12" })
   const sharedList = sharedToolPresentation(CHATGPT_TOOL_NAMES.list)
   const sharedGenerate = sharedToolPresentation(CHATGPT_TOOL_NAMES.generate)
   const sharedGet = sharedToolPresentation(CHATGPT_TOOL_NAMES.get)
@@ -545,6 +558,51 @@ export function createChatGptAppMcpServer(options: ChatGptAppMcpOptions): {
 
   registerAppTool(
     server,
+    PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME,
+    withNoauthSecurity({
+      _meta: {
+        ...toolMetadata("Loading latest Pippit video…", "Latest Pippit video loaded", false),
+        ui: { visibility: ["app"] },
+        "openai/widgetAccessible": true,
+      },
+      annotations: {
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+        readOnlyHint: true,
+        title: "Resolve latest regenerated video",
+      },
+      description: "Resolve the newest regenerated descendant without starting a generation.",
+      inputSchema: { anchor_job_id: z.string().trim().min(1).max(8_192) },
+      outputSchema: PIPPIT_VIDEO_JOB_OUTPUT_SHAPE,
+      title: "Resolve latest regenerated video",
+    }),
+    async ({ anchor_job_id }) => {
+      let latestJobId: string
+      try {
+        latestJobId = await appRuntime.lineage.resolve(anchor_job_id)
+      } catch {
+        return {
+          content: [{ text: "The latest regenerated video state is temporarily unavailable.", type: "text" }],
+          isError: true,
+          structuredContent: {
+            error: {
+              code: "latest_video_state_unavailable",
+              message: "The latest regenerated video state is temporarily unavailable.",
+            },
+          },
+        }
+      }
+      return decorateResult(
+        await appRuntime.runtime.callTool(CHATGPT_TOOL_NAMES.get, { job_id: latestJobId }),
+        config,
+        appRuntime.mediaSigner,
+      )
+    },
+  )
+
+  registerAppTool(
+    server,
     CHATGPT_TOOL_NAMES.edit,
     withNoauthSecurity({
       _meta: toolMetadata("Preparing reference video…", "New Pippit generation submitted", true),
@@ -556,8 +614,20 @@ export function createChatGptAppMcpServer(options: ChatGptAppMcpOptions): {
     }),
     async (rawInput) => {
       const input = chatGptEditInputSchema.parse(rawInput)
+      const toolCall = appRuntime.runtime.callTool(CHATGPT_TOOL_NAMES.edit, input)
+      const lineageCompletion = toolCall.then(async (result) => {
+        const regeneratedJob = result.isError === true
+          ? undefined
+          : extractPippitWidgetJob(result.structuredContent)
+        if (regeneratedJob !== undefined && regeneratedJob.id !== input.source_job_id) {
+          await appRuntime.lineage.record(input.source_job_id, regeneratedJob.id)
+        }
+      })
+      appRuntime.lineage.track(input.source_job_id, lineageCompletion)
+      const result = await toolCall
+      await lineageCompletion.catch(() => undefined)
       return decorateResult(
-        await appRuntime.runtime.callTool(CHATGPT_TOOL_NAMES.edit, input),
+        result,
         config,
         appRuntime.mediaSigner,
       )

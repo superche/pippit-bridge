@@ -240,6 +240,7 @@ export function createChatGptHttpServer(options: ChatGptHttpServerOptions): Serv
   const appRuntime = createChatGptAppRuntime(config, options.dependencies)
   const dependencies: ChatGptAppDependencies = {
     client: appRuntime.client,
+    lineage: appRuntime.lineage,
     runtime: appRuntime.runtime,
   }
 

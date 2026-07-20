@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto"
 import { realpathSync } from "node:fs"
 import { createInterface } from "node:readline"
-import { resolve } from "node:path"
+import { join, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { PippitFacadeClient, PippitFacadeManagementClient } from "./client.ts"
 import {
@@ -30,6 +31,12 @@ import {
   type PippitWidgetMediaServer,
 } from "./widget-media.ts"
 import {
+  PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME,
+  createPersistentPippitWidgetLineageStore,
+  type PippitWidgetLineageStore,
+} from "./widget-lineage.ts"
+import {
+  extractPippitWidgetJob,
   projectPippitWidgetResult,
   withPippitWidgetTools,
 } from "./widget-protocol.ts"
@@ -39,10 +46,12 @@ export interface PippitStdioServerOptions {
   readonly input?: NodeJS.ReadableStream
   readonly output?: NodeJS.WritableStream
   readonly runtime?: PippitToolRuntime
+  readonly widgetLineage?: PippitWidgetLineageStore
   readonly widgetMedia?: PippitWidgetMediaServer
 }
 
 export const PIPPIT_READ_VIDEO_CHUNK_TOOL_NAME = "pippit_read_video_chunk"
+export { PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME } from "./widget-lineage.ts"
 
 const MAX_VIDEO_CHUNK_BYTES = 1024 * 1024
 const PIPPIT_READ_VIDEO_CHUNK_TOOL_DEFINITION: PippitToolDefinition = {
@@ -89,10 +98,49 @@ const PIPPIT_READ_VIDEO_CHUNK_TOOL_DEFINITION: PippitToolDefinition = {
   title: "Read saved video chunk",
 }
 
+const PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_DEFINITION: PippitToolDefinition = {
+  _meta: {
+    ui: { visibility: ["app"] },
+    "openai/widgetAccessible": true,
+  },
+  annotations: {
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+    readOnlyHint: true,
+    title: "Resolve latest regenerated video",
+  },
+  description: "Resolve the newest regenerated descendant of a Pippit video job without starting a generation.",
+  inputSchema: {
+    additionalProperties: false,
+    properties: {
+      anchor_job_id: { minLength: 1, type: "string" },
+    },
+    required: ["anchor_job_id"],
+    type: "object",
+  },
+  name: PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME as PippitToolDefinition["name"],
+  outputSchema: PIPPIT_RUNTIME_TOOL_DEFINITIONS.find(definition => definition.name === "pippit_get_video")
+    ?.outputSchema ?? { type: "object" },
+  title: "Resolve latest regenerated video",
+}
+
 interface ReadVideoChunkInput {
   readonly length: number
   readonly offset: number
   readonly resourceUri: string
+}
+
+function parseResolveLatestVideoInput(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  if (
+    Object.keys(record).length !== 1 ||
+    typeof record.anchor_job_id !== "string" ||
+    record.anchor_job_id.trim() === "" ||
+    Buffer.byteLength(record.anchor_job_id, "utf8") > 16_384
+  ) return undefined
+  return record.anchor_job_id
 }
 
 function parseReadVideoChunkInput(value: unknown): ReadVideoChunkInput | undefined {
@@ -169,6 +217,7 @@ function localMediaUnavailable(): PippitMcpCallToolResult {
 
 interface ConfiguredRuntime {
   readonly client: PippitFacadeClient
+  readonly lineageScope: string
   readonly runtime: PippitToolRuntime
 }
 
@@ -180,6 +229,7 @@ function createConfiguredRuntime(
   const client = new PippitFacadeClient(facadeClientOptions(configured))
   return {
     client,
+    lineageScope: createHash("sha256").update(configured.facadeApiKey, "utf8").digest("hex"),
     runtime: createPippitToolRuntime({
       client,
       enrollmentPort: configured.enrollmentPort,
@@ -201,6 +251,7 @@ export function resolvePippitStdioMediaOutputRoot(env: NodeJS.ProcessEnv = proce
 
 function createLazyPippitToolRuntime(env: NodeJS.ProcessEnv): {
   readonly mediaBackend: PippitWidgetMediaBackend
+  readonly resolveLineageScope: () => Promise<string>
   readonly resolveMediaOutputRoot: () => Promise<string>
   readonly runtime: PippitToolRuntime
 } {
@@ -232,6 +283,9 @@ function createLazyPippitToolRuntime(env: NodeJS.ProcessEnv): {
         return await (await initialize()).client.downloadVideo(jobId, options)
       },
     },
+    async resolveLineageScope() {
+      return (await initialize()).lineageScope
+    },
     async resolveMediaOutputRoot() {
       return resolvePippitStdioMediaOutputRoot(env)
     },
@@ -258,6 +312,7 @@ function createLazyPippitToolRuntime(env: NodeJS.ProcessEnv): {
 function withWidgetRuntime(
   runtime: PippitToolRuntime,
   widgetMedia: PippitWidgetMediaServer,
+  widgetLineage: PippitWidgetLineageStore,
 ): PippitToolRuntime {
   return {
     async callTool(name, argumentsValue) {
@@ -293,7 +348,54 @@ function withWidgetRuntime(
           )
         }
       }
-      const result = await runtime.callTool(name, argumentsValue)
+      if (name === PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME) {
+        const anchorJobId = parseResolveLatestVideoInput(argumentsValue)
+        if (anchorJobId === undefined) {
+          return localVideoChunkFailure("invalid_arguments", "Invalid latest video request.")
+        }
+        let latestJobId: string
+        try {
+          latestJobId = await widgetLineage.resolve(anchorJobId)
+        } catch {
+          return localVideoChunkFailure(
+            "latest_video_state_unavailable",
+            "The latest regenerated video state is temporarily unavailable.",
+          )
+        }
+        const latestResult = await runtime.callTool("pippit_get_video", { job_id: latestJobId })
+        try {
+          return await projectPippitWidgetResult(
+            latestResult,
+            (jobId, index) => widgetMedia.preparePreview(jobId, index),
+          )
+        } catch {
+          return localMediaUnavailable()
+        }
+      }
+
+      const toolCall = runtime.callTool(name, argumentsValue)
+      const sourceJobId = name === "pippit_edit_video_segment" &&
+        typeof argumentsValue === "object" &&
+        argumentsValue !== null &&
+        !Array.isArray(argumentsValue) &&
+        typeof (argumentsValue as Record<string, unknown>).source_job_id === "string"
+        ? (argumentsValue as Record<string, string>).source_job_id
+        : undefined
+      const lineageCompletion = sourceJobId === undefined
+        ? undefined
+        : toolCall.then(async (result) => {
+            const regeneratedJob = result.isError === true
+              ? undefined
+              : extractPippitWidgetJob(result.structuredContent)
+            if (regeneratedJob !== undefined && regeneratedJob.id !== sourceJobId) {
+              await widgetLineage.record(sourceJobId, regeneratedJob.id)
+            }
+          })
+      if (sourceJobId !== undefined && lineageCompletion !== undefined) {
+        widgetLineage.track(sourceJobId, lineageCompletion)
+      }
+      const result = await toolCall
+      await lineageCompletion?.catch(() => undefined)
       try {
         return await projectPippitWidgetResult(result, (jobId, index) => widgetMedia.preparePreview(jobId, index))
       } catch {
@@ -311,6 +413,7 @@ function withWidgetRuntime(
       return [
         ...withPippitWidgetTools(runtime.listTools()),
         PIPPIT_READ_VIDEO_CHUNK_TOOL_DEFINITION,
+        PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_DEFINITION,
       ]
     },
   }
@@ -328,13 +431,21 @@ export async function runPippitStdioServer(options: PippitStdioServerOptions = {
         async resolveMediaOutputRoot(): Promise<string> {
           return resolvePippitLocalRuntimePaths(options.env ?? process.env).outputRoot
         },
+        async resolveLineageScope(): Promise<string> {
+          return "injected-runtime"
+        },
         runtime: options.runtime,
       }
   const widgetMedia = options.widgetMedia ?? createPippitWidgetMediaServer({
     artifactRoot: lazy.resolveMediaOutputRoot,
     backend: lazy.mediaBackend,
   })
-  const runtime = withWidgetRuntime(lazy.runtime, widgetMedia)
+  const runtimePaths = resolvePippitLocalRuntimePaths(options.env ?? process.env)
+  const widgetLineage = options.widgetLineage ?? createPersistentPippitWidgetLineageStore({
+    root: join(runtimePaths.dataRoot, "widget-state", "lineage-v1"),
+    scope: lazy.resolveLineageScope,
+  })
+  const runtime = withWidgetRuntime(lazy.runtime, widgetMedia, widgetLineage)
   const handler = createPippitMcpMessageHandler(runtime, widgetMedia)
   const output = options.output ?? process.stdout
   const input = options.input ?? process.stdin
