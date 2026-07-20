@@ -1,6 +1,6 @@
 {
   "name": "pippit-video",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "description": "Manage Pippit accounts and create, inspect, locally save, preview, and regenerate video jobs through one MCP server.",
   "author": {
     "name": "superche"
@@ -34,9 +34,9 @@
       "Regenerate this completed Pippit video using the selected range and annotations as guidance",
       "Check my Pippit video job and preview it when complete"
     ],
-    "brandColor": "#6D5EF7",
-    "logo": "./assets/pippit-video.svg",
-    "composerIcon": "./assets/pippit-video-icon.svg",
+    "brandColor": "#000000",
+    "logo": "./assets/pippit-video.png",
+    "composerIcon": "./assets/pippit-video-icon.png",
     "screenshots": []
   }
 }

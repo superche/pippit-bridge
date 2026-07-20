@@ -124,7 +124,7 @@ npm run dev:chatgpt-app
 
 1. 在 ChatGPT 打开 **Settings → Apps & Connectors → Advanced settings**，开启 **Developer mode**。如果 workspace 管理员禁用了 developer mode，需要先由管理员允许。
 2. 回到 app settings，选择创建 developer-mode app。
-3. 填写用户可见的 Name/Description，将 MCP server URL 设为 tunnel 的 `https://.../mcp`。
+3. 填写用户可见的 Name/Description，将 MCP server URL 设为 tunnel 的 `https://.../mcp`，并上传仓库中的 `apps/chatgpt-app/assets/pippit-video.png` 作为 App 图标。
 4. 创建成功后核对四个 ChatGPT 工具：`pippit_list_video_models`、`pippit_generate_video`、`pippit_edit_video_segment`、`pippit_get_video`。ChatGPT App 不提供本地文件下载或 AK 管理工具。
 5. 修改工具描述或 widget 后，回到该 developer-mode app 点击 **Refresh** 重新读取 server metadata。
 
@@ -205,7 +205,7 @@ plugin 包内的 stdio server 与 Facade daemon bundle 是自包含的，安装 
 
 生成、查询和参考视频重新生成工具共享同一个 MCP App widget resource。widget 会自动轮询 pending/in-progress job；打开旧结果时先通过 model-hidden 的 `pippit_resolve_latest_video` 找到最新 regenerate job，宿主随后回放的旧 tool result 不能覆盖它。`pippit_get_video` 到达 `completed` 后，stdio/plugin 进程先把完整 MP4 原子保存为普通本地文件，再通过 MCP Apps `resources/read` 分块传给 widget 并创建 `blob:` 播放地址。Codex 不要求模型另行生成 `file://` 可视化；本地绝对路径、facade content URL、API key 与 `unsigned_urls` 不进入 Widget 或 model-visible 结果。stdin 重启不改变本地 artifact identity 或 regenerate lineage，文件继续保留；用户需要自定文件名或额外路径时再调用下载工具。
 
-上面的 repo-local marketplace 是开发入口：从干净 checkout 测试前先运行 `npm run build -w @pippit-bridge/mcp-server`，因为 Codex 会复制 source 目录且不会替它执行 npm lifecycle。正式分发应先发布由 `prepack` 生成自包含 artifact 的 `@pippit-bridge/mcp-server@0.2.12`，再使用 [npm marketplace example](../.agents/plugins/marketplace.npm.example.json) 的 `source: "npm"` 形式；Codex 下载该 tarball 时同样不会运行 lifecycle scripts。
+上面的 repo-local marketplace 是开发入口：从干净 checkout 测试前先运行 `npm run build -w @pippit-bridge/mcp-server`，因为 Codex 会复制 source 目录且不会替它执行 npm lifecycle。正式分发应先发布由 `prepack` 生成自包含 artifact 的 `@pippit-bridge/mcp-server@0.2.13`，再使用 [npm marketplace example](../.agents/plugins/marketplace.npm.example.json) 的 `source: "npm"` 形式；Codex 下载该 tarball 时同样不会运行 lifecycle scripts。
 
 进入 Codex 后可用 `/plugins` 检查/enable plugin。安装或更新后开始一个新 session，再请求 `pippit-video` 列出模型、生成或查询视频；完成结果会自动保存本地 MP4 并展示 widget，只有需要额外自定义文件名或路径副本时才请求下载。
 

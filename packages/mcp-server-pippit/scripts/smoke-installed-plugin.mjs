@@ -10,7 +10,7 @@ if (entryArgument === undefined) {
 if (!isAbsolute(entryArgument)) throw new Error("The plugin entry path must be absolute.")
 const entryPath = resolve(entryArgument)
 const pluginManifest = JSON.parse(await readFile(join(dirname(entryPath), ".codex-plugin", "plugin.json"), "utf8"))
-if (pluginManifest.version !== "0.2.12") throw new Error("The packaged Codex plugin manifest version is unexpected.")
+if (pluginManifest.version !== "0.2.13") throw new Error("The packaged Codex plugin manifest version is unexpected.")
 
 const dataRoot = await mkdtemp(join(tmpdir(), "pippit-packed-runtime-"))
 await rm(dataRoot, { force: true, recursive: true })
@@ -87,7 +87,7 @@ try {
   const listedResources = responses.find((response) => response.id === 3)?.result?.resources ?? []
   const widgetResource = responses.find((response) => response.id === 4)?.result?.contents?.[0]
   const toolCall = responses.find((response) => response.id === 5)?.result
-  if (responses.find((response) => response.id === 1)?.result?.serverInfo?.version !== "0.2.12") {
+  if (responses.find((response) => response.id === 1)?.result?.serverInfo?.version !== "0.2.13") {
     throw new Error("The packaged MCP server version is unexpected.")
   }
   if (tools.length !== 11 || !tools.some((tool) => tool.name === "pippit_add_access_key")) {
@@ -150,7 +150,7 @@ try {
 
   process.stdout.write(`${JSON.stringify({
     account_count: toolCall?.structuredContent?.data?.length ?? 0,
-    server_version: "0.2.12",
+    server_version: "0.2.13",
     tool_count: tools.length,
     widget_resource: true,
   })}\n`)

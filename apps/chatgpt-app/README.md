@@ -2,6 +2,8 @@
 
 This package exposes the shared Pippit MCP runtime as a remote, stateless MCP server with an inline MCP App widget.
 
+The repository includes the approved 256px black-and-white app icon at [`assets/pippit-video.png`](./assets/pippit-video.png). Its indexed PNG is kept below the ChatGPT developer console's 10 KB upload limit. Upload this file as the app icon there; `.app.json` only binds the registered app ID and does not declare visual branding.
+
 ## Endpoints
 
 - `POST /mcp` — stateless Streamable HTTP MCP endpoint.
