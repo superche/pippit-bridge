@@ -31,6 +31,10 @@ const LEGACY_PIPPIT_WIDGET_URIS = new Set([
   "ui://widget/pippit-video-job-v11.html",
   "ui://widget/pippit-video-job-v12.html",
 ])
+const LEGACY_PIPPIT_IMAGE_WIDGET_URIS = new Set([
+  "ui://widget/pippit-image-result-v1.html",
+  "ui://widget/pippit-image-result-v2.html",
+])
 
 const INVOCATION_STATUS: Readonly<Record<string, readonly [string, string]>> = {
   pippit_edit_video_segment: ["Preparing reference video…", "New Pippit generation submitted"],
@@ -366,7 +370,7 @@ export function pippitWidgetReadResource(
   uri: string,
   options: PippitWidgetResourceMetadataOptions = {},
 ): Readonly<Record<string, unknown>> | undefined {
-  if (uri === PIPPIT_IMAGE_WIDGET_URI) {
+  if (uri === PIPPIT_IMAGE_WIDGET_URI || LEGACY_PIPPIT_IMAGE_WIDGET_URIS.has(uri)) {
     return {
       contents: [
         {

@@ -348,6 +348,12 @@ describe("Pippit widget protocol", () => {
     expect(imageResource).toMatchObject({
       contents: [{ mimeType: PIPPIT_WIDGET_MIME_TYPE, text: PIPPIT_IMAGE_WIDGET_HTML, uri: PIPPIT_IMAGE_WIDGET_URI }],
     })
+    expect(pippitWidgetReadResource("ui://widget/pippit-image-result-v1.html")).toMatchObject({
+      contents: [{ text: PIPPIT_IMAGE_WIDGET_HTML, uri: "ui://widget/pippit-image-result-v1.html" }],
+    })
+    expect(pippitWidgetReadResource("ui://widget/pippit-image-result-v2.html")).toMatchObject({
+      contents: [{ text: PIPPIT_IMAGE_WIDGET_HTML, uri: "ui://widget/pippit-image-result-v2.html" }],
+    })
     expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("Download original")
     expect(PIPPIT_IMAGE_WIDGET_HTML).toContain("toolResponseMetadata")
     expect(PIPPIT_IMAGE_WIDGET_HTML).toContain('request("resources/read"')

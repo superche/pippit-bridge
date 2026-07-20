@@ -45,6 +45,7 @@ try {
     request(4, "resources/read", { uri: "ui://widget/pippit-video-job-v13.html" }),
     request(5, "tools/call", { arguments: {}, name: "pippit_list_access_keys" }),
     request(6, "resources/read", { uri: "ui://widget/pippit-image-result-v3.html" }),
+    request(7, "resources/read", { uri: "ui://widget/pippit-image-result-v2.html" }),
   ]
   const run = await new Promise((resolveRun, rejectRun) => {
     const child = spawn(process.execPath, [entryPath], {
@@ -89,6 +90,7 @@ try {
   const widgetResource = responses.find((response) => response.id === 4)?.result?.contents?.[0]
   const toolCall = responses.find((response) => response.id === 5)?.result
   const imageWidgetResource = responses.find((response) => response.id === 6)?.result?.contents?.[0]
+  const legacyImageWidgetResource = responses.find((response) => response.id === 7)?.result?.contents?.[0]
   if (responses.find((response) => response.id === 1)?.result?.serverInfo?.version !== "0.2.15") {
     throw new Error("The packaged MCP server version is unexpected.")
   }
@@ -146,7 +148,10 @@ try {
     imageWidgetResource?.mimeType !== "text/html;profile=mcp-app" ||
     !imageWidgetResource?.text?.includes("function resultImages(rawResult)") ||
     !imageWidgetResource?.text?.includes("function infinityPoint(step)") ||
-    !imageWidgetResource?.text?.includes("pippit_read_image")
+    !imageWidgetResource?.text?.includes("pippit_read_image") ||
+    !imageWidgetResource?.text?.includes("current.mcp_tool_result") ||
+    legacyImageWidgetResource?.uri !== "ui://widget/pippit-image-result-v2.html" ||
+    legacyImageWidgetResource?.text !== imageWidgetResource.text
   ) {
     throw new Error("The packaged MCP image widget resource is incomplete.")
   }
