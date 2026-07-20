@@ -9,7 +9,7 @@
       "source": {
         "source": "npm",
         "package": "@pippit-bridge/mcp-server",
-        "version": "0.2.12",
+        "version": "0.2.13",
         "registry": "https://registry.npmjs.org"
       },
       "policy": {

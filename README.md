@@ -1,5 +1,9 @@
 # Pippit Bridge
 
+<p align="center">
+  <img src="./assets/brand/pippit-bird.png" width="180" alt="Pippit Bridge 飞鸟 Logo" />
+</p>
+
 Pippit Bridge 是小云雀（Pippit）的 API gateway 与 adapter monorepo。当前同时提供：
 
 - OpenRouter 风格的视频生成 facade 与服务器持久化 BYOK。
