@@ -4,6 +4,37 @@
   <img src="./assets/brand/pippit-bird.png" width="180" alt="Pippit Bridge 飞鸟 Logo" />
 </p>
 
+## 安装方法
+
+### OpenCode
+
+从公开 npm registry 全局安装 OpenCode provider：
+
+```bash
+opencode plugin @pippit-bridge/opencode-provider --global
+```
+
+也可以在全局或项目 `opencode.json` 中配置：
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["@pippit-bridge/opencode-provider"]
+}
+```
+
+### Codex
+
+从公开 GitHub marketplace 安装 `pippit-video` plugin，无需克隆本仓库或使用本地路径：
+
+```bash
+codex plugin marketplace add superche/pippit-bridge --ref main --json
+codex plugin add pippit-video@pippit-bridge --json
+codex plugin list --json
+```
+
+Codex plugin 运行时需要 Node.js 22.22.2+、24.15.0+ 或 26+，并确保 `npm` / `npx` 可用。安装完成后重启 ChatGPT Desktop 或新建 Codex session。完整接入说明见 [MCP、ChatGPT App 与 Codex plugin](./docs/integrations.md)。
+
 Pippit Bridge 是小云雀（Pippit）的 API gateway 与 adapter monorepo。当前同时提供：
 
 - OpenRouter 风格的视频生成 facade 与服务器持久化 BYOK。
