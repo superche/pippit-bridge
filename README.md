@@ -42,10 +42,24 @@ Codex plugin 运行时需要 Node.js 22.22.2+、24.15.0+ 或 26+，并确保 `np
 开发环境必须使用独立 Codex profile，并通过稳定 gateway 热切换 backend worker；不要同时启用开发版与正式版：
 
 ```bash
+npm run codex:dev:profile:setup
 npm run codex:dev
+npm run codex:dev:app
+npm run codex:dev:profile:status
 npm run codex:dev:status
 npm run codex:dev:full-gate
 ```
+
+Run `codex:dev:profile:setup` once before starting the watcher in another terminal. It bootstraps
+the stable gateway, registers only
+`pippit-video@pippit-bridge-dev` in a persistent isolated profile, and preserves that profile's
+login and appearance settings across restarts. On macOS, `codex:dev:app` launches a separate
+ChatGPT/Codex process with `~/.codex-profiles/dev` and
+`~/Library/Application Support/Codex Dev`; it never opens a workspace path as an Electron entry
+point and refuses a profile containing the production Pippit plugin. Override these locations with
+`PIPPIT_CODEX_DEV_PROFILE_HOME` and `PIPPIT_CODEX_DEV_BROWSER_DATA_DIR` when needed. Sign in and
+choose the theme once inside the Dev app; credentials and browser data remain local and are never
+copied into the repository.
 
 正式发布使用受保护的两阶段 workflow：本地/CI gate、npm publish、官方 registry 重下载验证完成后，才允许创建 exact-version marketplace activation PR。Agent 操作约束、hot/cold contract 边界和 rollback 规则见 [AGENTS.md](./AGENTS.md)，完整设计与 runbook 见 [Codex Plugin 开发热更新与正式发布工程](./docs/codex-plugin-dev-release-engineering.md)。当前 backend worker HMR 已接通；已挂载 Widget iframe 的原地 HMR 尚未接入，不得对外声明支持。
 
