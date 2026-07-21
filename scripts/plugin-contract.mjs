@@ -49,6 +49,18 @@ async function discover() {
     env: contractEnvironment(runtimeRoot),
     stdio: ["pipe", "pipe", "pipe"],
   })
+  let childStderr = ""
+  child.stderr.on("data", chunk => { childStderr += chunk.toString() })
+  const childExit = new Promise(resolveExit => {
+    let settled = false
+    const settle = result => {
+      if (settled) return
+      settled = true
+      resolveExit(result)
+    }
+    child.once("error", error => settle({ error }))
+    child.once("exit", (code, signal) => settle({ code, signal }))
+  })
   const pending = new Map()
   createInterface({ input: child.stdout }).on("line", line => {
     const message = JSON.parse(line)
@@ -57,7 +69,10 @@ async function discover() {
   let id = 0
   const request = (method, params = {}) => new Promise((resolveRequest, reject) => {
     const requestId = ++id
-    const timer = setTimeout(() => reject(new Error(`MCP discovery timed out: ${method}`)), 15_000)
+    const timer = setTimeout(() => {
+      const detail = childStderr.trim()
+      reject(new Error(`MCP discovery timed out: ${method}${detail === "" ? "" : `: ${detail}`}`))
+    }, 15_000)
     pending.set(requestId, message => {
       clearTimeout(timer)
       pending.delete(requestId)
@@ -66,6 +81,8 @@ async function discover() {
     })
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: requestId, method, params })}\n`)
   })
+  let discovery
+  let cleanupFailure
   try {
     const initialize = await request("initialize", { capabilities: {}, clientInfo: { name: "contract-generator", version: "1" }, protocolVersion: "2025-11-25" })
     const tools = await request("tools/list")
@@ -75,11 +92,27 @@ async function discover() {
     for (const resource of [...(resources.resources ?? [])].sort((a, b) => a.uri.localeCompare(b.uri))) {
       reads.push({ result: await request("resources/read", { uri: resource.uri }), uri: resource.uri })
     }
-    return { initialize, reads, resources, templates, tools }
+    discovery = { initialize, reads, resources, templates, tools }
   } finally {
-    child.kill("SIGTERM")
+    child.stdin.end()
+    const timeout = Symbol("child-exit-timeout")
+    let exit = await Promise.race([
+      childExit,
+      new Promise(resolveTimeout => setTimeout(() => resolveTimeout(timeout), 2_000)),
+    ])
+    if (exit === timeout) {
+      child.kill("SIGTERM")
+      exit = await childExit
+    }
+    if (exit.error !== undefined) cleanupFailure = exit.error
+    else if (exit.code !== 0) {
+      const detail = childStderr.trim()
+      cleanupFailure = new Error(`MCP discovery process exited with ${exit.signal ?? exit.code}${detail === "" ? "" : `: ${detail}`}`)
+    }
     await rm(runtimeRoot, { force: true, recursive: true })
   }
+  if (cleanupFailure !== undefined) throw cleanupFailure
+  return discovery
 }
 
 async function collect() {
@@ -110,7 +143,15 @@ async function collect() {
 }
 
 const mode = process.argv[2] ?? "check"
-const collected = await collect()
+let collected
+try {
+  collected = await collect()
+} catch (error) {
+  const message = `PLUGIN_CONTRACT_CHECK_FAILED ${error instanceof Error ? error.message : String(error)}`
+  githubError(message)
+  process.stderr.write(`${message}\n`)
+  process.exit(1)
+}
 if (mode === "print") {
   process.stdout.write(JSON.stringify(collected))
   process.exit(0)
