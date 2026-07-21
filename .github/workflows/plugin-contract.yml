@@ -22,7 +22,8 @@ jobs:
       - run: npm run check:public-lockfile
       - run: npm ci
       - run: npm run check:plugin-version
-      - run: npm run check:plugin-contract
+      - run: npm run build:plugin-contract
+      - run: node scripts/plugin-contract.mjs check
       - run: npm run check
       - run: npm run check:release-artifact
       - run: npm run check:dev-gateway
@@ -39,7 +40,8 @@ jobs:
       - run: npm run check:public-lockfile
       - run: npm ci
       - run: npm run check:plugin-version
-      - run: npm run check:plugin-contract
+      - run: npm run build:plugin-contract
+      - run: node scripts/plugin-contract.mjs check
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build

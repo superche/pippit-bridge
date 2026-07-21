@@ -39,7 +39,7 @@ function contractEnvironment(runtimeRoot) {
 function githubError(message) {
   if (process.env.GITHUB_ACTIONS !== "true") return
   const escaped = message.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A")
-  process.stderr.write(`::error title=Plugin contract check::${escaped}\n`)
+  process.stdout.write(`::error title=Plugin contract check::${escaped}\n`)
 }
 
 async function discover() {
