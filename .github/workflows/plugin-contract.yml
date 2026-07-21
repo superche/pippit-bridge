@@ -8,6 +8,7 @@ on:
 jobs:
   contract:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
         node: [22.22.2, 24.15.0]
@@ -22,7 +23,8 @@ jobs:
       - run: npm run check:public-lockfile
       - run: npm ci
       - run: npm run check:plugin-version
-      - run: npm run build:plugin-contract
+      - run: npm run build -w @pippit-bridge/core
+      - run: npm run build -w @pippit-bridge/mcp-server
       - run: node scripts/plugin-contract.mjs check
       - run: npm run check
       - run: npm run check:release-artifact
@@ -40,7 +42,8 @@ jobs:
       - run: npm run check:public-lockfile
       - run: npm ci
       - run: npm run check:plugin-version
-      - run: npm run build:plugin-contract
+      - run: npm run build -w @pippit-bridge/core
+      - run: npm run build -w @pippit-bridge/mcp-server
       - run: node scripts/plugin-contract.mjs check
       - run: npm run lint
       - run: npm run typecheck
