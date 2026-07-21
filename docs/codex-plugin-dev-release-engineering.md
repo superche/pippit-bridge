@@ -1,6 +1,6 @@
 # Codex Plugin 开发热更新与正式发布工程
 
-> 状态：Implemented locally; external release and host acceptance gated
+> 状态：Implemented locally; isolated Desktop acceptance passed; external release gated
 >
 > 审阅日期：2026-07-21
 >
@@ -24,7 +24,7 @@ Plugin 分成两个物理平面：
 - `src/dev-supervisor.ts`：按 contract hash 分 pool；每次 call/read pin generation；N drain 后关闭；cold/未审语义 candidate 拒绝；迁移 epoch 或 storage backward compatibility 不满足时 post-write rollback 返回 `DEV_POST_ACTIVATION_UNSAFE_ROLLBACK`。
 - `src/dev-stdio.ts`、`src/dev-gateway.ts`、`src/dev-worker-process.ts`：稳定 Codex-facing stdio 只 initialize 一次并冻结 discovery；长期 child MCP worker 承载 generation 实现。`tools/call` 与动态 `resources/read` pin active generation，candidate 激活不关闭 gateway，不产生 EOF/reinitialize/shutdown。
 - `scripts/codex-dev.mjs`：在独立数据根准备可由 Codex `marketplace add` 的 `pippit-bridge-dev` catalog、dev-only gateway bundle、0600 pointer/frozen contract/status，以及强制传给所有 dev worker 的独立 `PIPPIT_BRIDGE_HOME` runtime root；校验 owner/realpath，watch 后串行 staging build/test/contract，要求与 source hash 绑定的人工 `hot-compatible` review，再原子写 active generation。它不修改全局 Codex cache，也不读取 release 账号、job 或 artifact state。
-- `src/dev-widget.ts`：固定 dev shell URI/MIME、真实 loopback asset/SSE HMR server、capability/Host/Origin 校验，以及旧/新 tool payload 和 confirmation fixture 等价检查。server transport 已本地验证；Codex iframe 挂载仍受下述 host gate 限制。
+- `src/dev-widget.ts`：固定 dev shell URI/MIME、loopback asset/SSE HMR primitives、capability/Host/Origin 校验，以及旧/新 tool payload 和 confirmation fixture 等价检查。primitives 已本地验证，但尚未接入已安装 plugin 的 `outputTemplate`/gateway 生命周期；当前不能把它表述为已挂载 Codex iframe HMR。
 - `release-epoch.ts`：MCP client 自动发送内部 release epoch；Facade 在 route handler 和任何副作用前 fence 显式 stale epoch 为 `PLUGIN_TASK_STALE`。首个无 epoch 历史版本保持兼容一个迁移周期。
 - `plugin-contract.yml`：Node 22/24、macOS/Linux gate；Windows 只跑 contract/build 并明确 `/bin/sh` launcher 不支持 native Windows。
 - `plugin-release.yml`：手动、受 environment 保护的两阶段流程。clean install/check/pack/direct-extract offline smoke 后 publish；从 registry 重下验证；只有显式选择 activation 才把整个 marketplace source block 换成 exact direct npm 并创建 PR。
@@ -77,7 +77,7 @@ npm run codex:dev:full-gate
 - gateway protocol、IPC version、pointer/generation realpath、owner/mode、capability 任一不匹配均 fail closed，但已启动 gateway transport 不退出。
 - A/B contract hash gateway 并存时 worker pool 隔离。
 - N+1 写状态后只有 migration epoch 未变且 storage 双向兼容才能 rollback，否则 fail closed。
-- Widget 只对纯呈现或严格行为兼容 UI hot；真实 Codex iframe/CSP/cache 未证明前，只承诺新实例加载新资产，不承诺已挂载实例 HMR。
+- Widget 只有纯呈现或严格行为兼容 UI 才具备 hot 的语义资格；当前 runtime 尚未接入 dev shell，因此 Widget 源码变化仍走 cold rebuild，并且只验收新实例，不承诺已挂载实例 HMR。
 
 本地自动验收 `npm run check:dev-gateway` 从空临时 dev root 完成 build/contract、bootstrap generation、冻结 discovery、生成私有 `.mcp.json`，再按真实 `/bin/sh -> dev-plugin-entry.sh -> stable gateway -> child generation` 路径验证 initialize、16 tools、2 resources、2 templates 和逐 URI read。candidate 在 status 指针切换前还会独立启动、initialize/list 并与 frozen contract 比较；失败不会覆盖 active generation。
 
@@ -151,7 +151,7 @@ Codex 启动时自动检查 Git marketplace 属于当前实现，不是公开 SL
 | handler compatible fix | 结果可改变，但选择/构参不变 | 可 hot，仍需语义审阅 |
 | tool/schema/description/result meaning | 旧模型上下文与新实现冲突，可能重复付费/写入 | cold + new task |
 | resource URI/MIME/CSP/binding | 宿主不保证 relist/cache refresh | cold + new task |
-| Widget pure presentation | 已挂载 iframe 可能缓存 | fixture 通过后 hot；当前只承诺新实例 |
+| Widget pure presentation | 已挂载 iframe 可能缓存，dev shell 尚未接线 | 当前 cold rebuild + 新实例；接线并完成 host proof 后才可 hot |
 | Widget mapping/default/validation/confirmation | 改变用户或写操作边界 | cold + new task |
 | Skill metadata/body | 旧指令无法从任务上下文删除 | immutable release + new task |
 | dynamic resource data | 下一次 read 得到新数据 | 格式/单位/含义稳定时允许 |
@@ -159,9 +159,9 @@ Codex 启动时自动检查 Git marketplace 属于当前实现，不是公开 SL
 ## 当前未解除的外部门禁
 
 - npm `0.2.16` 未发布；canonical marketplace 暂时精确指向已发布的 `0.2.13`，不能安全推进到 candidate。
-- 未经授权未执行 npm publish、Git push 或 activation PR。
-- 真实 Codex Desktop/CLI 隔离 profile、cache upgrade、固定 prompt eval 和 iframe/CSP 已挂载 HMR 需要宿主环境验收；在取得证据前不对这些能力作 SLA 声明。
-- dev gateway、worker IPC 与 Widget HMR 代码被 release artifact gate 排除，不进入生产 npm tarball。
+- PR #8 的 feature branch 已推送；未执行 npm publish 或 production marketplace activation。
+- 隔离 Codex Desktop profile、backend generation 热切换和图片 Widget 修复已完成人工验收；cache upgrade、固定 prompt eval、N-1 upgrade 和 iframe/CSP 已挂载 HMR 仍需目标宿主证据，在取得证据前不作 SLA 声明。
+- dev gateway、worker IPC 与 Widget dev primitives 被 release artifact gate 排除，不进入生产 npm tarball。
 
 ## 2026-07-21 本地验证证据
 
@@ -170,5 +170,5 @@ Codex 启动时自动检查 Git marketplace 属于当前实现，不是公开 SL
 - `npm run check:plugin-contract`：MCP hash `b43098cce982d1e137c77db60b044a7253356c0e23e3c7392184acc221b22ad2`；Plugin hash `42f1f71efa764da6221ff3f567608299e86d648570d5ff84c75d93a570a1c597`。
 - `npm test`：36 files、294 tests passed，包含 generation pin/drain、worker crash、cold discovery、post-write rollback、release epoch 和 loopback Widget server。
 - `npm run check:dev-gateway`：真实 dev bundle 16 tools、2 resources、2 templates，版本 `0.2.16`。
-- `npm run check:release-artifact`：production tarball 74 files、653.8 kB；direct-extract launcher smoke 通过；不含 `src`、`dist/dev-*`、watcher、dev origin 或 debug token。
+- `npm run check:release-artifact`：production tarball 74 files、654.3 kB；direct-extract launcher smoke 通过；不含 `src`、`dist/dev-*`、watcher、dev origin 或 debug token。
 - `npm run typecheck`、`npm run lint`、`npm run build`、`git diff --check`：通过。

@@ -37,6 +37,18 @@ codex plugin list --json
 
 Codex plugin 运行时需要 Node.js 22.22.2+、24.15.0+ 或 26+，并确保 `npm` / `npx` 可用。安装完成后重启 ChatGPT Desktop 或新建 Codex session。完整接入说明见 [MCP、ChatGPT App 与 Codex plugin](./docs/integrations.md)。
 
+### Codex Plugin 开发与发布
+
+开发环境必须使用独立 Codex profile，并通过稳定 gateway 热切换 backend worker；不要同时启用开发版与正式版：
+
+```bash
+npm run codex:dev
+npm run codex:dev:status
+npm run codex:dev:full-gate
+```
+
+正式发布使用受保护的两阶段 workflow：本地/CI gate、npm publish、官方 registry 重下载验证完成后，才允许创建 exact-version marketplace activation PR。Agent 操作约束、hot/cold contract 边界和 rollback 规则见 [AGENTS.md](./AGENTS.md)，完整设计与 runbook 见 [Codex Plugin 开发热更新与正式发布工程](./docs/codex-plugin-dev-release-engineering.md)。当前 backend worker HMR 已接通；已挂载 Widget iframe 的原地 HMR 尚未接入，不得对外声明支持。
+
 Pippit Bridge 是小云雀（Pippit）的 API gateway 与 adapter monorepo。当前同时提供：
 
 - OpenRouter 风格的图片/视频生成 facade 与服务器持久化 BYOK。
