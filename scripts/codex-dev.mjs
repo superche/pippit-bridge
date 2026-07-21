@@ -103,7 +103,6 @@ async function bootstrap() {
   await mkdir(dataRoot, { mode: 0o700, recursive: true })
   const rootStats = await stat(dataRoot)
   if (typeof process.getuid === "function" && rootStats.uid !== process.getuid()) throw new Error("Dev root owner mismatch.")
-  await exec("npm", ["run", "build", "-w", "@pippit-bridge/mcp-server"])
   await exec("npm", ["run", "check:plugin-contract"])
   const contractHash = await hashTree(resolve(root, "packages/mcp-server-pippit/contracts"))
   const sourceHash = await hashTree(resolve(root, "packages/mcp-server-pippit/src"))

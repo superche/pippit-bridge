@@ -58,7 +58,10 @@
     "codex:dev": "node scripts/codex-dev.mjs run",
     "codex:dev:full-gate": "npm run test -w @pippit-bridge/mcp-server && npm run check:plugin-contract && npm run check:dev-gateway",
     "codex:dev:status": "node scripts/codex-dev.mjs status",
-    "codex:dev:bootstrap": "node scripts/codex-dev.mjs bootstrap"
+    "codex:dev:bootstrap": "node scripts/codex-dev.mjs bootstrap",
+    "codex:dev:profile:setup": "node scripts/codex-dev-profile.mjs setup",
+    "codex:dev:profile:status": "node scripts/codex-dev-profile.mjs status",
+    "codex:dev:app": "node scripts/codex-dev-profile.mjs launch"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
