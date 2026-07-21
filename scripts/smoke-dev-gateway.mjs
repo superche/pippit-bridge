@@ -20,6 +20,7 @@ try {
   await exec(process.execPath, [resolve(root, "scripts/codex-dev.mjs"), "bootstrap"], { env: environment })
   const pointerPath = resolve(devHome, "pointer.json")
   const pointer = JSON.parse(await readFile(pointerPath, "utf8"))
+  const frozenContract = JSON.parse(await readFile(pointer.frozenContractPath, "utf8"))
   if (pointer.runtimeRoot !== resolve(devHome, "runtime")) throw new Error("Dev runtime data is not physically isolated.")
   const marketplace = JSON.parse(await readFile(resolve(devHome, ".agents/plugins/marketplace.json"), "utf8"))
   if (marketplace.name !== "pippit-bridge-dev" || marketplace.plugins?.[0]?.source?.path !== "./gateway-bundle") {
@@ -55,10 +56,22 @@ try {
     const resources = await request("resources/list")
     const templates = await request("resources/templates/list")
     for (const resource of resources.resources) await request("resources/read", { uri: resource.uri })
-    if (initialized.serverInfo.version !== "0.2.16" || tools.tools.length !== 16 || resources.resources.length !== 2 || templates.resourceTemplates.length !== 2) {
+    const previewTool = tools.tools.find(tool => tool.name === "pippit_dev_preview_error_widget")
+    const frozenTools = tools.tools.filter(tool => tool.name !== "pippit_dev_preview_error_widget")
+    const previewResult = await request("tools/call", { arguments: {}, name: "pippit_dev_preview_error_widget" })
+    if (
+      initialized.serverInfo.version !== "0.2.16"
+      || JSON.stringify(frozenTools) !== JSON.stringify(frozenContract.tools)
+      || tools.tools.length !== frozenContract.tools.length + 1
+      || previewTool?._meta?.["openai/outputTemplate"] !== "ui://widget/pippit-video-job-v14.html"
+      || previewResult.isError === true
+      || previewResult.structuredContent?.pippit_dev_preview !== "error"
+      || resources.resources.length !== 2
+      || templates.resourceTemplates.length !== 2
+    ) {
       throw new Error("Dev gateway discovery did not match the frozen contract.")
     }
-    process.stdout.write(`${JSON.stringify({ gatewayPid: child.pid, resources: resources.resources.length, templates: templates.resourceTemplates.length, tools: tools.tools.length, version: initialized.serverInfo.version })}\n`)
+    process.stdout.write(`${JSON.stringify({ gatewayPid: child.pid, previewTool: previewTool.name, productionTools: frozenTools.length, resources: resources.resources.length, templates: templates.resourceTemplates.length, tools: tools.tools.length, version: initialized.serverInfo.version })}\n`)
   } finally {
     child.stdin.end()
     if (child.exitCode === null) await new Promise(resolveExit => child.once("exit", resolveExit))

@@ -8,13 +8,14 @@ import {
   PIPPIT_WIDGET_URI,
   reconcileWidgetDraftForDuration,
   resolveWidgetModel,
+  resolveWidgetTheme,
   shouldAcceptWidgetJobResult,
   widgetDraftPayloadEquals,
 } from "@pippit-bridge/mcp-server"
 
 describe("Pippit MCP App widget", () => {
   it("uses the stable MCP App resource contract", () => {
-    expect(PIPPIT_WIDGET_URI).toBe("ui://widget/pippit-video-job-v13.html")
+    expect(PIPPIT_WIDGET_URI).toBe("ui://widget/pippit-video-job-v14.html")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/initialize")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/notifications/initialized")
     expect(PIPPIT_WIDGET_HTML).toContain("ui/notifications/tool-result")
@@ -156,6 +157,33 @@ describe("Pippit MCP App widget", () => {
     expect(PIPPIT_WIDGET_HTML).not.toContain('<dt>Model</dt>')
     expect(PIPPIT_WIDGET_HTML).not.toContain("Refresh status")
     expect(PIPPIT_WIDGET_HTML).not.toContain("job.error")
+  })
+
+  it("renders terminal jobs as a theme-aware dot-matrix error state", () => {
+    expect(PIPPIT_WIDGET_HTML).toContain('id="terminal-view" class="terminal-view" role="alert" aria-live="assertive"')
+    expect(PIPPIT_WIDGET_HTML).toContain('class="error-matrix error-mark"')
+    expect(PIPPIT_WIDGET_HTML).toContain('<span class="visually-hidden">Error</span>')
+    expect(PIPPIT_WIDGET_HTML).toContain(':root[data-theme="dark"] .terminal-view')
+    expect(PIPPIT_WIDGET_HTML).toContain('window.matchMedia("(prefers-color-scheme: dark)")')
+    expect(PIPPIT_WIDGET_HTML).toContain('message.method === "ui/notifications/host-context-changed"')
+    expect(PIPPIT_WIDGET_HTML).toContain("applyWidgetTheme();")
+    expect(PIPPIT_WIDGET_HTML).toContain("error-dot-entry 560ms steps(2, end) both")
+    expect(PIPPIT_WIDGET_HTML).toContain("terminalViewElement.classList.remove(\"is-entering\")")
+    expect(PIPPIT_WIDGET_HTML).not.toContain("Video unavailable")
+    expect(PIPPIT_WIDGET_HTML).not.toContain("Video cancelled")
+    expect(PIPPIT_WIDGET_HTML).not.toContain("This video could not be completed")
+    expect(PIPPIT_WIDGET_HTML).toContain('result.structuredContent.pippit_dev_preview === "error"')
+    expect(PIPPIT_WIDGET_HTML).toContain("latestResolutionComplete = true;")
+    expect(PIPPIT_WIDGET_HTML).toContain("showTerminal();")
+    expect(PIPPIT_WIDGET_HTML).toContain(':root[data-widget-view="terminal"] body { padding: 0; }')
+    expect(PIPPIT_WIDGET_HTML).toContain(':root[data-widget-view="terminal"] .terminal-view { min-height: max(268px, 100vh); }')
+    expect(PIPPIT_WIDGET_HTML).toContain('document.documentElement.dataset.widgetView = "terminal";')
+    expect(PIPPIT_WIDGET_HTML).not.toMatch(/\.terminal-view\s*\{[^}]*border-radius:/s)
+
+    expect(resolveWidgetTheme("dark", "light", false)).toBe("dark")
+    expect(resolveWidgetTheme(undefined, "light", true)).toBe("light")
+    expect(resolveWidgetTheme(undefined, undefined, true)).toBe("dark")
+    expect(resolveWidgetTheme("system", undefined, false)).toBe("light")
   })
 
   it("classifies preview refreshes without reloading an unchanged source", () => {

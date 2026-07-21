@@ -404,6 +404,8 @@ describe("Pippit widget protocol", () => {
       .toMatchObject({ contents: [{ text: PIPPIT_WIDGET_HTML, uri: "ui://widget/pippit-video-job-v11.html" }] })
     expect(pippitWidgetReadResource("ui://widget/pippit-video-job-v12.html"))
       .toMatchObject({ contents: [{ text: PIPPIT_WIDGET_HTML, uri: "ui://widget/pippit-video-job-v12.html" }] })
+    expect(pippitWidgetReadResource("ui://widget/pippit-video-job-v13.html"))
+      .toMatchObject({ contents: [{ text: PIPPIT_WIDGET_HTML, uri: "ui://widget/pippit-video-job-v13.html" }] })
     expect(pippitWidgetReadResource("ui://widget/unknown.html")).toBeUndefined()
   })
 

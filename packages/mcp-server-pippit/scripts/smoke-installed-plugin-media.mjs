@@ -246,8 +246,8 @@ try {
     protocolVersion: "2025-11-25",
   })
   if (initialized?.serverInfo?.version !== EXPECTED_PLUGIN_VERSION) throw new Error("Unexpected installed plugin version.")
-  const resource = await rpc("resources/read", { uri: "ui://widget/pippit-video-job-v13.html" })
-  if (!resource?.contents?.[0]?.text?.includes("pippit-video-editor")) throw new Error("Missing v13 widget resource.")
+  const resource = await rpc("resources/read", { uri: "ui://widget/pippit-video-job-v14.html" })
+  if (!resource?.contents?.[0]?.text?.includes("pippit-video-editor")) throw new Error("Missing v14 widget resource.")
   const result = await rpc("tools/call", {
     arguments: { job_id: "job_installed_media" },
     name: "pippit_get_video",

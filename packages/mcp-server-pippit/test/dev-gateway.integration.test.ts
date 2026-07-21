@@ -1,7 +1,12 @@
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { afterEach, describe, expect, test } from "vitest"
-import { createDevMcpGateway, type DevWorkerRequest, type DevWorkerResult } from "../src/dev-gateway.ts"
+import {
+  createDevMcpGateway,
+  PIPPIT_DEV_ERROR_PREVIEW_TOOL_NAME,
+  type DevWorkerRequest,
+  type DevWorkerResult,
+} from "../src/dev-gateway.ts"
 import { DevWorkerPool } from "../src/dev-supervisor.ts"
 import { ChildMcpWorkerGeneration } from "../src/dev-worker-process.ts"
 
@@ -54,6 +59,52 @@ describe("stable dev MCP gateway", () => {
     const crashed = await gateway.handle({ id: 2, jsonrpc: "2.0", method: "tools/call", params: { arguments: { crash: true }, name: "fixture_echo" } })
     expect(crashed).toMatchObject({ result: { isError: true, structuredContent: { error: { code: "DEV_SUPERVISOR_UNAVAILABLE" } } } })
     expect(await gateway.handle({ id: 3, jsonrpc: "2.0", method: "tools/list", params: {} })).toMatchObject({ result: { tools: [{ description: "Frozen echo" }] } })
+  })
+
+  test("adds a dedicated error widget preview without forwarding a video job call", async () => {
+    const n = await start("n")
+    const pool = new DevWorkerPool<DevWorkerRequest, DevWorkerResult>("frozen-hash")
+    await pool.activate(n.worker, review)
+    const contract = {
+      ...n.contract,
+      tools: [...n.contract.tools, {
+        _meta: {
+          ui: { resourceUri: "ui://widget/pippit-video-job-fixture.html", visibility: ["model", "app"] },
+          "ui/resourceUri": "ui://widget/pippit-video-job-fixture.html",
+          "openai/outputTemplate": "ui://widget/pippit-video-job-fixture.html",
+          "openai/widgetAccessible": true,
+        },
+        annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false, readOnlyHint: true, title: "Get video" },
+        description: "Fixture video widget",
+        inputSchema: { additionalProperties: false, properties: { job_id: { type: "string" } }, required: ["job_id"], type: "object" },
+        name: "pippit_get_video",
+        outputSchema: { additionalProperties: true, type: "object" },
+        title: "Get video",
+      }],
+    } as const
+    const gateway = createDevMcpGateway({ contract, enableErrorPreview: true, pool })
+    await gateway.handle({ id: 1, jsonrpc: "2.0", method: "initialize", params: { capabilities: {}, protocolVersion: "2025-11-25" } })
+
+    const listed = await gateway.handle({ id: 2, jsonrpc: "2.0", method: "tools/list", params: {} })
+    expect(listed).toMatchObject({
+      result: {
+        tools: [{ name: "fixture_echo" }, { name: "pippit_get_video" }, {
+          _meta: { "openai/outputTemplate": "ui://widget/pippit-video-job-fixture.html" },
+          name: PIPPIT_DEV_ERROR_PREVIEW_TOOL_NAME,
+        }],
+      },
+    })
+    const preview = await gateway.handle({
+      id: 3,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { arguments: {}, name: PIPPIT_DEV_ERROR_PREVIEW_TOOL_NAME },
+    })
+    expect(preview).toMatchObject({
+      result: {
+        structuredContent: { pippit_dev_preview: "error" },
+      },
+    })
   })
 
   test("detects a cold candidate before activation", async () => {
