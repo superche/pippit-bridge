@@ -29,6 +29,18 @@ export interface WidgetRegionKeyResult {
   region?: WidgetRegion
 }
 
+export type WidgetTheme = "dark" | "light"
+
+export function resolveWidgetTheme(
+  hostTheme: unknown,
+  legacyTheme: unknown,
+  prefersDark: boolean,
+): WidgetTheme {
+  if (hostTheme === "dark" || hostTheme === "light") return hostTheme
+  if (legacyTheme === "dark" || legacyTheme === "light") return legacyTheme
+  return prefersDark ? "dark" : "light"
+}
+
 export function classifyPreviewUpdate(
   currentJobId: string | undefined,
   currentIndex: number,
@@ -165,7 +177,7 @@ export function adjustWidgetRegionFromKey(
   return { handled: true, region: next }
 }
 
-export const PIPPIT_WIDGET_URI = "ui://widget/pippit-video-job-v13.html"
+export const PIPPIT_WIDGET_URI = "ui://widget/pippit-video-job-v14.html"
 
 /**
  * A dependency-free MCP App. Business actions always call the shared MCP
@@ -455,16 +467,89 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       transition: opacity 40ms linear;
     }
     .terminal-view {
+      --error-surface: #ffffff;
+      --error-foreground: #1d1d1f;
       display: grid;
-      min-height: 220px;
+      min-height: 268px;
       place-content: center;
       justify-items: center;
-      gap: 8px;
+      overflow: hidden;
       padding: 32px;
+      background: var(--error-surface);
+      color: var(--error-foreground);
       text-align: center;
     }
-    .terminal-view h1 { font-size: 28px; }
-    .terminal-view p { max-width: 440px; margin: 0; color: #6e6e73; font-size: 14px; }
+    :root[data-theme="dark"] .terminal-view {
+      --error-surface: #1d1d1f;
+      --error-foreground: #f5f5f7;
+      color-scheme: dark;
+    }
+    :root[data-widget-view="terminal"],
+    :root[data-widget-view="terminal"] body {
+      min-height: 100%;
+      background: #ffffff;
+    }
+    :root[data-widget-view="terminal"] body { padding: 0; }
+    :root[data-widget-view="terminal"] main {
+      width: 100%;
+      max-width: none;
+      min-height: 100vh;
+      margin: 0;
+      gap: 0;
+    }
+    :root[data-widget-view="terminal"] .terminal-view { min-height: max(268px, 100vh); }
+    :root[data-theme="dark"][data-widget-view="terminal"],
+    :root[data-theme="dark"][data-widget-view="terminal"] body {
+      background: #1d1d1f;
+    }
+    .error-lockup {
+      display: grid;
+      justify-items: center;
+      gap: 24px;
+    }
+    .error-word {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: clamp(7px, 1.5vw, 12px);
+      margin: 0;
+    }
+    .error-matrix {
+      display: grid;
+      grid-template-columns: repeat(5, clamp(4px, .75vw, 7px));
+      grid-auto-rows: clamp(4px, .75vw, 7px);
+      gap: clamp(2px, .42vw, 4px);
+    }
+    .error-mark {
+      grid-template-columns: repeat(7, 7px);
+      grid-auto-rows: 7px;
+      gap: 4px;
+    }
+    .error-dot {
+      border-radius: 50%;
+      background: currentColor;
+      opacity: .07;
+      transform-origin: center;
+    }
+    .error-dot.is-active { opacity: .94; }
+    .terminal-view.is-entering .error-dot.is-active {
+      animation: error-dot-entry 560ms steps(2, end) both;
+      animation-delay: var(--error-dot-delay);
+    }
+    @keyframes error-dot-entry {
+      0%, 22% { opacity: .07; transform: scale(.72); }
+      36% { opacity: .94; transform: scale(1); }
+      49% { opacity: .18; transform: scale(.82); }
+      64%, 100% { opacity: .94; transform: scale(1); }
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme]) .terminal-view {
+        --error-surface: #1d1d1f;
+        --error-foreground: #f5f5f7;
+        --error-border: #3a3a3c;
+        color-scheme: dark;
+      }
+    }
     .viewer-card { position: relative; }
     .video-stage { border-radius: 17px; }
     video { position: relative; z-index: 0; }
@@ -611,6 +696,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
 
     @media (max-width: 640px) {
       .loading-view { min-height: 240px; }
+      .terminal-view { min-height: 236px; padding: 24px 16px; }
       .trim-panel { padding: 14px; }
       .trim-timeline { margin-inline: 18px; }
       .trim-header { align-items: flex-start; flex-direction: column; gap: 2px; }
@@ -619,6 +705,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
 
     @media (prefers-reduced-motion: reduce) {
       .infinity-dot { transition: none; }
+      .terminal-view.is-entering .error-dot.is-active { animation: none; }
     }
   </style>
 </head>
@@ -629,9 +716,18 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       <p id="status" class="loading-status">Preparing your video…</p>
     </section>
 
-    <section id="terminal-view" class="terminal-view" hidden>
-      <h1 id="terminal-title">Video unavailable</h1>
-      <p id="message">This video could not be completed. Please try again.</p>
+    <section id="terminal-view" class="terminal-view" role="alert" aria-live="assertive" hidden>
+      <div class="error-lockup">
+        <div class="error-matrix error-mark" data-pattern="1000001/0100010/0010100/0001000/0010100/0100010/1000001" aria-hidden="true"></div>
+        <h1 class="error-word">
+          <span class="visually-hidden">Error</span>
+          <span class="error-matrix" data-pattern="11111/10000/10000/11110/10000/10000/11111" aria-hidden="true"></span>
+          <span class="error-matrix" data-pattern="11110/10001/10001/11110/10100/10010/10001" aria-hidden="true"></span>
+          <span class="error-matrix" data-pattern="11110/10001/10001/11110/10100/10010/10001" aria-hidden="true"></span>
+          <span class="error-matrix" data-pattern="01110/10001/10001/10001/10001/10001/01110" aria-hidden="true"></span>
+          <span class="error-matrix" data-pattern="11110/10001/10001/11110/10100/10010/10001" aria-hidden="true"></span>
+        </h1>
+      </div>
     </section>
 
     <section id="editor" class="editor" aria-label="Regenerate from the generated video" hidden>
@@ -711,6 +807,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       var mergeWidgetDraftForMediaRefresh = ${mergeWidgetDraftForMediaRefresh.toString()};
       var widgetDraftPayloadEquals = ${widgetDraftPayloadEquals.toString()};
       var adjustWidgetRegionFromKey = ${adjustWidgetRegionFromKey.toString()};
+      var resolveWidgetTheme = ${resolveWidgetTheme.toString()};
 
       var MAX_ANNOTATIONS = 20;
       var MAX_LOCAL_PREVIEW_BYTES = 256 * 1024 * 1024;
@@ -783,6 +880,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       var generationEpoch = 0;
       var loaderTimer;
       var loaderStep = 0;
+      var terminalEntryTimer;
       var filmstripGeneration = 0;
       var trimDragKind;
       var fallbackTimer;
@@ -793,8 +891,6 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       var loadingViewElement = document.getElementById("loading-view");
       var infinityLoaderElement = document.getElementById("infinity-loader");
       var terminalViewElement = document.getElementById("terminal-view");
-      var terminalTitleElement = document.getElementById("terminal-title");
-      var messageElement = document.getElementById("message");
       var editorElement = document.getElementById("editor");
       var stageElement = document.getElementById("video-stage");
       var videoElement = document.getElementById("video");
@@ -819,6 +915,24 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
       var submitEditElement = document.getElementById("submit-edit");
       var editErrorElement = document.getElementById("edit-error");
       var loaderDots = [];
+      var themeMediaQuery = typeof window.matchMedia === "function"
+        ? window.matchMedia("(prefers-color-scheme: dark)")
+        : undefined;
+      var reducedMotionMediaQuery = typeof window.matchMedia === "function"
+        ? window.matchMedia("(prefers-reduced-motion: reduce)")
+        : undefined;
+
+      function applyWidgetTheme() {
+        var legacyTheme = window.openai && window.openai.theme;
+        var theme = resolveWidgetTheme(hostContext.theme, legacyTheme, Boolean(themeMediaQuery && themeMediaQuery.matches));
+        document.documentElement.dataset.theme = theme;
+      }
+
+      function handleSystemThemeChange() {
+        if (hostContext.theme === "dark" || hostContext.theme === "light") return;
+        if (window.openai && (window.openai.theme === "dark" || window.openai.theme === "light")) return;
+        applyWidgetTheme();
+      }
 
       function post(message) {
         if (!destroyed) window.parent.postMessage(message, "*");
@@ -1201,6 +1315,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
 
       function showLoading(status) {
         videoElement.pause();
+        document.documentElement.dataset.widgetView = "loading";
         loadingViewElement.hidden = false;
         terminalViewElement.hidden = true;
         editorElement.hidden = true;
@@ -1210,21 +1325,28 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
 
       function showEditor() {
         stopInfinityLoader();
+        document.documentElement.dataset.widgetView = "editor";
         loadingViewElement.hidden = true;
         terminalViewElement.hidden = true;
         editorElement.hidden = false;
       }
 
-      function showTerminal(status) {
+      function showTerminal() {
         videoElement.pause();
         stopInfinityLoader();
+        document.documentElement.dataset.widgetView = "terminal";
         loadingViewElement.hidden = true;
         editorElement.hidden = true;
         terminalViewElement.hidden = false;
-        terminalTitleElement.textContent = status === "cancelled" ? "Video cancelled" : "Video unavailable";
-        messageElement.textContent = status === "expired"
-          ? "This video result is no longer available. Please generate it again."
-          : "This video could not be completed. Please try again.";
+        terminalViewElement.classList.remove("is-entering");
+        if (!(reducedMotionMediaQuery && reducedMotionMediaQuery.matches)) {
+          void terminalViewElement.offsetWidth;
+          terminalViewElement.classList.add("is-entering");
+          window.clearTimeout(terminalEntryTimer);
+          terminalEntryTimer = window.setTimeout(function () {
+            terminalViewElement.classList.remove("is-entering");
+          }, 920);
+        }
       }
 
       function clearPollTimer() {
@@ -1842,7 +1964,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         } else if (activeStatus === "failed" || activeStatus === "cancelled" || activeStatus === "expired") {
           clearPreviewRenewal();
           clearPollTimer();
-          showTerminal(activeStatus);
+          showTerminal();
         } else if (preview) {
           setPreview(job, preview);
         }
@@ -1954,6 +2076,14 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
 
       function renderBootstrapResult(result) {
         if (!result || typeof result !== "object") return;
+        if (
+          result.structuredContent &&
+          result.structuredContent.pippit_dev_preview === "error"
+        ) {
+          latestResolutionComplete = true;
+          showTerminal();
+          return;
+        }
         var bootstrapJob = findJob(result.structuredContent, 0);
         if (!bootstrapJob) return;
         activeModel = resolveWidgetModel(activeModel, bootstrapJob.model);
@@ -2087,6 +2217,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
 
       function useOpenAiInitialResult() {
         if (!window.openai) return;
+        applyWidgetTheme();
         var output = window.openai.toolOutput;
         var metadata = window.openai.toolResponseMetadata;
         if (output !== undefined || metadata !== undefined) {
@@ -2098,6 +2229,10 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         destroyed = true;
         previewLoadGeneration += 1;
         if (resizeObserver) resizeObserver.disconnect();
+        if (themeMediaQuery && typeof themeMediaQuery.removeEventListener === "function") {
+          themeMediaQuery.removeEventListener("change", handleSystemThemeChange);
+        }
+        window.clearTimeout(terminalEntryTimer);
         window.clearTimeout(fallbackTimer);
         clearPollTimer();
         clearPreviewRenewal();
@@ -2139,6 +2274,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         if (message.method === "ui/notifications/host-context-changed") {
           var nextHostContext = message.params && typeof message.params === "object" ? message.params : {};
           hostContext = Object.assign({}, hostContext, nextHostContext);
+          applyWidgetTheme();
           return;
         }
         if (message.method === "ui/notifications/tool-result") renderBootstrapResult(message.params);
@@ -2149,6 +2285,22 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
         loaderDot.className = "infinity-dot";
         infinityLoaderElement.appendChild(loaderDot);
         loaderDots.push(loaderDot);
+      }
+      var errorDotIndex = 0;
+      document.querySelectorAll(".error-matrix").forEach(function (matrix) {
+        var pattern = matrix.getAttribute("data-pattern");
+        if (!pattern) return;
+        pattern.replaceAll("/", "").split("").forEach(function (value) {
+          var dot = document.createElement("span");
+          dot.className = "error-dot" + (value === "1" ? " is-active" : "");
+          dot.style.setProperty("--error-dot-delay", String((errorDotIndex % 19) * 12) + "ms");
+          matrix.appendChild(dot);
+          errorDotIndex += 1;
+        });
+      });
+      applyWidgetTheme();
+      if (themeMediaQuery && typeof themeMediaQuery.addEventListener === "function") {
+        themeMediaQuery.addEventListener("change", handleSystemThemeChange);
       }
       startInfinityLoader();
 
@@ -2282,6 +2434,7 @@ export const PIPPIT_WIDGET_HTML = String.raw`<!doctype html>
           ? result.hostCapabilities
           : {};
         hostContext = result && result.hostContext && typeof result.hostContext === "object" ? result.hostContext : {};
+        applyWidgetTheme();
         serverResourcesAvailable = Boolean(capabilities.serverResources);
         serverToolsAvailable = Boolean(capabilities.serverTools);
         post({ jsonrpc: "2.0", method: "ui/notifications/initialized" });

@@ -44,7 +44,7 @@ try {
     }),
     request(2, "tools/list"),
     request(3, "resources/list"),
-    request(4, "resources/read", { uri: "ui://widget/pippit-video-job-v13.html" }),
+    request(4, "resources/read", { uri: "ui://widget/pippit-video-job-v14.html" }),
     request(5, "tools/call", { arguments: {}, name: "pippit_list_access_keys" }),
     request(6, "resources/read", { uri: "ui://widget/pippit-image-result-v4.html" }),
     request(7, "resources/read", { uri: "ui://widget/pippit-image-result-v3.html" }),
@@ -133,13 +133,13 @@ try {
   }
   const getVideo = tools.find((tool) => tool.name === "pippit_get_video")
   if (
-    getVideo?._meta?.ui?.resourceUri !== "ui://widget/pippit-video-job-v13.html" ||
-    getVideo?._meta?.["openai/outputTemplate"] !== "ui://widget/pippit-video-job-v13.html"
+    getVideo?._meta?.ui?.resourceUri !== "ui://widget/pippit-video-job-v14.html" ||
+    getVideo?._meta?.["openai/outputTemplate"] !== "ui://widget/pippit-video-job-v14.html"
   ) {
     throw new Error("The packaged MCP tools do not bind the shared widget.")
   }
   if (
-    !listedResources.some((resource) => resource.uri === "ui://widget/pippit-video-job-v13.html") ||
+    !listedResources.some((resource) => resource.uri === "ui://widget/pippit-video-job-v14.html") ||
     !listedResources.some((resource) => resource.uri === "ui://widget/pippit-image-result-v4.html") ||
     widgetResource?.mimeType !== "text/html;profile=mcp-app" ||
     !widgetResource?.text?.includes("pippit-video-editor") ||

@@ -121,12 +121,14 @@ export {
   mergeWidgetDraftForMediaRefresh,
   reconcileWidgetDraftForDuration,
   resolveWidgetModel,
+  resolveWidgetTheme,
   shouldAcceptWidgetJobResult,
   widgetDraftPayloadEquals,
   type PreviewUpdateKind,
   type WidgetDraftAnnotation,
   type WidgetDraftState,
   type WidgetRegion,
+  type WidgetTheme,
 } from "./widget.ts"
 export {
   PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME,

@@ -3,7 +3,9 @@
   "mcp": {
     "mcpServers": {
       "pippit-video": {
-        "args": ["./plugin-entry.sh"],
+        "args": [
+          "./plugin-entry.sh"
+        ],
         "command": "/bin/sh",
         "cwd": ".",
         "tool_timeout_sec": 43200
@@ -11,12 +13,17 @@
     }
   },
   "plugin": {
-    "author": { "name": "superche" },
+    "author": {
+      "name": "superche"
+    },
     "description": "Manage Pippit accounts, generate Seedream images, and create, inspect, save, preview, and regenerate video jobs through one MCP server.",
     "homepage": "https://github.com/superche/pippit-bridge",
     "interface": {
       "brandColor": "#000000",
-      "capabilities": ["Interactive", "Write"],
+      "capabilities": [
+        "Interactive",
+        "Write"
+      ],
       "category": "Creativity",
       "composerIcon": "./assets/pippit-video-icon.png",
       "defaultPrompt": [
@@ -32,7 +39,14 @@
       "shortDescription": "Generate Pippit images and video",
       "websiteURL": "https://github.com/superche/pippit-bridge"
     },
-    "keywords": ["pippit", "video generation", "image generation", "seedream", "mcp", "seedance"],
+    "keywords": [
+      "pippit",
+      "video generation",
+      "image generation",
+      "seedream",
+      "mcp",
+      "seedance"
+    ],
     "license": "MIT",
     "mcpServers": "./.mcp.json",
     "name": "pippit-video",

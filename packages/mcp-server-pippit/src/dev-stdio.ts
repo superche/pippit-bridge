@@ -56,7 +56,7 @@ async function run(): Promise<void> {
   if ((runtimeMetadata.mode & 0o022) !== 0) throw new Error("DEV_RUNTIME_MODE_REJECTED")
   const frozen = await readSecureJson<FrozenDevContract>(pointer.frozenContractPath, dataRoot)
   const pool = new DevWorkerPool<DevWorkerRequest, DevWorkerResult>(pointer.contractHash)
-  const gateway = createDevMcpGateway({ contract: frozen, pool })
+  const gateway = createDevMcpGateway({ contract: frozen, enableErrorPreview: true, pool })
   let observedGeneration: string | undefined
   let activating = false
 

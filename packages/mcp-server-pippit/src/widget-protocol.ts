@@ -47,6 +47,7 @@ const LEGACY_PIPPIT_WIDGET_URIS = new Set([
   "ui://widget/pippit-video-job-v10.html",
   "ui://widget/pippit-video-job-v11.html",
   "ui://widget/pippit-video-job-v12.html",
+  "ui://widget/pippit-video-job-v13.html",
 ])
 const LEGACY_PIPPIT_IMAGE_WIDGET_URIS = new Set([
   "ui://widget/pippit-image-result-v1.html",

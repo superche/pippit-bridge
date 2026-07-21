@@ -2,6 +2,9 @@ import { createPippitMcpMessageHandler, type JsonRpcResponse, type PippitMcpReso
 import { DevGatewayError, type DevWorkerPool } from "./dev-supervisor.ts"
 import type { PippitMcpCallToolResult, PippitToolDefinition, PippitToolRuntime } from "./tools.ts"
 
+export const PIPPIT_DEV_ERROR_PREVIEW_TOOL_NAME = "pippit_dev_preview_error_widget"
+export const PIPPIT_DEV_ERROR_PREVIEW_VALUE = "error"
+
 export type DevWorkerRequest =
   | { readonly argumentsValue: unknown; readonly method: "tools/call"; readonly name: string }
   | { readonly method: "resources/read"; readonly uri: string }
@@ -24,15 +27,67 @@ function stableToolFailure(error: unknown): PippitMcpCallToolResult {
   }
 }
 
+function devErrorPreviewTool(contract: FrozenDevContract): PippitToolDefinition {
+  const videoWidgetTool = contract.tools.find(tool => tool.name === "pippit_get_video")
+  const outputTemplate = videoWidgetTool?._meta?.["openai/outputTemplate"]
+  if (typeof outputTemplate !== "string" || !outputTemplate.startsWith("ui://widget/")) {
+    throw new Error("DEV_ERROR_PREVIEW_WIDGET_UNAVAILABLE")
+  }
+  return {
+    _meta: {
+      ui: { resourceUri: outputTemplate, visibility: ["model", "app"] },
+      "ui/resourceUri": outputTemplate,
+      "openai/outputTemplate": outputTemplate,
+      "openai/toolInvocation/invoked": "Pippit error preview opened",
+      "openai/toolInvocation/invoking": "Opening Pippit error preview…",
+      "openai/widgetAccessible": true,
+    },
+    annotations: {
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+      readOnlyHint: true,
+      title: "Preview the Pippit error widget",
+    },
+    description: "Development-only entry that opens the Pippit dot-matrix error widget without calling Pippit or changing video jobs.",
+    inputSchema: { additionalProperties: false, properties: {}, type: "object" },
+    name: PIPPIT_DEV_ERROR_PREVIEW_TOOL_NAME as PippitToolDefinition["name"],
+    outputSchema: {
+      additionalProperties: false,
+      properties: { pippit_dev_preview: { const: PIPPIT_DEV_ERROR_PREVIEW_VALUE, type: "string" } },
+      required: ["pippit_dev_preview"],
+      type: "object",
+    },
+    title: "Preview Pippit error widget (development)",
+  }
+}
+
+function devErrorPreviewResult(): PippitMcpCallToolResult {
+  return {
+    content: [{ text: "Opened the development-only Pippit error widget preview.", type: "text" }],
+    structuredContent: { pippit_dev_preview: PIPPIT_DEV_ERROR_PREVIEW_VALUE },
+  }
+}
+
 export function createDevMcpGateway(input: {
   readonly contract: FrozenDevContract
+  readonly enableErrorPreview?: boolean
   readonly pool: DevWorkerPool<DevWorkerRequest, DevWorkerResult>
 }): { readonly handle: (message: unknown) => Promise<JsonRpcResponse | undefined> } {
-  const readOnlyTools = new Set(input.contract.tools
+  const errorPreviewTool = input.enableErrorPreview === true
+    ? devErrorPreviewTool(input.contract)
+    : undefined
+  const tools = errorPreviewTool === undefined
+    ? input.contract.tools
+    : [...input.contract.tools, errorPreviewTool]
+  const readOnlyTools = new Set(tools
     .filter(tool => tool.annotations.readOnlyHint)
     .map(tool => tool.name))
   const runtime: PippitToolRuntime = {
     async callTool(name, argumentsValue) {
+      if (errorPreviewTool !== undefined && name === PIPPIT_DEV_ERROR_PREVIEW_TOOL_NAME) {
+        return devErrorPreviewResult()
+      }
       try {
         const result = await input.pool.invoke(
           { argumentsValue, method: "tools/call", name },
@@ -45,7 +100,7 @@ export function createDevMcpGateway(input: {
       }
     },
     listTools() {
-      return input.contract.tools
+      return tools
     },
   }
   const resources: PippitMcpResourceProvider = {
