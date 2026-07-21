@@ -38,7 +38,11 @@ jobs:
       - run: npm --version
       - run: npm run check:public-lockfile
       - run: npm ci
-      - run: npm run check
+      - run: npm run check:plugin-version
+      - run: npm run check:plugin-contract
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
       - name: Record launcher boundary
         shell: pwsh
         run: Write-Output "Native Windows Codex launch is unsupported while .mcp.json requires /bin/sh."

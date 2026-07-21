@@ -26,7 +26,7 @@ Plugin 分成两个物理平面：
 - `scripts/codex-dev.mjs`：在独立数据根准备可由 Codex `marketplace add` 的 `pippit-bridge-dev` catalog、dev-only gateway bundle、0600 pointer/frozen contract/status，以及强制传给所有 dev worker 的独立 `PIPPIT_BRIDGE_HOME` runtime root；校验 owner/realpath，watch 后串行 staging build/test/contract，要求与 source hash 绑定的人工 `hot-compatible` review，再原子写 active generation。它不修改全局 Codex cache，也不读取 release 账号、job 或 artifact state。
 - `src/dev-widget.ts`：固定 dev shell URI/MIME、loopback asset/SSE HMR primitives、capability/Host/Origin 校验，以及旧/新 tool payload 和 confirmation fixture 等价检查。primitives 已本地验证，但尚未接入已安装 plugin 的 `outputTemplate`/gateway 生命周期；当前不能把它表述为已挂载 Codex iframe HMR。
 - `release-epoch.ts`：MCP client 自动发送内部 release epoch；Facade 在 route handler 和任何副作用前 fence 显式 stale epoch 为 `PLUGIN_TASK_STALE`。首个无 epoch 历史版本保持兼容一个迁移周期。
-- `plugin-contract.yml`：Node 22/24、macOS/Linux gate；Windows 只跑 contract/build 并明确 `/bin/sh` launcher 不支持 native Windows。
+- `plugin-contract.yml`：Node 22/24、macOS/Linux gate；contract 预构建显式按 `core -> mcp-server` 顺序执行，避免 clean checkout 被本地 workspace `dist` 掩盖；Windows 只跑 version/contract/lint/typecheck/build 并明确 `/bin/sh` launcher 不支持 native Windows，不把全量 Windows runtime suite 混入该边界门禁。
 - `plugin-release.yml`：手动、受 environment 保护的两阶段流程。clean install/check/pack/direct-extract offline smoke 后 publish；从 registry 重下验证；只有显式选择 activation 才把整个 marketplace source block 换成 exact direct npm 并创建 PR。
 
 ## 身份与隔离
