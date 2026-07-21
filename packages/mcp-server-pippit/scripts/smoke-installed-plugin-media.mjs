@@ -7,6 +7,8 @@ import { isAbsolute, join, resolve } from "node:path"
 import { createInterface } from "node:readline"
 import { once } from "node:events"
 
+const EXPECTED_PLUGIN_VERSION = "0.2.16"
+
 const [entryArgument, mediaArgument] = process.argv.slice(2)
 if (entryArgument === undefined || mediaArgument === undefined) {
   throw new Error("Usage: node smoke-installed-plugin-media.mjs /absolute/plugin-entry.mjs /absolute/video.mp4")
@@ -243,7 +245,7 @@ try {
     clientInfo: { name: "installed-media-smoke", version: "1" },
     protocolVersion: "2025-11-25",
   })
-  if (initialized?.serverInfo?.version !== "0.2.16") throw new Error("Unexpected installed plugin version.")
+  if (initialized?.serverInfo?.version !== EXPECTED_PLUGIN_VERSION) throw new Error("Unexpected installed plugin version.")
   const resource = await rpc("resources/read", { uri: "ui://widget/pippit-video-job-v13.html" })
   if (!resource?.contents?.[0]?.text?.includes("pippit-video-editor")) throw new Error("Missing v13 widget resource.")
   const result = await rpc("tools/call", {

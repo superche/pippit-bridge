@@ -1,5 +1,7 @@
 # Pippit Bridge
 
+> Release health note (2026-07-20): the repository candidate is `0.2.16`, while the canonical marketplace remains pinned to the only currently published npm artifact, `0.2.13`. Do not activate `0.2.16` until that exact artifact is published and re-downloaded successfully. See [Codex Plugin development and release engineering](docs/codex-plugin-dev-release-engineering.md).
+
 <p align="center">
   <img src="./assets/brand/pippit-bird.png" width="180" alt="Pippit Bridge 飞鸟 Logo" />
 </p>

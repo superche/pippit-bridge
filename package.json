@@ -39,7 +39,17 @@
     "test": "vitest run --configLoader native",
     "pretest:watch": "npm run build:libs",
     "test:watch": "vitest --configLoader native",
-    "check": "npm run lint && npm run typecheck && npm test && npm run build"
+    "check": "npm run lint && npm run typecheck && npm test && npm run build",
+    "sync:plugin-version": "node scripts/plugin-version.mjs sync",
+    "check:plugin-version": "node scripts/plugin-version.mjs check",
+    "generate:plugin-contract": "node scripts/plugin-contract.mjs generate",
+    "check:plugin-contract": "node scripts/plugin-contract.mjs check",
+    "check:release-artifact": "node scripts/release-artifact.mjs",
+    "check:dev-gateway": "node scripts/smoke-dev-gateway.mjs",
+    "codex:dev": "node scripts/codex-dev.mjs run",
+    "codex:dev:full-gate": "npm run test -w @pippit-bridge/mcp-server && npm run check:plugin-contract && npm run check:dev-gateway",
+    "codex:dev:status": "node scripts/codex-dev.mjs status",
+    "codex:dev:bootstrap": "node scripts/codex-dev.mjs bootstrap"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

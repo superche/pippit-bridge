@@ -16,10 +16,10 @@
     ".mcp.json",
     "assets",
     "dist",
+    "!dist/dev-*",
     "plugin-entry.mjs",
     "plugin-entry.sh",
     "skills",
-    "src",
     "LICENSE"
   ],
   "exports": {
@@ -36,7 +36,7 @@
     "pippit-mcp": "./dist/stdio.js"
   },
   "scripts": {
-    "build": "tsc -b tsconfig.build.json --force && esbuild src/stdio.ts --bundle --platform=node --format=esm --target=node22 --legal-comments=none --outfile=dist/plugin-stdio.mjs && esbuild scripts/local-facade-daemon-entry.mjs --bundle --platform=node --format=esm --target=node22 --legal-comments=none --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/local-facade-daemon.mjs",
+    "build": "tsc -b tsconfig.build.json --force && esbuild src/stdio.ts --bundle --platform=node --format=esm --target=node22 --legal-comments=none --outfile=dist/plugin-stdio.mjs && esbuild src/dev-stdio.ts --bundle --platform=node --format=esm --target=node22 --legal-comments=none --outfile=dist/dev-gateway-stdio.mjs && esbuild scripts/local-facade-daemon-entry.mjs --bundle --platform=node --format=esm --target=node22 --legal-comments=none --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/local-facade-daemon.mjs",
     "prepack": "npm run build",
     "pretest": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",

@@ -262,8 +262,15 @@ export async function projectPippitWidgetResult(
     ? undefined
     : sanitizePippitWidgetValue(result.structuredContent) as Readonly<Record<string, unknown>>
   const projectedStructuredContent = projectStructuredImages(sanitizedStructuredContent, images)
+  const sanitizedContent = sanitizeContent(result.content)
+  const hasPersistentImages = images.some(image => typeof image.resource_uri === "string")
   return {
-    content: sanitizeContent(result.content),
+    // Once an image is persisted, the Widget reads it through its opaque resource URI.
+    // Keeping the original base64 image block here makes Codex wrap large MCP results
+    // as text, hiding structuredContent and _meta from the Widget.
+    content: hasPersistentImages
+      ? sanitizedContent.filter(block => block.type !== "image")
+      : sanitizedContent,
     ...(result.isError === undefined ? {} : { isError: result.isError }),
     ...(projectedStructuredContent === undefined
       ? {}

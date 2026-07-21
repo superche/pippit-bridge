@@ -6,12 +6,21 @@ import { fileURLToPath } from "node:url"
 
 const distEntry = new URL("./dist/plugin-stdio.mjs", import.meta.url)
 const bundledDaemon = new URL("./dist/local-facade-daemon.mjs", import.meta.url)
+const OFFICIAL_NPM_REGISTRY = "https://registry.npmjs.org"
+
+function nodeVersionSupported(version) {
+  const [major, minor, patch] = version.split(".").map(Number)
+  if (![major, minor, patch].every(Number.isInteger)) return false
+  if (major >= 26) return true
+  if (major === 24) return minor > 15 || (minor === 15 && patch >= 0)
+  return major === 22 && (minor > 22 || (minor === 22 && patch >= 2))
+}
 
 async function runPublishedPackage() {
   const packageMetadata = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"))
   const packageSpec = `@pippit-bridge/mcp-server@${packageMetadata.version}`
   const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx"
-  const child = spawn(npxCommand, ["--yes", "--package", packageSpec, "pippit-mcp"], {
+  const child = spawn(npxCommand, ["--yes", "--registry", OFFICIAL_NPM_REGISTRY, "--package", packageSpec, "pippit-mcp"], {
     env: process.env,
     stdio: "inherit",
   })
@@ -29,6 +38,9 @@ async function runPublishedPackage() {
 }
 
 try {
+  if (!nodeVersionSupported(process.versions.node)) {
+    throw new Error(`Unsupported Node.js ${process.versions.node}; requires ^22.22.2 || ^24.15.0 || >=26.0.0.`)
+  }
   if (
     existsSync(fileURLToPath(distEntry)) &&
     existsSync(fileURLToPath(bundledDaemon))
@@ -38,7 +50,8 @@ try {
   } else {
     await runPublishedPackage()
   }
-} catch {
-  process.stderr.write("Pippit MCP server could not start. Check Node.js/npm availability and the facade environment configuration.\n")
+} catch (error) {
+  const reason = error instanceof Error ? error.message : "unknown startup failure"
+  process.stderr.write(`Pippit MCP server could not start: ${reason}\nDirect npm installs require a compatible Node.js executable; the package does not bundle Node.js.\n`)
   process.exitCode = 1
 }

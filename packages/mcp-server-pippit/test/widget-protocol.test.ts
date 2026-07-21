@@ -54,6 +54,7 @@ describe("Pippit widget protocol", () => {
   })
 
   it("projects Codex images to persistent local resource identities without exposing local paths", async () => {
+    const encodedImage = "a".repeat(1_900_000)
     const prepareImage = vi.fn(async () => ({
       bytes: 5,
       filename: `pippit-image-${"a".repeat(64)}.jpg`,
@@ -64,12 +65,13 @@ describe("Pippit widget protocol", () => {
     const projected = await projectPippitWidgetResult({
       content: [
         { text: "Generated 1 image.", type: "text" },
-        { data: "aW1hZ2U=", mimeType: "image/jpeg", type: "image" },
+        { data: encodedImage, mimeType: "image/jpeg", type: "image" },
       ],
       structuredContent: { created: 1_780_000_000, model: "pippit/seedream-5.0" },
     }, undefined, prepareImage)
 
-    expect(prepareImage).toHaveBeenCalledWith("aW1hZ2U=", "image/jpeg")
+    expect(prepareImage).toHaveBeenCalledWith(encodedImage, "image/jpeg")
+    expect(projected.content).toEqual([{ text: "Generated 1 image.", type: "text" }])
     expect(projected._meta?.["pippit/images"]).toEqual([
       {
         bytes: 5,
@@ -94,6 +96,8 @@ describe("Pippit widget protocol", () => {
     expect(JSON.stringify(projected._meta)).not.toContain("/Users/test")
     expect(JSON.stringify(projected.structuredContent)).not.toContain("localPath")
     expect(JSON.stringify(projected.structuredContent)).not.toContain("/Users/test")
+    expect(JSON.stringify(projected)).not.toContain(encodedImage)
+    expect(JSON.stringify(projected).length).toBeLessThan(2_000)
   })
 
   it("projects generated images into widget-only downloadable attachments", async () => {
