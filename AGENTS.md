@@ -49,6 +49,7 @@ The backend worker hot path is wired and host-validated. `src/dev-widget.ts` cur
 ## Version and contract rules
 
 - `packages/mcp-server-pippit/package.json` is the mechanical plugin version source. Use `npm run sync:plugin-version -- <exact-version>` and then `npm run check:plugin-version`; do not update version markers independently.
+- The root lockfile may resolve remote packages only from `https://registry.npmjs.org`. Keep `.npmrc` pinned to the official registry and run `npm run check:public-lockfile`; internal mirror URLs make public clean installs non-reproducible.
 - `.agents/plugins/marketplace.json` is the canonical production catalog and must use an exact direct npm source. It may point only to an artifact that exists on the official npm registry and has been re-downloaded and verified.
 - Contract goldens are generated from the real launcher and discovery surface. Run `npm run generate:plugin-contract` only for an intentional cold-contract release, review the diff, and keep `npm run check:plugin-contract` green.
 - Skills remain part of the plugin contract through their cache digest even though they are not served by the MCP gateway.
@@ -69,6 +70,7 @@ Local release gate:
 
 ```bash
 npm ci
+npm run check:public-lockfile
 npm run check:plugin-version
 npm run check:plugin-contract
 npm run check

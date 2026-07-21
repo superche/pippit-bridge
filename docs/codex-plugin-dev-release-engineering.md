@@ -89,6 +89,7 @@ npm run codex:dev:full-gate
 
 ```bash
 npm ci
+npm run check:public-lockfile
 npm run check:plugin-version
 npm run check:plugin-contract
 npm run check

@@ -22,8 +22,8 @@ jobs:
     environment: npm-release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24.15.0
           registry-url: https://registry.npmjs.org
@@ -32,6 +32,7 @@ jobs:
       - run: test "$(node -p "require('./packages/mcp-server-pippit/package.json').version")" = "${{ inputs.version }}"
       - name: Refuse an occupied npm version
         run: if npm view "@pippit-bridge/mcp-server@${{ inputs.version }}" version --registry=https://registry.npmjs.org; then exit 1; fi
+      - run: npm run check:public-lockfile
       - run: npm ci
       - run: npm run check:plugin-version && npm run check:plugin-contract && npm run check && npm run check:release-artifact
       - run: mkdir release && npm pack -w @pippit-bridge/mcp-server --pack-destination release
