@@ -24,6 +24,7 @@ import {
   normalizePippitFacadeBaseUrl,
   PIPPIT_DEFAULT_FACADE_TIMEOUT_MS,
 } from "./options.ts"
+import { PIPPIT_RELEASE_EPOCH, PIPPIT_RELEASE_EPOCH_HEADER } from "@pippit-bridge/core"
 
 const MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024
 const MAX_IMAGE_JSON_RESPONSE_BYTES = 420 * 1024 * 1024
@@ -463,6 +464,7 @@ async function requestWithBearer(input: {
     const headers = new Headers(input.init.headers)
     if (!headers.has("accept")) headers.set("accept", "application/json")
     headers.set("authorization", `Bearer ${input.apiKey}`)
+    headers.set(PIPPIT_RELEASE_EPOCH_HEADER, String(PIPPIT_RELEASE_EPOCH))
     response = await input.fetchImpl(`${input.baseUrl}${input.path}`, {
       ...input.init,
       headers,

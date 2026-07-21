@@ -196,7 +196,8 @@ describe("Pippit stdio entrypoint", () => {
       })
       const completedResult = responses.find((response) => response.id === 6)?.result
       if (completedResult === undefined) throw new Error("Missing completed image result in test.")
-      expect(completedResult.content).toContainEqual({ data: "aW1hZ2U=", mimeType: "image/jpeg", type: "image" })
+      expect(completedResult.content).toEqual([{ text: "Generated 1 image.", type: "text" }])
+      expect(JSON.stringify(completedResult)).not.toContain("aW1hZ2U=")
       const images = (completedResult._meta as Record<string, unknown>)["pippit/images"] as Array<{
         data?: string
         filename: string

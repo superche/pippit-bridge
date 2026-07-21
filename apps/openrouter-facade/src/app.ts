@@ -36,6 +36,8 @@ import {
   UnknownImageModelError,
   UnknownVideoModelError,
   VIDEO_MODELS,
+  PIPPIT_RELEASE_EPOCH_HEADER,
+  classifyReleaseEpoch,
 } from "@pippit-bridge/core"
 import {
   createReferenceWorkGate,
@@ -622,6 +624,18 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     routerOptions: {
       maxParamLength: 16 * 1024,
     },
+  })
+
+  app.addHook("onRequest", async request => {
+    const rawEpoch = request.headers[PIPPIT_RELEASE_EPOCH_HEADER]
+    const epoch = Array.isArray(rawEpoch) ? rawEpoch[0] : rawEpoch
+    if (classifyReleaseEpoch(epoch) === "stale") {
+      throw new ApiError("This plugin task is outside the supported compatibility window. Start a new task.", {
+        code: "PLUGIN_TASK_STALE",
+        statusCode: 409,
+        type: "invalid_request_error",
+      })
+    }
   })
 
   const submitVideoGeneration = async (

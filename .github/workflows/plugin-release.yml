@@ -1,0 +1,51 @@
+name: Two-phase plugin release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact unoccupied npm version
+        required: true
+      activate_marketplace:
+        description: Open marketplace activation PR after registry verification
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  publish-and-verify:
+    environment: npm-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.15.0
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm install --global npm@12.0.1
+      - run: test "$(node -p "require('./packages/mcp-server-pippit/package.json').version")" = "${{ inputs.version }}"
+      - name: Refuse an occupied npm version
+        run: if npm view "@pippit-bridge/mcp-server@${{ inputs.version }}" version --registry=https://registry.npmjs.org; then exit 1; fi
+      - run: npm run check:public-lockfile
+      - run: npm ci
+      - run: npm run check:plugin-version && npm run check:plugin-contract && npm run check && npm run check:release-artifact
+      - run: mkdir release && npm pack -w @pippit-bridge/mcp-server --pack-destination release
+      - run: npm publish "release/pippit-bridge-mcp-server-${{ inputs.version }}.tgz" --access public --provenance --registry=https://registry.npmjs.org
+      - run: npm view "@pippit-bridge/mcp-server@${{ inputs.version }}" version dist.integrity dist.tarball --json --registry=https://registry.npmjs.org
+      - run: mkdir registry-verify && npm pack "@pippit-bridge/mcp-server@${{ inputs.version }}" --pack-destination registry-verify --registry=https://registry.npmjs.org
+      - run: npm install --prefix /tmp/pippit-registry-install --ignore-scripts "registry-verify/pippit-bridge-mcp-server-${{ inputs.version }}.tgz"
+      - if: ${{ inputs.activate_marketplace }}
+        run: node scripts/activate-marketplace.mjs "${{ inputs.version }}"
+      - if: ${{ inputs.activate_marketplace }}
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: plugin-marketplace-${{ inputs.version }}
+          title: "release: activate pippit-video ${{ inputs.version }}"
+          commit-message: "release: activate pippit-video ${{ inputs.version }}"
+          body: "Registry artifact was re-downloaded and verified before this exact-version marketplace activation."

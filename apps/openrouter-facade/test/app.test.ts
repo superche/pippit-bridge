@@ -96,6 +96,21 @@ async function createVideo(app: ReturnType<typeof buildApp>, facadeKey = FACADE_
   })
 }
 
+describe("release epoch fencing", () => {
+  it("rejects an explicit stale task before any upstream side effect", async () => {
+    const harness = createHarness()
+    const response = await harness.app.inject({
+      headers: { ...bearer(FACADE_KEY), "x-pippit-release-epoch": "0" },
+      method: "POST",
+      payload: { model: "pippit/seedance-2.0", prompt: "must not submit" },
+      url: "/api/v1/videos",
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json().error.metadata.internal_code).toBe("PLUGIN_TASK_STALE")
+    expect(harness.pippit.submitRun).not.toHaveBeenCalled()
+  })
+})
+
 describe("OpenRouter image generation", () => {
   it("lists Seedream models and completes a Pro reference-image request", async () => {
     const harness = createHarness({ imageUrls: ["https://cdn.test/generated.png"], videoUrls: [] })

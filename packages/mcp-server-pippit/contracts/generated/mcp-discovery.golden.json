@@ -1,0 +1,49 @@
+{
+  "formatVersion": 1,
+  "initialize": {
+    "capabilities": { "resources": { "listChanged": false }, "tools": { "listChanged": false } },
+    "instructions": "Use these tools only for Pippit image and video generation through the configured facade. Never provide a raw Pippit Access Key.",
+    "protocolVersion": "2025-11-25",
+    "serverInfo": { "name": "pippit-video", "version": "0.2.16" }
+  },
+  "reads": [
+    { "sha256": "dbe0aad8302c5bdc12ae9ecc07863ba75c5a9b0cda7bfb7e0d13b6df6f38cb44", "uri": "ui://widget/pippit-image-result-v4.html" },
+    { "sha256": "bf71da70c3aac833f3d8661cd016f58d8c3c862b457bfa5d57fb2b7467c797b7", "uri": "ui://widget/pippit-video-job-v13.html" }
+  ],
+  "resources": {
+    "sha256": "83d73f1fc6e384fc42e5636d0bc28b2723109af6665d1db286cd8894c381e0aa",
+    "uris": ["ui://widget/pippit-image-result-v4.html", "ui://widget/pippit-video-job-v13.html"]
+  },
+  "resultSemantics": {
+    "formatVersion": 1,
+    "rules": [
+      {
+        "errorSemantics": "Errors are explicit and never imply a side effect was replayed.",
+        "idempotency": "Write tools use the facade single-writer ledger and an idempotency key.",
+        "surface": "all-tools",
+        "units": "Durations use seconds in generation input and milliseconds in edit segment or annotation fields."
+      },
+      {
+        "compatibility": "N and N-1 are accepted. Unsupported explicit epochs fail before side effects with PLUGIN_TASK_STALE; absent epochs remain compatible for the first transition release.",
+        "surface": "task-epoch"
+      },
+      {
+        "confirmationBoundary": "Pure presentation may change hot. Tool mapping, defaults, validation, approval, payment, or write confirmation are cold contract.",
+        "surface": "widget"
+      }
+    ]
+  },
+  "templates": {
+    "sha256": "d32bb1b395b1b1b51cdd40aa4344b96b285f6df933cbd1710049cb314c2e94a9",
+    "uriTemplates": ["pippit-image://artifact/{artifact_id}.{extension}", "pippit-video://artifact/{artifact_id}{?length,offset}"]
+  },
+  "tools": {
+    "names": [
+      "pippit_add_access_key", "pippit_delete_access_key", "pippit_download_video", "pippit_edit_video_segment",
+      "pippit_generate_image", "pippit_generate_video", "pippit_get_image", "pippit_get_video",
+      "pippit_list_access_keys", "pippit_list_image_models", "pippit_list_video_models", "pippit_read_image",
+      "pippit_read_video_chunk", "pippit_resolve_latest_video", "pippit_reveal_image", "pippit_switch_access_key"
+    ],
+    "sha256": "ed69e674b87e2849f11d11452c7707299693a94772475e967407aa2c39f90179"
+  }
+}

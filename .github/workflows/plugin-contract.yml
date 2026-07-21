@@ -1,0 +1,51 @@
+name: Plugin contract and version
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  contract:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [22.22.2, 24.15.0]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm --version
+      - run: npm run check:public-lockfile
+      - run: npm ci
+      - run: npm run check:plugin-version
+      - run: npm run build:plugin-contract
+      - run: node scripts/plugin-contract.mjs check
+      - run: npm run check
+      - run: npm run check:release-artifact
+      - run: npm run check:dev-gateway
+
+  windows-contract-only:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.15.0
+          cache: npm
+      - run: npm --version
+      - run: npm run check:public-lockfile
+      - run: npm ci
+      - run: npm run check:plugin-version
+      - run: npm run build:plugin-contract
+      - run: node scripts/plugin-contract.mjs check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Record launcher boundary
+        shell: pwsh
+        run: Write-Output "Native Windows Codex launch is unsupported while .mcp.json requires /bin/sh."

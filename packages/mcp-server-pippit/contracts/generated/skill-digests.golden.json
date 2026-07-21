@@ -1,0 +1,9 @@
+{
+  "formatVersion": 1,
+  "skills": [
+    {
+      "path": "skills/pippit-video/SKILL.md",
+      "sha256": "30f5f63fa6d3261c924dc5e9fb4ec2dfddd9b7b732a21b72c7f1c8d914785224"
+    }
+  ]
+}

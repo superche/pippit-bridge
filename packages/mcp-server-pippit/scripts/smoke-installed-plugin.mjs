@@ -3,6 +3,8 @@ import { lstat, mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 
+const EXPECTED_PLUGIN_VERSION = "0.2.16"
+
 const entryArgument = process.argv[2]
 if (entryArgument === undefined) {
   throw new Error("Usage: node smoke-installed-plugin.mjs /absolute/path/to/plugin-entry.mjs")
@@ -10,7 +12,7 @@ if (entryArgument === undefined) {
 if (!isAbsolute(entryArgument)) throw new Error("The plugin entry path must be absolute.")
 const entryPath = resolve(entryArgument)
 const pluginManifest = JSON.parse(await readFile(join(dirname(entryPath), ".codex-plugin", "plugin.json"), "utf8"))
-if (pluginManifest.version !== "0.2.16") throw new Error("The packaged Codex plugin manifest version is unexpected.")
+if (pluginManifest.version !== EXPECTED_PLUGIN_VERSION) throw new Error("The packaged Codex plugin manifest version is unexpected.")
 
 const dataRoot = await mkdtemp(join(tmpdir(), "pippit-packed-runtime-"))
 await rm(dataRoot, { force: true, recursive: true })
@@ -91,7 +93,7 @@ try {
   const toolCall = responses.find((response) => response.id === 5)?.result
   const imageWidgetResource = responses.find((response) => response.id === 6)?.result?.contents?.[0]
   const legacyImageWidgetResource = responses.find((response) => response.id === 7)?.result?.contents?.[0]
-  if (responses.find((response) => response.id === 1)?.result?.serverInfo?.version !== "0.2.16") {
+  if (responses.find((response) => response.id === 1)?.result?.serverInfo?.version !== EXPECTED_PLUGIN_VERSION) {
     throw new Error("The packaged MCP server version is unexpected.")
   }
   const expectedTools = [

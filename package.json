@@ -22,6 +22,11 @@
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "msgpackr-extract": false,
+    "opencode-ai@1.18.3": true
+  },
   "scripts": {
     "build:libs": "npm run build -w @pippit-bridge/core && npm run build -w @pippit-bridge/sdk && npm run build -w @pippit-bridge/mcp-server",
     "predev": "npm run build:libs",
@@ -39,7 +44,21 @@
     "test": "vitest run --configLoader native",
     "pretest:watch": "npm run build:libs",
     "test:watch": "vitest --configLoader native",
-    "check": "npm run lint && npm run typecheck && npm test && npm run build"
+    "check": "npm run lint && npm run typecheck && npm test && npm run build",
+    "sync:plugin-version": "node scripts/plugin-version.mjs sync",
+    "check:plugin-version": "node scripts/plugin-version.mjs check",
+    "check:public-lockfile": "node scripts/check-public-lockfile.mjs",
+    "build:plugin-contract": "node scripts/plugin-contract-build.mjs",
+    "pregenerate:plugin-contract": "npm run build:plugin-contract",
+    "generate:plugin-contract": "node scripts/plugin-contract.mjs generate",
+    "precheck:plugin-contract": "npm run build:plugin-contract",
+    "check:plugin-contract": "node scripts/plugin-contract.mjs check",
+    "check:release-artifact": "node scripts/release-artifact.mjs",
+    "check:dev-gateway": "node scripts/smoke-dev-gateway.mjs",
+    "codex:dev": "node scripts/codex-dev.mjs run",
+    "codex:dev:full-gate": "npm run test -w @pippit-bridge/mcp-server && npm run check:plugin-contract && npm run check:dev-gateway",
+    "codex:dev:status": "node scripts/codex-dev.mjs status",
+    "codex:dev:bootstrap": "node scripts/codex-dev.mjs bootstrap"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

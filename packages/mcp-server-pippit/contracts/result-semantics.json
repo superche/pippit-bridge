@@ -1,0 +1,19 @@
+{
+  "formatVersion": 1,
+  "rules": [
+    {
+      "surface": "all-tools",
+      "errorSemantics": "Errors are explicit and never imply a side effect was replayed.",
+      "idempotency": "Write tools use the facade single-writer ledger and an idempotency key.",
+      "units": "Durations use seconds in generation input and milliseconds in edit segment or annotation fields."
+    },
+    {
+      "surface": "task-epoch",
+      "compatibility": "N and N-1 are accepted. Unsupported explicit epochs fail before side effects with PLUGIN_TASK_STALE; absent epochs remain compatible for the first transition release."
+    },
+    {
+      "surface": "widget",
+      "confirmationBoundary": "Pure presentation may change hot. Tool mapping, defaults, validation, approval, payment, or write confirmation are cold contract."
+    }
+  ]
+}
