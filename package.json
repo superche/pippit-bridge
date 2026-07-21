@@ -48,7 +48,7 @@
     "sync:plugin-version": "node scripts/plugin-version.mjs sync",
     "check:plugin-version": "node scripts/plugin-version.mjs check",
     "check:public-lockfile": "node scripts/check-public-lockfile.mjs",
-    "build:plugin-contract": "npm run build -w @pippit-bridge/core && npm run build -w @pippit-bridge/mcp-server",
+    "build:plugin-contract": "node scripts/plugin-contract-build.mjs",
     "pregenerate:plugin-contract": "npm run build:plugin-contract",
     "generate:plugin-contract": "node scripts/plugin-contract.mjs generate",
     "precheck:plugin-contract": "npm run build:plugin-contract",

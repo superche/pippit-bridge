@@ -23,8 +23,7 @@ jobs:
       - run: npm run check:public-lockfile
       - run: npm ci
       - run: npm run check:plugin-version
-      - run: npm run build -w @pippit-bridge/core
-      - run: npm run build -w @pippit-bridge/mcp-server
+      - run: npm run build:plugin-contract
       - run: node scripts/plugin-contract.mjs check
       - run: npm run check
       - run: npm run check:release-artifact
@@ -42,8 +41,7 @@ jobs:
       - run: npm run check:public-lockfile
       - run: npm ci
       - run: npm run check:plugin-version
-      - run: npm run build -w @pippit-bridge/core
-      - run: npm run build -w @pippit-bridge/mcp-server
+      - run: npm run build:plugin-contract
       - run: node scripts/plugin-contract.mjs check
       - run: npm run lint
       - run: npm run typecheck
