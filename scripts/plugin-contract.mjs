@@ -24,11 +24,29 @@ function digest(value) {
   return createHash("sha256").update(stable(value)).digest("hex")
 }
 
+function contractEnvironment(runtimeRoot) {
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !name.startsWith("PIPPIT_")),
+  )
+  return {
+    ...environment,
+    PIPPIT_BRIDGE_HOME: runtimeRoot,
+    PIPPIT_MCP_ENROLLMENT_PORT: "0",
+    PIPPIT_MCP_OUTPUT_ROOT: resolve(runtimeRoot, "output"),
+  }
+}
+
+function githubError(message) {
+  if (process.env.GITHUB_ACTIONS !== "true") return
+  const escaped = message.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A")
+  process.stderr.write(`::error title=Plugin contract check::${escaped}\n`)
+}
+
 async function discover() {
   const runtimeRoot = await mkdtemp(resolve(tmpdir(), "pippit-contract-"))
   const child = spawn(process.execPath, [resolve(packageRoot, "plugin-entry.mjs")], {
     cwd: packageRoot,
-    env: { ...process.env, PIPPIT_BRIDGE_HOME: runtimeRoot },
+    env: contractEnvironment(runtimeRoot),
     stdio: ["pipe", "pipe", "pipe"],
   })
   const pending = new Map()
@@ -103,10 +121,22 @@ for (const [name, contents] of Object.entries(collected.files)) {
   if (mode === "generate") await writeFile(path, contents)
   else {
     const committed = await readFile(path, "utf8").then(JSON.parse).catch(() => undefined)
-    if (committed === undefined || stable(committed) !== contents) drift.push(name)
+    const committedContents = committed === undefined ? undefined : stable(committed)
+    if (committedContents !== contents) {
+      drift.push({
+        actual: createHash("sha256").update(contents).digest("hex"),
+        expected: committedContents === undefined
+          ? "missing"
+          : createHash("sha256").update(committedContents).digest("hex"),
+        name,
+      })
+    }
   }
 }
 if (drift.length > 0) {
-  process.stderr.write(`PLUGIN_CONTRACT_DRIFT ${drift.join(",")} requires-release-and-new-task\n`)
+  const details = drift.map(({ actual, expected, name }) => `${name}[expected=${expected},actual=${actual}]`).join(",")
+  const message = `PLUGIN_CONTRACT_DRIFT ${details} requires-release-and-new-task`
+  githubError(message)
+  process.stderr.write(`${message}\n`)
   process.exitCode = 1
 } else process.stdout.write(`${JSON.stringify(collected.hashes)}\n`)
