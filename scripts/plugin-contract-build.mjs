@@ -12,7 +12,7 @@ if (npmCli === undefined || npmCli.trim() === "") {
   throw new Error("npm_execpath is required to build the plugin contract.")
 }
 
-for (const workspace of ["@pippit-bridge/core", "@pippit-bridge/mcp-server"]) {
+for (const workspace of ["@pippit-bridge/core", "@pippit-bridge/sdk", "@pippit-bridge/mcp-server"]) {
   const result = spawnSync(process.execPath, [npmCli, "run", "build", "-w", workspace], {
     cwd: new URL("..", import.meta.url),
     encoding: "utf8",
