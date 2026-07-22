@@ -4,8 +4,10 @@ import {
   adjustWidgetRegionFromKey,
   classifyPreviewUpdate,
   mergeWidgetDraftForMediaRefresh,
+  normalizeWidgetPoint,
   reconcileWidgetDraftForDuration,
   resolveWidgetModel,
+  resolveWidgetTheme,
   shouldAcceptWidgetJobResult,
   widgetDraftPayloadEquals,
 } from "@pippit-bridge/mcp-server"
@@ -75,14 +77,13 @@ describe("Pippit MCP App widget state", () => {
     expect(resolveWidgetModel("pippit/original", "pippit/regenerated")).toBe("pippit/regenerated")
   })
 
-  it("preserves a draft and playhead when a signed media URL is renewed", () => {
+  it("preserves one annotation draft and playhead when a signed media URL is renewed", () => {
     const draft = {
       annotations: [
-        { at_ms: 2_500, instruction: "Keep this", region: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 } },
-        { at_ms: 7_000, instruction: "Past a shorter source", region: { x: 0.2, y: 0.3, width: 0.2, height: 0.2 } },
+        { at_ms: 7_000, instruction: "Keep this", region: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 } },
       ],
       currentTimeMs: 4_000,
-      prompt: "Preserve my overall instruction",
+      instruction: "Preserve my local instruction",
       segmentEndMs: 8_000,
       segmentStartMs: 2_000,
     }
@@ -90,7 +91,7 @@ describe("Pippit MCP App widget state", () => {
     const sameDuration = reconcileWidgetDraftForDuration(draft, 10_000)
     expect(sameDuration).toMatchObject({
       currentTimeMs: 4_000,
-      prompt: draft.prompt,
+      instruction: draft.instruction,
       segmentEndMs: 8_000,
       segmentStartMs: 2_000,
     })
@@ -99,11 +100,32 @@ describe("Pippit MCP App widget state", () => {
     const shorterDuration = reconcileWidgetDraftForDuration(draft, 5_000)
     expect(shorterDuration).toMatchObject({
       currentTimeMs: 4_000,
-      prompt: draft.prompt,
+      instruction: draft.instruction,
       segmentEndMs: 5_000,
       segmentStartMs: 2_000,
     })
-    expect(shorterDuration.annotations).toEqual([draft.annotations[0]])
+    expect(shorterDuration.annotations).toEqual([{ ...draft.annotations[0], at_ms: 5_000 }])
+  })
+
+  it("normalizes ROI coordinates against intrinsic video content instead of letterbox space", () => {
+    const content = {
+      height: 450,
+      left: 0,
+      stageLeft: 100,
+      stageTop: 50,
+      top: 75,
+      width: 800,
+    }
+    expect(normalizeWidgetPoint(300, 350, content)).toEqual({ x: 0.25, y: 0.5 })
+    expect(normalizeWidgetPoint(300, 100, content)).toBeUndefined()
+    expect(normalizeWidgetPoint(901, 350, content)).toBeUndefined()
+  })
+
+  it("prefers live host theme over legacy and system theme values", () => {
+    expect(resolveWidgetTheme("dark", "light", false)).toBe("dark")
+    expect(resolveWidgetTheme("light", "dark", true)).toBe("light")
+    expect(resolveWidgetTheme(undefined, "dark", false)).toBe("dark")
+    expect(resolveWidgetTheme(undefined, undefined, true)).toBe("dark")
   })
 
   it("merges edits made during media reload while restoring only the saved playhead", () => {
@@ -112,7 +134,7 @@ describe("Pippit MCP App widget state", () => {
         { at_ms: 2_000, instruction: "Old note", region: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 } },
       ],
       currentTimeMs: 4_500,
-      prompt: "Old prompt",
+      instruction: "Old instruction",
       segmentEndMs: 8_000,
       segmentStartMs: 1_000,
     }
@@ -121,7 +143,7 @@ describe("Pippit MCP App widget state", () => {
         { at_ms: 3_000, instruction: "Live note", region: { x: 0.2, y: 0.2, width: 0.3, height: 0.3 } },
       ],
       currentTimeMs: 0,
-      prompt: "Edited while the signed URL reloaded",
+      instruction: "Edited while the signed URL reloaded",
       segmentEndMs: 9_000,
       segmentStartMs: 2_000,
     }
@@ -142,7 +164,7 @@ describe("Pippit MCP App widget state", () => {
     const original = {
       annotations: [originalAnnotation],
       currentTimeMs: 4_000,
-      prompt: "Same payload",
+      instruction: "Same payload",
       segmentEndMs: 8_000,
       segmentStartMs: 2_000,
     }

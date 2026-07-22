@@ -116,6 +116,54 @@ describe("PippitFacadeClient", () => {
     expect(String(error)).not.toContain("facade-secret")
   })
 
+  it("retains only allowlisted upstream diagnostics from a Facade error", async () => {
+    const client = new PippitFacadeClient({
+      apiKey: "facade-secret",
+      baseUrl: "https://bridge.example.test",
+      fetchImpl: async () => new Response(JSON.stringify({
+        error: {
+          message: "facade-secret must not escape",
+          metadata: {
+            internal_code: "pippit_upstream_error",
+            operation: "submit_run",
+            upstream_code: "VIDEO.MODEL-42",
+            upstream_log_id: "20260722163045A1B2C3D4E5F6071829AB",
+          },
+        },
+      }), { status: 502 }),
+    })
+    const error = await client.getVideo("job-1").catch((caught: unknown) => caught)
+    expect(error).toMatchObject({
+      code: "HTTP_ERROR",
+      status: 502,
+      upstreamCode: "VIDEO.MODEL-42",
+      upstreamLogId: "20260722163045A1B2C3D4E5F6071829AB",
+      upstreamOperation: "submit_run",
+    })
+    expect(String(error)).not.toContain("facade-secret must not escape")
+  })
+
+  it("discards non-allowlisted upstream diagnostics from a Facade error", async () => {
+    const client = new PippitFacadeClient({
+      apiKey: "facade-secret",
+      baseUrl: "https://bridge.example.test",
+      fetchImpl: async () => new Response(JSON.stringify({
+        error: {
+          metadata: {
+            operation: "malicious_operation",
+            upstream_code: "facade-secret must not escape",
+            upstream_log_id: "facade secret must not escape",
+          },
+        },
+      }), { status: 502 }),
+    })
+    const error = await client.getVideo("job-1").catch((caught: unknown) => caught)
+    expect(error).toMatchObject({ code: "HTTP_ERROR", status: 502 })
+    expect((error as PippitFacadeError).upstreamCode).toBeUndefined()
+    expect((error as PippitFacadeError).upstreamLogId).toBeUndefined()
+    expect((error as PippitFacadeError).upstreamOperation).toBeUndefined()
+  })
+
   it("cancels an undeclared oversized JSON response before buffering the full body", async () => {
     let pulls = 0
     let cancelled = false

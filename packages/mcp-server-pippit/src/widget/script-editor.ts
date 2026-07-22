@@ -69,10 +69,7 @@ export const WIDGET_SCRIPT_EDITOR = String.raw`          function done() {
       function normalizedPoint(event) {
         var rect = videoContentRect();
         if (!rect) return undefined;
-        var localX = event.clientX - rect.stageLeft - rect.left;
-        var localY = event.clientY - rect.stageTop - rect.top;
-        if (localX < 0 || localY < 0 || localX > rect.width || localY > rect.height) return undefined;
-        return { x: clamp(localX / rect.width, 0, 1), y: clamp(localY / rect.height, 0, 1) };
+        return normalizeWidgetPoint(event.clientX, event.clientY, rect);
       }
 
       function showRegion(region) {
@@ -88,37 +85,33 @@ export const WIDGET_SCRIPT_EDITOR = String.raw`          function done() {
         roiBoxElement.style.height = region.height * rect.height + "px";
       }
 
-      function positionAnnotationPopover() {
-        var rect = videoContentRect();
-        if (!rect || !pendingRegion || annotationPopoverElement.hidden) return;
-        var stageRect = stageElement.getBoundingClientRect();
-        var width = Math.min(340, Math.max(220, stageRect.width - 24));
-        var left = rect.left + pendingRegion.x * rect.width;
-        left = clamp(left, 12, Math.max(12, stageRect.width - width - 12));
-        var below = rect.top + (pendingRegion.y + pendingRegion.height) * rect.height + 10;
-        var above = rect.top + pendingRegion.y * rect.height - 132;
-        var top = below + 122 <= stageRect.height ? below : Math.max(12, above);
-        annotationPopoverElement.style.left = left + "px";
-        annotationPopoverElement.style.top = top + "px";
-      }
-
-      function openAnnotationPopover() {
-        if (!pendingRegion) return;
-        commentElement.disabled = false;
-        annotationPopoverElement.hidden = false;
-        positionAnnotationPopover();
-        commentElement.focus({ preventScroll: true });
-        updateSubmitState();
-      }
-
       function clearPendingRegion() {
-        pendingRegion = undefined;
         dragStart = undefined;
-        roiBoxElement.style.display = "none";
-        annotationPopoverElement.hidden = true;
-        commentElement.value = "";
-        commentElement.disabled = true;
-        updateSubmitState();
+        pendingRegion = annotations[0] ? annotations[0].region : undefined;
+        showRegion(pendingRegion);
+      }
+
+      function clearAnnotationRegion() {
+        dragStart = undefined;
+        pendingRegion = undefined;
+        annotations = [];
+        showRegion(undefined);
+        renderAnnotations();
+        markDraftChanged();
+      }
+
+      function selectAnnotationRegion(region) {
+        var selected = annotations[0];
+        annotations = [{
+          at_ms: annotationAtCurrentTime(),
+          instruction: instructionElement.value,
+          region: region,
+          id: selected && selected.id
+        }];
+        pendingRegion = region;
+        showRegion(region);
+        renderAnnotations();
+        markDraftChanged();
       }
 
       function finishRegion(event) {
@@ -138,8 +131,8 @@ export const WIDGET_SCRIPT_EDITOR = String.raw`          function done() {
           width: roundedCoordinate(Math.min(pendingRegion.width, 1 - x)),
           height: roundedCoordinate(Math.min(pendingRegion.height, 1 - y))
         };
-        showRegion(pendingRegion);
-        openAnnotationPopover();
+        selectAnnotationRegion(pendingRegion);
+        setAnnotationMode(false);
       }
 
       function annotationAtCurrentTime() {
@@ -147,69 +140,42 @@ export const WIDGET_SCRIPT_EDITOR = String.raw`          function done() {
         return clamp(atMs, segmentStartMs, segmentEndMs);
       }
 
-      function insertAnnotation() {
-        var instruction = commentElement.value.trim();
-        if (!pendingRegion || instruction === "") return;
-        if (annotations.length >= MAX_ANNOTATIONS) {
-          setEditError("At most 20 region annotations can be added to one edit.");
-          return;
+      function renderAnnotations() {
+        var selected = annotations[0];
+        var instruction = instructionElement.value.trim();
+        var range = formatTrimTime(segmentStartMs) + "–" + formatTrimTime(segmentEndMs);
+        annotationSummaryElement.textContent = range + " · " + (selected ? "Selected frame area" : "Full frame") + " · " + (instruction || "Describe the change");
+        areaStatusElement.textContent = selected ? "● Selected frame area" : "Full frame";
+        areaStatusElement.classList.toggle("is-selected", Boolean(selected));
+        if (!annotationMode) {
+          pendingRegion = selected ? selected.region : undefined;
+          showRegion(pendingRegion);
         }
-        annotations.push({
-          id: newAnnotationId(),
-          at_ms: annotationAtCurrentTime(),
-          instruction: instruction,
-          region: pendingRegion
-        });
-        setEditError("");
-        setAnnotationMode(false);
-        renderAnnotations();
-        markDraftChanged();
+        updateSubmitState();
       }
 
-      function renderAnnotations() {
-        annotationsElement.replaceChildren();
-        annotations.forEach(function (annotation) {
-          var chip = document.createElement("span");
-          chip.className = "annotation-chip";
-          var timeButton = document.createElement("button");
-          timeButton.type = "button";
-          timeButton.textContent = formatTime(annotation.at_ms);
-          timeButton.title = "Seek to annotation";
-          timeButton.addEventListener("click", function () {
-            videoElement.currentTime = annotation.at_ms / 1000;
-            showRegion(annotation.region);
-          });
-          var text = document.createElement("span");
-          text.className = "chip-text";
-          text.textContent = annotation.instruction;
-          var remove = document.createElement("button");
-          remove.type = "button";
-          remove.textContent = "×";
-          remove.title = "Delete annotation";
-          remove.setAttribute("aria-label", "Delete annotation at " + formatTime(annotation.at_ms));
-          remove.addEventListener("click", function () {
-            annotations = annotations.filter(function (candidate) { return candidate.id !== annotation.id; });
-            renderAnnotations();
-            markDraftChanged();
-          });
-          chip.append(timeButton, text, remove);
-          annotationsElement.appendChild(chip);
-        });
-        updateSubmitState();
+      function updateAnnotationInstruction() {
+        if (annotations[0]) {
+          annotations = [Object.assign({}, annotations[0], { instruction: instructionElement.value })];
+        }
+        renderAnnotations();
+        markDraftChanged();
       }
 
       function setAnnotationMode(enabled) {
         annotationMode = enabled;
         annotateElement.classList.toggle("annotation-active", enabled);
         annotateElement.setAttribute("aria-pressed", String(enabled));
-        annotateElement.setAttribute("aria-label", enabled ? "Stop annotating" : "Annotate a video region");
-        annotateElement.title = enabled ? "Stop annotating" : "Annotate a video region";
+        annotateElement.setAttribute("aria-label", enabled ? "Stop selecting a video area" : "Select a video area");
+        annotateElement.title = enabled ? "Stop selecting a video area" : "Select a video area";
         stageElement.classList.toggle("annotating", enabled);
         roiLayerElement.classList.toggle("active", enabled);
         roiLayerElement.tabIndex = enabled ? 0 : -1;
         roiLayerElement.setAttribute("aria-disabled", String(!enabled));
         if (enabled) {
           videoElement.pause();
+          pendingRegion = annotations[0] ? annotations[0].region : undefined;
+          showRegion(pendingRegion);
           roiLayerElement.focus({ preventScroll: true });
         }
         if (!enabled) clearPendingRegion();

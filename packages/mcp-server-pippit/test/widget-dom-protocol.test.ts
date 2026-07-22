@@ -359,6 +359,270 @@ describe("Widget v15 DOM protocol", () => {
     }
   })
 
+  it("uses the full frame when submitting without an explicit ROI", async () => {
+    const completed = {
+      _meta: {
+        "pippit/media": [{
+          index: 0,
+          kind: "video",
+          url: "https://media.example.test/video.mp4",
+        }],
+      },
+      structuredContent: { id: "job-source", model: "pippit/seedance", status: "completed" },
+    }
+    const harness = launchWidgetProtocolHarness((message) => {
+      if (message.method === "ui/initialize") {
+        return { hostCapabilities: { serverResources: true, serverTools: true }, hostContext: { theme: "dark" } }
+      }
+      if (message.method === "ui/request-display-mode") return { mode: "fullscreen" }
+      const params = message.params as { name?: string } | undefined
+      if (message.method === "tools/call" && params?.name === "pippit_resolve_latest_video") return completed
+      if (message.method === "tools/call" && params?.name === "pippit_edit_video_segment") {
+        return { structuredContent: { id: "job-child", model: "pippit/seedance", status: "pending" } }
+      }
+      return {}
+    })
+    try {
+      await vi.waitFor(() => expect(harness.posted).toContainEqual(expect.objectContaining({
+        method: "ui/notifications/initialized",
+      })))
+      harness.notify("ui/notifications/tool-result", completed)
+      await vi.waitFor(() => expect(harness.elements.get("editor")?.hidden).toBe(false))
+      harness.elements.get("video")?.dispatch("loadedmetadata")
+      const video = harness.elements.get("video")
+      if (video) video.currentTime = 2.25
+      const instruction = harness.elements.get("instruction")
+      if (instruction) instruction.value = "Turn the whole scene into a watercolor painting"
+      instruction?.dispatch("input")
+      expect(harness.elements.get("area-status")?.textContent).toBe("Full frame")
+      expect(harness.elements.get("submit-edit")?.disabled).toBe(false)
+      harness.elements.get("submit-edit")?.dispatch("click")
+
+      await vi.waitFor(() => expect(harness.posted).toContainEqual(expect.objectContaining({
+        method: "tools/call",
+        params: {
+          arguments: expect.objectContaining({
+            annotations: [{
+              at_ms: 2_250,
+              instruction: "Turn the whole scene into a watercolor painting",
+              region: { height: 1, width: 1, x: 0, y: 0 },
+            }],
+            model: "pippit/seedance",
+            segment: { end_ms: 10_000, start_ms: 0 },
+            source_index: 0,
+            source_job_id: "job-source",
+          }),
+          name: "pippit_edit_video_segment",
+        },
+      })))
+    } finally {
+      harness.teardown()
+    }
+  })
+
+  it("keeps the regenerated player source when the host republishes the root result", async () => {
+    vi.useFakeTimers()
+    const source = {
+      _meta: {
+        "pippit/media": [{
+          index: 0,
+          kind: "video",
+          url: "https://media.example.test/source.mp4",
+        }],
+      },
+      structuredContent: { id: "job-source", model: "pippit/seedance", status: "completed" },
+    }
+    const child = {
+      _meta: {
+        "pippit/media": [{
+          index: 0,
+          kind: "video",
+          url: "https://media.example.test/child.mp4",
+        }],
+      },
+      structuredContent: { id: "job-child", model: "pippit/seedance", status: "completed" },
+    }
+    const harness = launchWidgetProtocolHarness((message) => {
+      if (message.method === "ui/initialize") {
+        return { hostCapabilities: { serverResources: true, serverTools: true }, hostContext: {} }
+      }
+      if (message.method === "ui/request-display-mode") return { mode: "inline" }
+      const params = message.params as { name?: string } | undefined
+      if (message.method === "tools/call" && params?.name === "pippit_resolve_latest_video") return source
+      if (message.method === "tools/call" && params?.name === "pippit_edit_video_segment") {
+        return { structuredContent: { id: "job-child", model: "pippit/seedance", status: "pending" } }
+      }
+      if (message.method === "tools/call" && params?.name === "pippit_get_video") return child
+      return {}
+    })
+    try {
+      await vi.waitFor(() => expect(harness.posted).toContainEqual(expect.objectContaining({
+        method: "ui/notifications/initialized",
+      })))
+      harness.notify("ui/notifications/tool-result", source)
+      await vi.waitFor(() => expect(harness.elements.get("editor")?.hidden).toBe(false))
+      harness.elements.get("video")?.dispatch("loadedmetadata")
+      const instruction = harness.elements.get("instruction")
+      if (instruction) instruction.value = "Turn the cat white"
+      instruction?.dispatch("input")
+      harness.elements.get("submit-edit")?.dispatch("click")
+      await vi.waitFor(() => expect(harness.posted).toContainEqual(expect.objectContaining({
+        method: "tools/call",
+        params: expect.objectContaining({ name: "pippit_edit_video_segment" }),
+      })))
+
+      await vi.advanceTimersByTimeAsync(2_000)
+      await vi.waitFor(() => expect(harness.posted).toContainEqual(expect.objectContaining({
+        method: "tools/call",
+        params: expect.objectContaining({
+          arguments: { job_id: "job-child" },
+          name: "pippit_get_video",
+        }),
+      })))
+      await vi.waitFor(() => expect(
+        (harness.elements.get("video") as FakeElement & { src?: string } | undefined)?.src,
+      ).toBe("https://media.example.test/child.mp4"))
+
+      harness.notify("ui/notifications/tool-result", source)
+      expect((harness.elements.get("video") as FakeElement & { src?: string } | undefined)?.src)
+        .toBe("https://media.example.test/child.mp4")
+    } finally {
+      harness.teardown()
+      vi.useRealTimers()
+    }
+  })
+
+  it("uses a fresh idempotency key when the user retries a definitive HTTP failure", async () => {
+    const completed = {
+      _meta: {
+        "pippit/media": [{
+          index: 0,
+          kind: "video",
+          url: "https://media.example.test/video.mp4",
+        }],
+      },
+      structuredContent: { id: "job-source", model: "pippit/seedance", status: "completed" },
+    }
+    let editCalls = 0
+    const harness = launchWidgetProtocolHarness((message) => {
+      if (message.method === "ui/initialize") {
+        return { hostCapabilities: { serverResources: true, serverTools: true }, hostContext: {} }
+      }
+      if (message.method === "ui/request-display-mode") return { mode: "inline" }
+      const params = message.params as { name?: string } | undefined
+      if (message.method === "tools/call" && params?.name === "pippit_resolve_latest_video") return completed
+      if (message.method === "tools/call" && params?.name === "pippit_edit_video_segment") {
+        editCalls += 1
+        if (editCalls === 1) {
+          return {
+            content: [{ text: "Pippit facade rejected edit_video_segment with HTTP 502.", type: "text" }],
+            isError: true,
+          }
+        }
+        return { structuredContent: { id: "job-child", model: "pippit/seedance", status: "pending" } }
+      }
+      return {}
+    })
+    try {
+      await vi.waitFor(() => expect(harness.posted).toContainEqual(expect.objectContaining({
+        method: "ui/notifications/initialized",
+      })))
+      harness.notify("ui/notifications/tool-result", completed)
+      await vi.waitFor(() => expect(harness.elements.get("editor")?.hidden).toBe(false))
+      harness.elements.get("video")?.dispatch("loadedmetadata")
+      const instruction = harness.elements.get("instruction")
+      if (instruction) instruction.value = "Turn the scene into an anime"
+      instruction?.dispatch("input")
+      harness.elements.get("submit-edit")?.dispatch("click")
+      await vi.waitFor(() => expect(harness.elements.get("edit-error")?.textContent).toContain("HTTP 502"))
+      harness.elements.get("submit-edit")?.dispatch("click")
+
+      await vi.waitFor(() => {
+        const calls = harness.posted.filter(message => {
+          const params = message.params as { name?: string } | undefined
+          return message.method === "tools/call" && params?.name === "pippit_edit_video_segment"
+        })
+        expect(calls).toHaveLength(2)
+        const keys = calls.map(message => {
+          const params = message.params as { arguments?: { idempotency_key?: string } }
+          return params.arguments?.idempotency_key
+        })
+        expect(keys[0]).toMatch(/^widget-edit-v2-/u)
+        expect(keys[1]).toMatch(/^widget-edit-v2-/u)
+        expect(keys[1]).not.toBe(keys[0])
+      })
+    } finally {
+      harness.teardown()
+    }
+  })
+
+  it("submits exactly one annotation with its time, explicit ROI, and instruction", async () => {
+    const completed = {
+      _meta: {
+        "pippit/media": [{
+          index: 0,
+          kind: "video",
+          url: "https://media.example.test/video.mp4",
+        }],
+      },
+      structuredContent: { id: "job-source", model: "pippit/seedance", status: "completed" },
+    }
+    const harness = launchWidgetProtocolHarness((message) => {
+      if (message.method === "ui/initialize") {
+        return { hostCapabilities: { serverResources: true, serverTools: true }, hostContext: { theme: "light" } }
+      }
+      if (message.method === "ui/request-display-mode") return { mode: "fullscreen" }
+      const params = message.params as { name?: string } | undefined
+      if (message.method === "tools/call" && params?.name === "pippit_resolve_latest_video") return completed
+      if (message.method === "tools/call" && params?.name === "pippit_edit_video_segment") {
+        return { structuredContent: { id: "job-child", model: "pippit/seedance", status: "pending" } }
+      }
+      return {}
+    })
+    try {
+      await vi.waitFor(() => expect(harness.posted).toContainEqual(expect.objectContaining({
+        method: "ui/notifications/initialized",
+      })))
+      harness.notify("ui/notifications/tool-result", completed)
+      await vi.waitFor(() => expect(harness.elements.get("editor")?.hidden).toBe(false))
+      harness.elements.get("video")?.dispatch("loadedmetadata")
+      const video = harness.elements.get("video")
+      if (video) video.currentTime = 3.5
+      harness.elements.get("annotate")?.dispatch("click")
+      harness.elements.get("roi-layer")?.dispatch("keydown", { key: "Enter", preventDefault: vi.fn(), shiftKey: false })
+      const instruction = harness.elements.get("instruction")
+      if (instruction) instruction.value = "Replace the cup with a glass vase"
+      instruction?.dispatch("input")
+      harness.elements.get("submit-edit")?.dispatch("click")
+
+      await vi.waitFor(() => expect(harness.posted).toContainEqual(expect.objectContaining({
+        method: "tools/call",
+        params: {
+          arguments: expect.objectContaining({
+            annotations: [{
+              at_ms: 3_500,
+              instruction: "Replace the cup with a glass vase",
+              region: { height: 0.5, width: 0.5, x: 0.25, y: 0.25 },
+            }],
+            model: "pippit/seedance",
+            segment: { end_ms: 10_000, start_ms: 0 },
+            source_index: 0,
+            source_job_id: "job-source",
+          }),
+          name: "pippit_edit_video_segment",
+        },
+      })))
+      const editCall = harness.posted.find(message => {
+        const params = message.params as { name?: string } | undefined
+        return message.method === "tools/call" && params?.name === "pippit_edit_video_segment"
+      })
+      const editArguments = editCall?.params as { arguments?: Record<string, unknown> } | undefined
+      expect(editArguments?.arguments).not.toHaveProperty("prompt")
+    } finally {
+      harness.teardown()
+    }
+  })
+
   it("demotes a malformed resources/read response to the app-visible chunk tool", async () => {
     const resourceUri = `pippit-video://artifact/${"a".repeat(64)}`
     const completed = {

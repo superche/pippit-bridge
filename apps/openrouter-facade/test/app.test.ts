@@ -19,6 +19,27 @@ const JOB_SIGNING_KEY_HEX = "b".repeat(64)
 const sha256 = (value: string): string => createHash("sha256").update(value).digest("hex")
 const bearer = (value: string): Record<string, string> => ({ authorization: `Bearer ${value}` })
 
+function mp4Box(type: string, content: Uint8Array): Buffer {
+  const output = Buffer.alloc(8 + content.byteLength)
+  output.writeUInt32BE(output.byteLength, 0)
+  output.write(type, 4, 4, "ascii")
+  Buffer.from(content).copy(output, 8)
+  return output
+}
+
+function mp4Video(width: number, height: number): Buffer {
+  const trackHeader = Buffer.alloc(84)
+  trackHeader.writeInt32BE(1 << 16, 40)
+  trackHeader.writeInt32BE(1 << 16, 56)
+  trackHeader.writeInt32BE(1 << 30, 72)
+  trackHeader.writeUInt32BE(width * 65_536, 76)
+  trackHeader.writeUInt32BE(height * 65_536, 80)
+  return Buffer.concat([
+    mp4Box("ftyp", new Uint8Array(4)),
+    mp4Box("moov", mp4Box("trak", mp4Box("tkhd", trackHeader))),
+  ])
+}
+
 const openApps: ReturnType<typeof buildApp>[] = []
 
 afterEach(async () => {
@@ -670,7 +691,7 @@ describe("OpenRouter video facade", () => {
     )
     expect(harness.submittedRequests).toEqual([
       {
-        asset_ids: ["asset-1", "asset-2", "asset-3"],
+        asset_ids: [],
         message: "make a video",
         thread_id: "existing-thread",
         video_part_tool_param: {
@@ -682,7 +703,10 @@ describe("OpenRouter video facade", () => {
           ratio: "9:16",
           resolution: "720p",
           seed: 42,
-          videos: [{ pippit_asset_id: "asset-2" }],
+          videos: [{
+            pippit_asset_id: "asset-2",
+            security_check_scene: ["pippit_seedance2_0_user_input_video"],
+          }],
         },
       },
     ])
@@ -695,7 +719,7 @@ describe("OpenRouter video facade", () => {
     expect(response.json().id).toMatch(/^pippit_job_v2\./u)
   })
 
-  it("regenerates from the complete source video with compiled guidance and derived duration", async () => {
+  it("regenerates from the complete source video with compiled guidance and nearest whole-second duration", async () => {
     const harness = createHarness()
     const source = await createVideo(harness.app)
     const response = await harness.app.inject({
@@ -704,7 +728,7 @@ describe("OpenRouter video facade", () => {
       payload: {
         annotations: [
           {
-            at_ms: 67_000,
+            at_ms: 2_000,
             instruction: "Replace the sign with a blue logo",
             region: { height: 0.4, width: 0.3, x: 0.1, y: 0.2 },
           },
@@ -712,7 +736,7 @@ describe("OpenRouter video facade", () => {
         model: "pippit/seedance-2.0",
         prompt: "Keep the original camera motion",
         resolution: "720p",
-        segment: { end_ms: 72_400, start_ms: 60_000 },
+        segment: { end_ms: 5_100, start_ms: 0 },
         source_job_id: source.json().id,
       },
       url: "/api/v1/videos/edits",
@@ -729,23 +753,71 @@ describe("OpenRouter video facade", () => {
     if (submitted === undefined || !("video_part_tool_param" in submitted)) {
       throw new Error("Expected a video submission")
     }
-    expect(submitted.video_part_tool_param.duration_sec).toBe(13)
-    expect(submitted.video_part_tool_param.videos).toEqual([{ pippit_asset_id: "asset-1" }])
-    expect(submitted.asset_ids).toEqual(["asset-1"])
+    expect(submitted.video_part_tool_param.duration_sec).toBe(5)
+    expect(submitted.video_part_tool_param.ratio).toBe("16:9")
+    expect(submitted.video_part_tool_param.videos).toEqual([{
+      pippit_asset_id: "asset-1",
+      security_check_scene: ["pippit_seedance2_0_user_input_video"],
+    }])
+    expect(submitted.asset_ids).toEqual([])
     expect(submitted.message).toBe(submitted.video_part_tool_param.prompt)
-    expect(submitted.message).toContain("Pippit reference-guided video regeneration instruction v1.")
+    expect(submitted.message).toContain("Pippit reference-guided video regeneration instruction v2.")
     expect(submitted.message).toContain("The complete source video is attached as the only video reference.")
+    expect(submitted.message).toContain("Apply the requested change decisively during 0-5100 ms")
+    expect(submitted.message).toContain(
+      "Annotation 1 at 2000 ms targets the normalized intrinsic-frame rectangle x=0.1, y=0.2, width=0.3, height=0.4.",
+    )
+    expect(submitted.message).toContain("Required visible change: Replace the sign with a blue logo")
+    expect(submitted.message).toContain("Overall guidance: Keep the original camera motion")
     expect(JSON.parse(submitted.message.split("\n").at(-1) ?? "null")).toEqual({
       annotations: [
         {
-          at_ms: 67_000,
+          at_ms: 2_000,
           instruction: "Replace the sign with a blue logo",
           region: { height: 0.4, width: 0.3, x: 0.1, y: 0.2 },
         },
       ],
       instruction: "Keep the original camera motion",
-      segment: { end_ms: 72_400, start_ms: 60_000 },
+      segment: { end_ms: 5_100, start_ms: 0 },
     })
+  })
+
+  it("infers an omitted edit resolution from the intrinsic source video", async () => {
+    const harness = createHarness()
+    const source = await createVideo(harness.app)
+    harness.loader.load.mockResolvedValue({
+      bytes: mp4Video(720, 1_280),
+      filename: "source.mp4",
+      mediaType: "video/mp4",
+    })
+
+    const response = await harness.app.inject({
+      headers: bearer(FACADE_KEY),
+      method: "POST",
+      payload: {
+        annotations: [{
+          at_ms: 0,
+          instruction: "Restyle the full frame",
+          region: { height: 1, width: 1, x: 0, y: 0 },
+        }],
+        model: "pippit/seedance-2.0-fast",
+        segment: { end_ms: 5_125, start_ms: 0 },
+        source_job_id: source.json().id,
+      },
+      url: "/api/v1/videos/edits",
+    })
+
+    expect(response.statusCode).toBe(202)
+    const submitted = harness.submittedRequests.at(-1)
+    if (submitted === undefined || !("video_part_tool_param" in submitted)) {
+      throw new Error("Expected a video submission")
+    }
+    expect(submitted.video_part_tool_param).toMatchObject({
+      ratio: "9:16",
+      resolution: "720p",
+    })
+    expect(submitted.message).toContain("Annotation 1 at 0 ms targets the full intrinsic video frame.")
+    expect(submitted.message).toContain("Required visible change: Restyle the full frame")
   })
 
   it("rejects invalid edit metadata before querying or uploading the source", async () => {
@@ -1137,13 +1209,15 @@ describe("OpenRouter video facade", () => {
 
   it("maps a rejected Pippit BYOK credential without echoing it", async () => {
     const harness = createHarness()
+    const logId = "20260722163045A1B2C3D4E5F6071829AB"
     harness.pippit.submitRun.mockRejectedValueOnce(
-      new PippitApiError({ code: "HTTP_ERROR", operation: "submit_run", status: 401 }),
+      new PippitApiError({ code: "HTTP_ERROR", logId, operation: "submit_run", status: 401 }),
     )
     const response = await createVideo(harness.app)
 
     expect(response.statusCode).toBe(502)
     expect(response.body).not.toContain(PIPPIT_ACCESS_KEY)
     expect(response.json().error.metadata.internal_code).toBe("byok_credential_rejected")
+    expect(response.json().error.metadata.upstream_log_id).toBe(logId)
   })
 })

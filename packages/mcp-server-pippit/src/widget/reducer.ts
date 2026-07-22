@@ -21,8 +21,8 @@ export interface WidgetMachineState {
 }
 
 export interface WidgetMachineDraft {
-  annotationCount: number
-  prompt: string
+  hasAnnotation: boolean
+  instruction: string
   segmentEndMs: number
   segmentStartMs: number
 }
@@ -59,7 +59,7 @@ export function createInitialWidgetState(): WidgetMachineState {
   return {
     destroyed: false,
     awaitingPreview: false,
-    draft: { annotationCount: 0, prompt: "", segmentEndMs: 0, segmentStartMs: 0 },
+    draft: { hasAnnotation: false, instruction: "", segmentEndMs: 0, segmentStartMs: 0 },
     generationEpoch: 0,
     previewGeneration: 0,
     previewLoading: false,

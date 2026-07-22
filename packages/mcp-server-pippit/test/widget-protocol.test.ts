@@ -53,13 +53,21 @@ describe("Pippit widget protocol", () => {
     expect(definitions.find((definition) => definition.name === "pippit_download_video")?._meta).toBeUndefined()
   })
 
-  it("styles video loading and results for dark hosts with a flush, square top edge", () => {
+  it("renders the single Annotation editor for light and dark hosts", () => {
     expect(PIPPIT_WIDGET_HTML).toContain(':root[data-theme="dark"] .loading-status')
-    expect(PIPPIT_WIDGET_HTML).toContain(':root[data-theme="dark"] .trim-panel')
+    expect(PIPPIT_WIDGET_HTML).toContain(':root[data-theme="dark"] .annotation-panel')
     expect(PIPPIT_WIDGET_HTML).toContain(':root[data-theme="dark"] textarea')
     expect(PIPPIT_WIDGET_HTML).toContain(':root[data-widget-view="editor"] body { padding: 0; }')
     expect(PIPPIT_WIDGET_HTML).toContain('padding: 0 16px 16px;')
-    expect(PIPPIT_WIDGET_HTML).toContain('border-radius: 0 0 18px 18px;')
+    expect(PIPPIT_WIDGET_HTML).toContain('<details id="annotation-panel" class="annotation-panel" open>')
+    expect(PIPPIT_WIDGET_HTML).toContain('Your annotation will affect')
+    expect(PIPPIT_WIDGET_HTML).toContain('id="instruction" maxlength="2000"')
+    expect(PIPPIT_WIDGET_HTML).toContain('id="area-status" class="area-status">Full frame</span>')
+    expect(PIPPIT_WIDGET_HTML).toContain('region: { x: 0, y: 0, width: 1, height: 1 }')
+    expect(PIPPIT_WIDGET_HTML).not.toContain('No frame area')
+    expect(PIPPIT_WIDGET_HTML).not.toContain('>Trim<')
+    expect(PIPPIT_WIDGET_HTML).not.toContain('Add annotation')
+    expect(PIPPIT_WIDGET_HTML).not.toContain('id="prompt"')
     expect(PIPPIT_WIDGET_HTML).toContain('.video-stage { border-radius: 0; }')
   })
 

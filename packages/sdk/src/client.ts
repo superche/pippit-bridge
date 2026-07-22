@@ -31,6 +31,16 @@ export { PIPPIT_DEFAULT_BASE_URL, PIPPIT_DEFAULT_TIMEOUT_MS } from "./client-val
 
 const ABORT_SENTINEL = Symbol('PIPPIT_REQUEST_ABORTED');
 
+interface PippitJsonResponse {
+  readonly body: unknown;
+  readonly logId?: string;
+}
+
+function readResponseLogId(response: Response): string | undefined {
+  const value = response.headers.get('x-tt-logid')?.trim();
+  return value !== undefined && /^[A-Za-z0-9_-]{8,128}$/u.test(value) ? value : undefined;
+}
+
 export class PippitClient implements PippitApi {
   private readonly baseUrl: string;
   private readonly fetchImpl: PippitFetch;
@@ -68,7 +78,7 @@ export class PippitClient implements PippitApi {
       { body: form, method: 'POST' },
       input.signal,
     );
-    const data = readEnvelopeData(response, operation, accessKey);
+    const data = readEnvelopeData(response.body, operation, accessKey, response.logId);
     if (!isNonEmptyString(data.pippit_asset_id)) {
       throw invalidResponse(operation);
     }
@@ -96,7 +106,7 @@ export class PippitClient implements PippitApi {
       },
       input.signal,
     );
-    const data = readEnvelopeData(response, operation, accessKey);
+    const data = readEnvelopeData(response.body, operation, accessKey, response.logId);
     if (!isRecord(data.run)) {
       throw invalidResponse(operation);
     }
@@ -148,7 +158,7 @@ export class PippitClient implements PippitApi {
       },
       input.signal,
     );
-    const data = readEnvelopeData(response, operation, accessKey);
+    const data = readEnvelopeData(response.body, operation, accessKey, response.logId);
     if (!isRunState(data.run_state)) {
       throw invalidResponse(operation);
     }
@@ -171,7 +181,7 @@ export class PippitClient implements PippitApi {
     accessKey: string,
     init: RequestInit,
     externalSignal?: AbortSignal,
-  ): Promise<unknown> {
+  ): Promise<PippitJsonResponse> {
     if (externalSignal?.aborted) {
       throw new PippitApiError({ code: 'ABORTED', operation });
     }
@@ -207,15 +217,20 @@ export class PippitClient implements PippitApi {
         redirect: 'error',
         signal: controller.signal,
       });
+      const logId = readResponseLogId(response);
       if (!response.ok) {
         throw new PippitApiError({
           code: 'HTTP_ERROR',
+          ...(logId === undefined ? {} : { logId }),
           operation,
           status: response.status,
         });
       }
       try {
-        return (await response.json()) as unknown;
+        return {
+          body: (await response.json()) as unknown,
+          ...(logId === undefined ? {} : { logId }),
+        };
       } catch {
         if (controller.signal.aborted) {
           throw ABORT_SENTINEL;

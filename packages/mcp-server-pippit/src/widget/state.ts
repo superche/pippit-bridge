@@ -17,9 +17,18 @@ export interface WidgetDraftAnnotation {
 export interface WidgetDraftState {
   annotations: WidgetDraftAnnotation[]
   currentTimeMs: number
-  prompt: string
+  instruction: string
   segmentEndMs: number
   segmentStartMs: number
+}
+
+export interface WidgetVideoContentRect {
+  height: number
+  left: number
+  stageLeft: number
+  stageTop: number
+  top: number
+  width: number
 }
 
 export interface WidgetRegionKeyResult {
@@ -37,6 +46,21 @@ export function resolveWidgetTheme(
   if (hostTheme === "dark" || hostTheme === "light") return hostTheme
   if (legacyTheme === "dark" || legacyTheme === "light") return legacyTheme
   return prefersDark ? "dark" : "light"
+}
+
+export function normalizeWidgetPoint(
+  clientX: number,
+  clientY: number,
+  rect: WidgetVideoContentRect,
+): { x: number; y: number } | undefined {
+  if (rect.width <= 0 || rect.height <= 0) return undefined
+  const localX = clientX - rect.stageLeft - rect.left
+  const localY = clientY - rect.stageTop - rect.top
+  if (localX < 0 || localY < 0 || localX > rect.width || localY > rect.height) return undefined
+  return {
+    x: Math.min(1, Math.max(0, localX / rect.width)),
+    y: Math.min(1, Math.max(0, localY / rect.height)),
+  }
 }
 
 export function classifyPreviewUpdate(
@@ -99,9 +123,10 @@ export function reconcileWidgetDraftForDuration(
 
   return {
     ...draft,
-    annotations: draft.annotations.filter(
-      annotation => annotation.at_ms >= segmentStartMs && annotation.at_ms <= segmentEndMs,
-    ),
+    annotations: draft.annotations.slice(0, 1).map(annotation => ({
+      ...annotation,
+      at_ms: Math.min(segmentEndMs, Math.max(segmentStartMs, annotation.at_ms)),
+    })),
     currentTimeMs: Math.min(Math.max(0, draft.currentTimeMs), durationMs),
     segmentEndMs: Math.round(segmentEndMs),
     segmentStartMs: Math.round(segmentStartMs),
@@ -117,7 +142,7 @@ export function mergeWidgetDraftForMediaRefresh(
 
 export function widgetDraftPayloadEquals(left: WidgetDraftState, right: WidgetDraftState): boolean {
   if (
-    left.prompt !== right.prompt ||
+    left.instruction !== right.instruction ||
     left.segmentStartMs !== right.segmentStartMs ||
     left.segmentEndMs !== right.segmentEndMs ||
     left.annotations.length !== right.annotations.length

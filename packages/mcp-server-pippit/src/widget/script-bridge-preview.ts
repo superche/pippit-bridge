@@ -20,6 +20,7 @@ import {
   adjustWidgetRegionFromKey,
   classifyPreviewUpdate,
   mergeWidgetDraftForMediaRefresh,
+  normalizeWidgetPoint,
   reconcileWidgetDraftForDuration,
   resolveWidgetModel,
   resolveWidgetTheme,
@@ -36,6 +37,7 @@ export const WIDGET_SCRIPT_BRIDGE_PREVIEW = String.raw`  <script>
       var resolveWidgetModel = ${resolveWidgetModel.toString()};
       var reconcileWidgetDraftForDuration = ${reconcileWidgetDraftForDuration.toString()};
       var mergeWidgetDraftForMediaRefresh = ${mergeWidgetDraftForMediaRefresh.toString()};
+      var normalizeWidgetPoint = ${normalizeWidgetPoint.toString()};
       var widgetDraftPayloadEquals = ${widgetDraftPayloadEquals.toString()};
       var adjustWidgetRegionFromKey = ${adjustWidgetRegionFromKey.toString()};
       var resolveWidgetTheme = ${resolveWidgetTheme.toString()};
@@ -61,7 +63,6 @@ export const WIDGET_SCRIPT_BRIDGE_PREVIEW = String.raw`  <script>
       var findJob = ${findWidgetJob.toString()};
       var textContent = ${widgetTextContent.toString()};
 
-      var MAX_ANNOTATIONS = 20;
       var MAX_LOCAL_PREVIEW_BYTES = 256 * 1024 * 1024;
       var LOCAL_PREVIEW_CHUNK_BYTES = 1024 * 1024;
       var LOCAL_RESOURCE_REQUEST_TIMEOUT_MS = 5000;
@@ -123,8 +124,8 @@ export const WIDGET_SCRIPT_BRIDGE_PREVIEW = String.raw`  <script>
       var pendingRegion;
       var dragStart;
       var annotationMode = false;
-      var isComposing = false;
       var submitting = false;
+      var editIdempotencyAttempt = 0;
       var editIdempotencyKey;
       var awaitingPreview = false;
       var pollTimer;
@@ -200,12 +201,10 @@ export const WIDGET_SCRIPT_BRIDGE_PREVIEW = String.raw`  <script>
       var shadeRightElement = document.getElementById("shade-right");
       var selectionLabelElement = document.getElementById("selection-label");
       var annotateElement = document.getElementById("annotate");
-      var annotationPopoverElement = document.getElementById("annotation-popover");
-      var commentElement = document.getElementById("comment");
-      var cancelCommentElement = document.getElementById("cancel-comment");
-      var insertCommentElement = document.getElementById("insert-comment");
-      var annotationsElement = document.getElementById("annotations");
-      var promptElement = document.getElementById("prompt");
+      var annotationSummaryElement = document.getElementById("annotation-summary");
+      var areaStatusElement = document.getElementById("area-status");
+      var instructionElement = document.getElementById("instruction");
+      var rangeDurationElement = document.getElementById("range-duration");
       var submitEditElement = document.getElementById("submit-edit");
       var editErrorElement = document.getElementById("edit-error");
       var loaderDots = [];

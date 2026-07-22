@@ -39,10 +39,12 @@ describe("prepareReferences", () => {
     })
 
     expect(result).toEqual({
-      assetIds: ["asset-1", "asset-2", "asset-3"],
       audios: [{ pippit_asset_id: "asset-3" }],
       images: [{ pippit_asset_id: "asset-1" }],
-      videos: [{ pippit_asset_id: "asset-2" }],
+      videos: [{
+        pippit_asset_id: "asset-2",
+        security_check_scene: ["pippit_seedance2_0_user_input_video"],
+      }],
     })
   })
 
@@ -101,7 +103,10 @@ describe("prepareReferences", () => {
 
     expect(dependencies.load).toHaveBeenCalledTimes(1)
     expect(dependencies.uploadFile).toHaveBeenCalledTimes(1)
-    expect(result.assetIds).toEqual(["asset-1", "asset-1"])
+    expect(result.images).toEqual([
+      { pippit_asset_id: "asset-1" },
+      { pippit_asset_id: "asset-1" },
+    ])
   })
 
   it("does not submit generation when an upload fails", async () => {

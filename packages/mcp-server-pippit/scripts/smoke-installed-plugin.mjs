@@ -143,7 +143,7 @@ try {
     !listedResources.some((resource) => resource.uri === "ui://widget/pippit-image-result-v4.html") ||
     widgetResource?.mimeType !== "text/html;profile=mcp-app" ||
     !widgetResource?.text?.includes("pippit-video-editor") ||
-    !widgetResource?.text?.includes("function newAnnotationId()") ||
+    !widgetResource?.text?.includes("function selectAnnotationRegion(region)") ||
     !widgetResource?.text?.includes("function retryLatestResolution()") ||
     !widgetResource?.text?.includes("var WidgetController = class WidgetController") ||
     !widgetResource?.text?.includes("var createInitialWidgetState = function createInitialWidgetState()") ||

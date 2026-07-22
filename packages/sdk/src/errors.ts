@@ -15,6 +15,7 @@ export type PippitErrorCode =
 
 interface PippitApiErrorOptions {
   code: PippitErrorCode;
+  logId?: string;
   operation: PippitOperation;
   status?: number;
   upstreamCode?: string | number;
@@ -45,6 +46,7 @@ function buildMessage(options: PippitApiErrorOptions): string {
  */
 export class PippitApiError extends Error {
   readonly code: PippitErrorCode;
+  readonly logId?: string;
   readonly operation: PippitOperation;
   readonly status?: number;
   readonly upstreamCode?: string | number;
@@ -53,6 +55,9 @@ export class PippitApiError extends Error {
     super(buildMessage(options));
     this.name = 'PippitApiError';
     this.code = options.code;
+    if (options.logId !== undefined) {
+      this.logId = options.logId;
+    }
     this.operation = options.operation;
     if (options.status !== undefined) {
       this.status = options.status;

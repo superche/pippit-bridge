@@ -16,6 +16,19 @@ import { routeUrl } from "../presenters/jobs.js"
 import { canTryNextByokCredential, noEligibleByokCredential } from "./generation-shared.js"
 import { resolveFacadeVideoModel } from "./models.js"
 
+function defaultVideoResolution(
+  inferredResolution: string | undefined,
+  supportedResolutions: readonly string[] | null | undefined,
+): string | undefined {
+  if (!supportedResolutions || supportedResolutions.length === 0) return undefined
+  if (inferredResolution !== undefined && supportedResolutions.includes(inferredResolution)) {
+    return inferredResolution
+  }
+  return inferredResolution === undefined
+    ? supportedResolutions[0]
+    : supportedResolutions.at(-1)
+}
+
 function rejectUnsupportedParameters(request: Pick<VideoGenerationRequest, "callback_url" | "generate_audio">): void {
   if (request.callback_url !== undefined) {
     throw invalidRequest("callback_url is not supported by this Pippit facade.", "callback_url", "unsupported_parameter")
@@ -43,7 +56,6 @@ export function createVideoGenerationService(input: {
   return async (caller, request, signal) => {
     const model = resolveFacadeVideoModel(request.model)
     rejectUnsupportedParameters(request)
-    const geometry = resolveOutputGeometry(request, model)
     const providerOptions = readPippitProviderOptions(request)
     const workspaceId = await input.byokStore.getWorkspaceId()
     const candidates = await input.byokStore.resolveCandidates({
@@ -75,10 +87,20 @@ export function createVideoGenerationService(input: {
           request,
           signal,
         })
+        const geometry = resolveOutputGeometry({
+          ...request,
+          aspect_ratio: request.aspect_ratio ?? references.inferredAspectRatio ?? "16:9",
+          resolution: request.resolution ?? defaultVideoResolution(
+            references.inferredResolution,
+            model.supported_resolutions,
+          ),
+        }, model)
         const submitted = await input.pippit.submitRun({
           accessKey: candidate.accessKey,
           request: {
-            asset_ids: [...references.assetIds],
+            // upload_file returns pippit_asset_id, not a workspace asset_id.
+            // Reference identity belongs in the typed media arrays below.
+            asset_ids: [],
             message: request.prompt,
             ...(providerOptions.thread_id === undefined ? {} : { thread_id: providerOptions.thread_id }),
             video_part_tool_param: {
