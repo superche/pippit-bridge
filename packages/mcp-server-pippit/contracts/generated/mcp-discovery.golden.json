@@ -13,24 +13,24 @@
     "protocolVersion": "2025-11-25",
     "serverInfo": {
       "name": "pippit-video",
-      "version": "0.2.16"
+      "version": "0.2.17"
     }
   },
   "reads": [
     {
-      "sha256": "dbe0aad8302c5bdc12ae9ecc07863ba75c5a9b0cda7bfb7e0d13b6df6f38cb44",
+      "sha256": "78251a0eb89eb537c994b2ab7579fdfd9e693b4b4d9e46a9eb6bb3e09d19d538",
       "uri": "ui://widget/pippit-image-result-v4.html"
     },
     {
-      "sha256": "e364fd08cc37eb0436938982e64704d0c2e041b80e0f9d16a166daeb0b5e7b28",
-      "uri": "ui://widget/pippit-video-job-v14.html"
+      "sha256": "481ab6afdc317ae20189d1ecf939e50a98880524efcfbec46841a957b051bf4a",
+      "uri": "ui://widget/pippit-video-job-v15.html"
     }
   ],
   "resources": {
-    "sha256": "7eb32aedb9d95fb3e244b2298cdf35f421a0101ab9efcbb3c58484347f1bc848",
+    "sha256": "5822a0dfe80346cb9ffda4077339b470a310a6abb1b378b246da0a9b3effe6d7",
     "uris": [
       "ui://widget/pippit-image-result-v4.html",
-      "ui://widget/pippit-video-job-v14.html"
+      "ui://widget/pippit-video-job-v15.html"
     ]
   },
   "resultSemantics": {
@@ -78,6 +78,6 @@
       "pippit_reveal_image",
       "pippit_switch_access_key"
     ],
-    "sha256": "b10c1250452a459c8a3245a5488c70fd3cadd25a727921f2635582a8ebae25b7"
+    "sha256": "77a0aa5045f10b516df6f5397838e9f1fa719783f55efe11f9edaa91b635eb01"
   }
 }

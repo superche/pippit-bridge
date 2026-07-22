@@ -44,10 +44,10 @@ describe("Codex Dev profile", () => {
         installed: true,
         name: "pippit-video",
         pluginId: "pippit-video@pippit-bridge-dev",
-        version: "0.2.16",
+        version: "0.2.17",
       }],
     })
-    expect(plugin.version).toBe("0.2.16")
+    expect(plugin.version).toBe("0.2.17")
 
     expect(() => validatePluginIsolation({
       installed: [{

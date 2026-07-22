@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto"
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto"
 import { chmod, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -356,7 +356,7 @@ describe("FileByokStore", () => {
     await reopened.close()
   })
 
-  it("holds an exclusive process lock until close and fails closed on a stale lock", async () => {
+  it("holds a lifetime lock, recovers a dead owner, and fails closed on malformed ownership", async () => {
     const filePath = await temporaryStorePath()
     const masterKey = randomBytes(32)
     const first = await FileByokStore.open({ filePath, masterKey })
@@ -367,6 +367,15 @@ describe("FileByokStore", () => {
 
     const reopened = await FileByokStore.open({ filePath, masterKey })
     await reopened.close()
+    await writeFile(`${filePath}.lock`, `${JSON.stringify({
+      instanceId: "crashed-facade",
+      nonce: randomUUID(),
+      pid: 2_147_483_647,
+      version: 1,
+    })}\n`, { mode: 0o600 })
+    const recovered = await FileByokStore.open({ filePath, masterKey })
+    await recovered.close()
+
     await writeFile(`${filePath}.lock`, "stale", { mode: 0o600 })
     await expect(FileByokStore.open({ filePath, masterKey })).rejects.toMatchObject({
       code: "STORE_IO_ERROR",

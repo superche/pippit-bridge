@@ -2,6 +2,7 @@ import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { afterEach, describe, expect, test } from "vitest"
 import {
+  createEffectiveDevHostContract,
   createDevMcpGateway,
   PIPPIT_DEV_ERROR_PREVIEW_TOOL_NAME,
   type DevWorkerRequest,
@@ -47,6 +48,10 @@ describe("stable dev MCP gateway", () => {
     const fresh = await gateway.handle({ id: 3, jsonrpc: "2.0", method: "tools/call", params: { arguments: { value: "new" }, name: "fixture_echo" } })
     expect(fresh).toMatchObject({ result: { structuredContent: { generation: "next", value: "new" } } })
     expect(await slow).toMatchObject({ result: { structuredContent: { generation: "n", value: "old" } } })
+    expect(await gateway.handle({ id: 5, jsonrpc: "2.0", method: "resources/read", params: { uri: "fixture://status" } }))
+      .toMatchObject({ result: { contents: [{ text: "static" }] } })
+    expect(await gateway.handle({ id: 6, jsonrpc: "2.0", method: "resources/read", params: { uri: "fixture://artifact/1" } }))
+      .toMatchObject({ result: { contents: [{ text: "next" }] } })
     expect(await gateway.handle({ id: 4, jsonrpc: "2.0", method: "ping", params: {} })).toMatchObject({ id: 4, result: {} })
   })
 
@@ -59,6 +64,10 @@ describe("stable dev MCP gateway", () => {
     const crashed = await gateway.handle({ id: 2, jsonrpc: "2.0", method: "tools/call", params: { arguments: { crash: true }, name: "fixture_echo" } })
     expect(crashed).toMatchObject({ result: { isError: true, structuredContent: { error: { code: "DEV_SUPERVISOR_UNAVAILABLE" } } } })
     expect(await gateway.handle({ id: 3, jsonrpc: "2.0", method: "tools/list", params: {} })).toMatchObject({ result: { tools: [{ description: "Frozen echo" }] } })
+    expect(await gateway.handle({ id: 4, jsonrpc: "2.0", method: "resources/read", params: { uri: "fixture://status" } }))
+      .toMatchObject({ result: { contents: [{ text: "static" }] } })
+    await expect(gateway.handle({ id: 5, jsonrpc: "2.0", method: "resources/read", params: { uri: "fixture://artifact/1" } }))
+      .rejects.toMatchObject({ code: "DEV_SUPERVISOR_UNAVAILABLE" })
   })
 
   test("adds a dedicated error widget preview without forwarding a video job call", async () => {
@@ -82,7 +91,10 @@ describe("stable dev MCP gateway", () => {
         title: "Get video",
       }],
     } as const
-    const gateway = createDevMcpGateway({ contract, enableErrorPreview: true, pool })
+    const gateway = createDevMcpGateway({
+      contract: createEffectiveDevHostContract(contract, { enableErrorPreview: true }),
+      pool,
+    })
     await gateway.handle({ id: 1, jsonrpc: "2.0", method: "initialize", params: { capabilities: {}, protocolVersion: "2025-11-25" } })
 
     const listed = await gateway.handle({ id: 2, jsonrpc: "2.0", method: "tools/list", params: {} })

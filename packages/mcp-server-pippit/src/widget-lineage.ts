@@ -1,16 +1,15 @@
 import { createHash, randomBytes } from "node:crypto"
-import { constants, type Dirent, type Stats } from "node:fs"
+import { type Dirent, type Stats } from "node:fs"
 import {
-  chmod,
   lstat,
-  mkdir,
-  open,
   readdir,
-  rename,
-  unlink,
-  type FileHandle,
 } from "node:fs/promises"
 import { isAbsolute, join, resolve } from "node:path"
+import {
+  createPrivateFileIfAbsent,
+  ensurePrivateDirectory,
+  readPrivateFile,
+} from "@pippit-bridge/core"
 
 const DEFAULT_MAX_DEPTH = 64
 const MAX_JOB_ID_BYTES = 16_384
@@ -59,21 +58,6 @@ function privateOwner(stats: Stats): boolean {
   return typeof process.getuid !== "function" || stats.uid === process.getuid()
 }
 
-async function ensurePrivateDirectory(path: string): Promise<void> {
-  await mkdir(path, { mode: 0o700, recursive: true })
-  let stats = await lstat(path)
-  if (!stats.isDirectory() || stats.isSymbolicLink() || !privateOwner(stats)) {
-    throw new Error("The Pippit widget lineage directory is unsafe.")
-  }
-  if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) {
-    await chmod(path, 0o700)
-    stats = await lstat(path)
-  }
-  if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) {
-    throw new Error("The Pippit widget lineage directory is not private.")
-  }
-}
-
 async function existingPrivateDirectory(path: string): Promise<boolean> {
   let stats: Stats
   try {
@@ -89,16 +73,6 @@ async function existingPrivateDirectory(path: string): Promise<boolean> {
     throw new Error("The Pippit widget lineage directory is not private.")
   }
   return true
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  if (process.platform === "win32") return
-  const handle = await open(path, constants.O_RDONLY)
-  try {
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
 }
 
 function identityHash(prefix: string, value: string): string {
@@ -126,29 +100,13 @@ function parseRecord(value: unknown, sourceJobId: string, recordId: string): Lin
 }
 
 async function readPrivateRecord(path: string, sourceJobId: string, recordId: string): Promise<LineageRecord> {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
-  try {
-    const stats = await handle.stat()
-    if (
-      !stats.isFile() ||
-      stats.nlink !== 1 ||
-      !privateOwner(stats) ||
-      stats.size < 1 ||
-      stats.size > MAX_RECORD_BYTES ||
-      (process.platform !== "win32" && (stats.mode & 0o077) !== 0)
-    ) {
-      throw new Error("The Pippit widget lineage record is unsafe.")
-    }
-    const value = JSON.parse(await handle.readFile({ encoding: "utf8" })) as unknown
-    return parseRecord(value, sourceJobId, recordId)
-  } finally {
-    await handle.close()
-  }
+  const contents = await readPrivateFile(path, MAX_RECORD_BYTES)
+  return parseRecord(JSON.parse(contents.toString("utf8")) as unknown, sourceJobId, recordId)
 }
 
 function latestRecordName(entries: readonly Dirent[]): string | undefined {
   return entries
-    .filter(entry => entry.isFile() && RECORD_NAME_PATTERN.test(entry.name))
+    .filter(entry => RECORD_NAME_PATTERN.test(entry.name))
     .map(entry => entry.name)
     .sort()
     .at(-1)
@@ -274,30 +232,14 @@ export function createPersistentPippitWidgetLineageStore(
       const directory = await sourceDirectory(sourceJobId)
       await ensurePrivateDirectory(directory)
       const path = join(directory, recordId)
-      const temporaryPath = `${path}.partial-${process.pid}-${randomBytes(8).toString("hex")}`
-      let handle: FileHandle | undefined
-      try {
-        handle = await open(
-          temporaryPath,
-          constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-          0o600,
-        )
-        const record: LineageRecord = {
-          child_job_id: childJobId,
-          created_at_ms: createdAtMs,
-          schema_version: 1,
-          source_job_id: sourceJobId,
-        }
-        await handle.writeFile(`${JSON.stringify(record)}\n`, { encoding: "utf8" })
-        await handle.sync()
-        await handle.close()
-        handle = undefined
-        await rename(temporaryPath, path)
-        await syncDirectory(directory)
-      } finally {
-        await handle?.close().catch(() => undefined)
-        await unlink(temporaryPath).catch(() => undefined)
+      const record: LineageRecord = {
+        child_job_id: childJobId,
+        created_at_ms: createdAtMs,
+        schema_version: 1,
+        source_job_id: sourceJobId,
       }
+      const created = await createPrivateFileIfAbsent(path, Buffer.from(`${JSON.stringify(record)}\n`, "utf8"))
+      if (created !== "created") throw new Error("The Pippit widget lineage record already exists.")
     },
     async resolve(anchorJobId) {
       validateJobId(anchorJobId, "Anchor job id")

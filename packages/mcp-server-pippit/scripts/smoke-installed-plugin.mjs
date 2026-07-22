@@ -3,7 +3,7 @@ import { lstat, mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 
-const EXPECTED_PLUGIN_VERSION = "0.2.16"
+const EXPECTED_PLUGIN_VERSION = "0.2.17"
 
 const entryArgument = process.argv[2]
 if (entryArgument === undefined) {
@@ -44,7 +44,7 @@ try {
     }),
     request(2, "tools/list"),
     request(3, "resources/list"),
-    request(4, "resources/read", { uri: "ui://widget/pippit-video-job-v14.html" }),
+    request(4, "resources/read", { uri: "ui://widget/pippit-video-job-v15.html" }),
     request(5, "tools/call", { arguments: {}, name: "pippit_list_access_keys" }),
     request(6, "resources/read", { uri: "ui://widget/pippit-image-result-v4.html" }),
     request(7, "resources/read", { uri: "ui://widget/pippit-image-result-v3.html" }),
@@ -81,7 +81,7 @@ try {
   })
 
   if (run.code !== 0 || run.stderr !== "") {
-    throw new Error("The packaged MCP entry did not exit cleanly.")
+    throw new Error(`The packaged MCP entry did not exit cleanly (code=${run.code}, stderr=${JSON.stringify(run.stderr)}).`)
   }
   const responses = run.stdout
     .split("\n")
@@ -133,19 +133,22 @@ try {
   }
   const getVideo = tools.find((tool) => tool.name === "pippit_get_video")
   if (
-    getVideo?._meta?.ui?.resourceUri !== "ui://widget/pippit-video-job-v14.html" ||
-    getVideo?._meta?.["openai/outputTemplate"] !== "ui://widget/pippit-video-job-v14.html"
+    getVideo?._meta?.ui?.resourceUri !== "ui://widget/pippit-video-job-v15.html" ||
+    getVideo?._meta?.["openai/outputTemplate"] !== "ui://widget/pippit-video-job-v15.html"
   ) {
     throw new Error("The packaged MCP tools do not bind the shared widget.")
   }
   if (
-    !listedResources.some((resource) => resource.uri === "ui://widget/pippit-video-job-v14.html") ||
+    !listedResources.some((resource) => resource.uri === "ui://widget/pippit-video-job-v15.html") ||
     !listedResources.some((resource) => resource.uri === "ui://widget/pippit-image-result-v4.html") ||
     widgetResource?.mimeType !== "text/html;profile=mcp-app" ||
     !widgetResource?.text?.includes("pippit-video-editor") ||
     !widgetResource?.text?.includes("function newAnnotationId()") ||
     !widgetResource?.text?.includes("function retryLatestResolution()") ||
-    !widgetResource?.text?.includes("activeModel = resolveWidgetModel(activeModel, bootstrapJob.model)") ||
+    !widgetResource?.text?.includes("var WidgetController = class WidgetController") ||
+    !widgetResource?.text?.includes("var createInitialWidgetState = function createInitialWidgetState()") ||
+    !widgetResource?.text?.includes("var reduceWidgetState = function reduceWidgetState") ||
+    !widgetResource?.text?.includes("var renderWidgetView = function renderWidgetView") ||
     widgetResource?.text?.includes("newIdempotencyKey()")
   ) {
     throw new Error("The packaged MCP widget resource is incomplete.")
@@ -192,7 +195,7 @@ try {
 
   process.stdout.write(`${JSON.stringify({
     account_count: toolCall?.structuredContent?.data?.length ?? 0,
-    server_version: "0.2.16",
+    server_version: "0.2.17",
     tool_count: tools.length,
     widget_resource: true,
   })}\n`)

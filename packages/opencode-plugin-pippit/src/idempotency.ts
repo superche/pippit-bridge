@@ -1,9 +1,11 @@
-import { constants } from "node:fs"
-import { chmod, link, lstat, mkdir, open, unlink } from "node:fs/promises"
+import { lstat } from "node:fs/promises"
 import { randomBytes } from "node:crypto"
-import { dirname, join } from "node:path"
+import { join } from "node:path"
 import {
+  createPrivateFileIfAbsent,
+  ensurePrivateDirectory,
   FileIdempotencyStore,
+  readPrivateFile,
   type IdempotencyBeginInput,
   type IdempotencyBeginResult,
   type IdempotencyStore,
@@ -31,13 +33,10 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 async function readSecret(path: string): Promise<SecretDocument> {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  let contents: Buffer | undefined
   try {
-    const metadata = await handle.stat()
-    if (!metadata.isFile() || (metadata.mode & 0o077) !== 0 || metadata.size > 4_096) {
-      throw new Error("The OpenCode idempotency secret is not a private bounded file.")
-    }
-    const value: unknown = JSON.parse(await handle.readFile("utf8"))
+    contents = await readPrivateFile(path, 4_096)
+    const value: unknown = JSON.parse(contents.toString("utf8"))
     if (
       !isRecord(value) ||
       value.schema_version !== 1 ||
@@ -47,8 +46,10 @@ async function readSecret(path: string): Promise<SecretDocument> {
       throw new Error("The OpenCode idempotency secret is invalid.")
     }
     return value as unknown as SecretDocument
+  } catch (error) {
+    throw new Error("The OpenCode idempotency secret is invalid or unsafe.", { cause: error })
   } finally {
-    await handle.close()
+    contents?.fill(0)
   }
 }
 
@@ -60,38 +61,27 @@ async function createSecret(path: string, recordsPath: string): Promise<SecretDo
     idempotency_hmac_key_hex: randomBytes(32).toString("hex"),
     schema_version: 1,
   } as const
-  const temporaryPath = `${path}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`
-  const handle = await open(temporaryPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
+  const contents = Buffer.from(`${JSON.stringify(value)}\n`, "utf8")
   try {
-    await handle.writeFile(`${JSON.stringify(value)}\n`, "utf8")
-    await handle.sync()
+    await createPrivateFileIfAbsent(path, contents)
   } finally {
-    await handle.close()
-  }
-  try {
-    await link(temporaryPath, path)
-    await chmod(path, 0o600)
-    const directory = await open(dirname(path), constants.O_RDONLY)
-    try { await directory.sync() } finally { await directory.close() }
-  } catch (error) {
-    if (!isRecord(error) || error.code !== "EEXIST") throw error
-  } finally {
-    await unlink(temporaryPath).catch(() => {})
+    contents.fill(0)
   }
   return readSecret(path)
 }
 
 async function openStore(statePath: string): Promise<IdempotencyStore> {
   const directory = join(statePath, "pippit")
-  await mkdir(directory, { mode: 0o700, recursive: true })
-  await chmod(directory, 0o700)
+  await ensurePrivateDirectory(directory)
   const recordsPath = join(directory, "idempotency-v1.json")
   const secretPath = join(directory, "idempotency-secret-v1.json")
   const secret = await ((await pathExists(secretPath)) ? readSecret(secretPath) : createSecret(secretPath, recordsPath))
-  return new FileIdempotencyStore({
-    filePath: recordsPath,
-    hmacKey: Buffer.from(secret.idempotency_hmac_key_hex, "hex"),
-  })
+  const hmacKey = Buffer.from(secret.idempotency_hmac_key_hex, "hex")
+  try {
+    return new FileIdempotencyStore({ filePath: recordsPath, hmacKey })
+  } finally {
+    hmacKey.fill(0)
+  }
 }
 
 export class LazyOpenCodeIdempotencyStore implements IdempotencyStore {

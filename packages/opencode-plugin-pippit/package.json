@@ -40,9 +40,9 @@
     "@opencode-ai/plugin": "^1.18.3"
   },
   "devDependencies": {
-    "@pippit-bridge/core": "0.1.0",
-    "@pippit-bridge/mcp-server": "0.2.16",
-    "@pippit-bridge/sdk": "0.1.0",
+    "@pippit-bridge/core": "0.1.1",
+    "@pippit-bridge/mcp-server": "0.2.17",
+    "@pippit-bridge/sdk": "0.1.1",
     "zod": "^4.1.12"
   }
 }

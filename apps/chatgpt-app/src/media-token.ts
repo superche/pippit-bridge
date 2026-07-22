@@ -72,6 +72,9 @@ export function createMediaTokenSigner(options: MediaTokenSignerOptions): MediaT
       }
 
       const actualSignature = Buffer.from(encodedSignature, "base64url")
+      if (actualSignature.toString("base64url") !== encodedSignature) {
+        throw new Error("Invalid media token signature encoding.")
+      }
       const expectedSignature = signature(encodedPayload, key)
       if (
         actualSignature.byteLength !== expectedSignature.byteLength ||
@@ -82,7 +85,11 @@ export function createMediaTokenSigner(options: MediaTokenSignerOptions): MediaT
 
       let rawPayload: unknown
       try {
-        rawPayload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"))
+        const payloadBuffer = Buffer.from(encodedPayload, "base64url")
+        if (payloadBuffer.toString("base64url") !== encodedPayload) {
+          throw new Error("Non-canonical payload encoding.")
+        }
+        rawPayload = JSON.parse(payloadBuffer.toString("utf8"))
       } catch {
         throw new Error("Invalid media token payload.")
       }

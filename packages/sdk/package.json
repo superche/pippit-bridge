@@ -1,6 +1,6 @@
 {
   "name": "@pippit-bridge/sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Typed client for the officially issued Pippit Access Key API",
   "type": "module",
   "license": "MIT",

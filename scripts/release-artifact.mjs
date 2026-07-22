@@ -15,10 +15,23 @@ function exec(command, args, options = {}) {
   })
 }
 
+function packedTarball(files, prefix) {
+  const name = files.find(candidate => candidate.startsWith(prefix) && candidate.endsWith(".tgz"))
+  if (name === undefined) throw new Error(`Missing packed artifact ${prefix}*.tgz`)
+  return resolve(temporary, name)
+}
+
 try {
   const isolatedEnvironment = { ...process.env, npm_config_cache: resolve(temporary, "npm-cache") }
+  await exec("npm", ["pack", "-w", "@pippit-bridge/contracts", "--pack-destination", temporary], { env: isolatedEnvironment })
+  await exec("npm", ["pack", "-w", "@pippit-bridge/core", "--pack-destination", temporary], { env: isolatedEnvironment })
   await exec("npm", ["pack", "-w", "@pippit-bridge/mcp-server", "--pack-destination", temporary], { env: isolatedEnvironment })
-  const tarball = resolve(temporary, (await readdir(temporary)).find(name => name.endsWith(".tgz")))
+  const packedFiles = await readdir(temporary)
+  const dependencyTarballs = [
+    packedTarball(packedFiles, "pippit-bridge-contracts-"),
+    packedTarball(packedFiles, "pippit-bridge-core-"),
+  ]
+  const tarball = packedTarball(packedFiles, "pippit-bridge-mcp-server-")
   const extracted = resolve(temporary, "cache-simulation")
   await exec("mkdir", [extracted])
   await exec("tar", ["-xzf", tarball, "-C", extracted, "--strip-components=1"])
@@ -41,6 +54,14 @@ try {
     cwd: extracted,
     env: { ...isolatedEnvironment, npm_config_offline: "true", PIPPIT_BRIDGE_HOME: resolve(temporary, "runtime") },
   })
+  const installRoot = resolve(temporary, "installed-package-chain")
+  await exec("npm", ["install", "--prefix", installRoot, "--ignore-scripts", ...dependencyTarballs, tarball], {
+    env: { ...isolatedEnvironment, npm_config_registry: "https://registry.npmjs.org" },
+  })
+  await exec("node", [
+    resolve(packageRoot, "scripts/smoke-installed-bin.mjs"),
+    resolve(installRoot, "node_modules/.bin/pippit-mcp"),
+  ], { env: isolatedEnvironment })
   process.stdout.write(`release-artifact ok ${basename(tarball)} platform=${process.platform} launcher=/bin/sh\n`)
 } finally {
   await rm(temporary, { force: true, recursive: true })

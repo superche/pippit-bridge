@@ -1,4 +1,5 @@
-import { mkdtemp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { randomUUID } from "node:crypto"
+import { chmod, link, mkdtemp, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
@@ -120,6 +121,27 @@ describe("PippitAccountManager", () => {
 })
 
 describe("FilePippitAccountStore", () => {
+  it("recovers a transaction lock left by a crashed process", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pippit-opencode-crashed-lock-"))
+    temporaryDirectories.push(directory)
+    const privateDirectory = join(directory, "private")
+    const filePath = join(privateDirectory, "access-keys.json")
+    await mkdir(privateDirectory, { mode: 0o700 })
+    await writeFile(`${filePath}.lock`, `${JSON.stringify({
+      instanceId: "crashed-opencode-process",
+      nonce: randomUUID(),
+      pid: 2_147_483_647,
+      version: 1,
+    })}\n`, { mode: 0o600 })
+
+    const manager = new PippitAccountManager(new FilePippitAccountStore(filePath))
+    await expect(manager.addAccount("recovered", "ak-recovered-after-crash-secret")).resolves.toMatchObject({
+      active: true,
+      name: "recovered",
+    })
+    await expect(stat(`${filePath}.lock`)).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
   it("serializes concurrent additions without lock or temp residue", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pippit-opencode-accounts-"))
     temporaryDirectories.push(directory)
@@ -141,6 +163,31 @@ describe("FilePippitAccountStore", () => {
     expect((await stat(filePath)).mode & 0o777).toBe(0o600)
     expect((await readdir(privateDirectory)).filter((entry) => entry.endsWith(".tmp"))).toEqual([])
     expect((await readdir(privateDirectory)).filter((entry) => entry.endsWith(".lock"))).toEqual([])
+  })
+
+  it("maps shared bounded-read safety failures to the account-store domain error", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pippit-opencode-unsafe-accounts-"))
+    temporaryDirectories.push(directory)
+    const privateDirectory = join(directory, "private")
+    const filePath = join(privateDirectory, "access-keys.json")
+    const store = new FilePippitAccountStore(filePath)
+    await new PippitAccountManager(store).addAccount("safe", "ak-safe-account-secret")
+
+    if (process.platform !== "win32") {
+      await chmod(filePath, 0o644)
+      await expect(store.read()).rejects.toThrow("The Pippit account store could not be opened.")
+      await chmod(filePath, 0o600)
+    }
+
+    const hardlinkPath = join(privateDirectory, "hardlink.json")
+    await link(filePath, hardlinkPath)
+    await expect(store.read()).rejects.toThrow("The Pippit account store could not be opened.")
+
+    const symlinkPath = join(privateDirectory, "symlink.json")
+    await symlink(filePath, symlinkPath)
+    await expect(new FilePippitAccountStore(symlinkPath).read()).rejects.toThrow(
+      "The Pippit account store could not be opened.",
+    )
   })
 
   it("migrates the auth-slot fields out of a v1 store on the next write", async () => {

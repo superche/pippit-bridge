@@ -4,6 +4,7 @@ import type {
 } from "./tools.ts"
 import {
   PIPPIT_WIDGET_HTML,
+  PIPPIT_LEGACY_WIDGET_URI,
   PIPPIT_WIDGET_URI,
 } from "./widget.ts"
 import {
@@ -39,6 +40,7 @@ export function pippitImageWidgetOutputSchema(
 }
 
 const LEGACY_PIPPIT_WIDGET_URIS = new Set([
+  PIPPIT_LEGACY_WIDGET_URI,
   "ui://widget/pippit-video-job-v5.html",
   "ui://widget/pippit-video-job-v6.html",
   "ui://widget/pippit-video-job-v7.html",

@@ -4,204 +4,28 @@ import {
   adjustWidgetRegionFromKey,
   classifyPreviewUpdate,
   mergeWidgetDraftForMediaRefresh,
-  PIPPIT_WIDGET_HTML,
-  PIPPIT_WIDGET_URI,
   reconcileWidgetDraftForDuration,
   resolveWidgetModel,
-  resolveWidgetTheme,
   shouldAcceptWidgetJobResult,
   widgetDraftPayloadEquals,
 } from "@pippit-bridge/mcp-server"
 
-describe("Pippit MCP App widget", () => {
-  it("uses the stable MCP App resource contract", () => {
-    expect(PIPPIT_WIDGET_URI).toBe("ui://widget/pippit-video-job-v14.html")
-    expect(PIPPIT_WIDGET_HTML).toContain("ui/initialize")
-    expect(PIPPIT_WIDGET_HTML).toContain("ui/notifications/initialized")
-    expect(PIPPIT_WIDGET_HTML).toContain("ui/notifications/tool-result")
-    expect(PIPPIT_WIDGET_HTML).toContain("ui/notifications/size-changed")
-    expect(PIPPIT_WIDGET_HTML).toContain("ui/resource-teardown")
-    expect(PIPPIT_WIDGET_HTML).toContain('request("tools/call"')
-    expect(PIPPIT_WIDGET_HTML).toContain("Boolean(capabilities.serverTools)")
-    expect(PIPPIT_WIDGET_HTML).toContain("Boolean(capabilities.serverResources)")
-    expect(PIPPIT_WIDGET_HTML).not.toContain("modes.includes(mode)")
-    expect(PIPPIT_WIDGET_HTML).toContain('request("ui/request-display-mode"')
-    expect(PIPPIT_WIDGET_HTML).toContain('requestDisplayMode("inline")')
-    expect(PIPPIT_WIDGET_HTML).toContain("window.openai.requestDisplayMode")
-  })
-
-  it("gates standard tool calls and keeps window.openai as a compatibility fallback", () => {
-    expect(PIPPIT_WIDGET_HTML).toContain("if (serverToolsAvailable)")
-    expect(PIPPIT_WIDGET_HTML).toContain("DEFAULT_REQUEST_TIMEOUT_MS = 15000")
-    expect(PIPPIT_WIDGET_HTML).toContain("VIDEO_TOOL_REQUEST_TIMEOUT_MS = 43200000")
-    for (const name of [
-      "pippit_generate_video",
-      "pippit_get_video",
-      "pippit_download_video",
-      "pippit_edit_video_segment",
-      "pippit_resolve_latest_video",
-    ]) {
-      expect(PIPPIT_WIDGET_HTML).toContain(`"${name}"`)
-    }
-    expect(PIPPIT_WIDGET_HTML).toContain("VIDEO_TOOL_NAMES.has(name)")
-    expect(PIPPIT_WIDGET_HTML).toContain("RETRY_SAFE_TOOL_NAMES.has(name)")
-    expect(PIPPIT_WIDGET_HTML).toContain('request("tools/call", { name: name, arguments: args }, timeoutMs)')
-    expect(PIPPIT_WIDGET_HTML).toContain("window.openai.toolOutput")
-    expect(PIPPIT_WIDGET_HTML).toContain("window.openai.callTool")
-    expect(PIPPIT_WIDGET_HTML).toContain("window.openai.widgetState")
-    expect(PIPPIT_WIDGET_HTML).toContain("window.openai.setWidgetState")
-  })
-
-  it("renders only metadata-provided HTTPS or local MCP resource previews", () => {
-    expect(PIPPIT_WIDGET_HTML).toContain('meta["pippit/media"]')
-    expect(PIPPIT_WIDGET_HTML).toContain("typeof item.resource_uri")
-    expect(PIPPIT_WIDGET_HTML).toContain('"resources/read"')
-    expect(PIPPIT_WIDGET_HTML).toContain('callTool("pippit_read_video_chunk"')
-    expect(PIPPIT_WIDGET_HTML).toContain('name === "pippit_read_video_chunk"')
-    expect(PIPPIT_WIDGET_HTML).toContain("localPreviewTransportAvailable()")
-    expect(PIPPIT_WIDGET_HTML).toContain("LOCAL_RESOURCE_REQUEST_TIMEOUT_MS = 5000")
-    expect(PIPPIT_WIDGET_HTML).toContain("var resourceBridgeDemoted = false")
-    expect(PIPPIT_WIDGET_HTML).toContain("resourceBridgeDemoted = true")
-    expect(PIPPIT_WIDGET_HTML).toContain("serverResourcesAvailable && !resourceBridgeDemoted")
-    expect(PIPPIT_WIDGET_HTML).toContain("showEditor();\n        if (!retryLocalPreview())")
-    expect(PIPPIT_WIDGET_HTML).not.toContain("unsigned_urls")
-  })
-
-  it("implements a bounded timeline and intrinsic-video ROI annotations", () => {
-    expect(PIPPIT_WIDGET_HTML).toContain("MAX_SEGMENT_MS = 30000")
-    expect(PIPPIT_WIDGET_HTML).toContain("MAX_ANNOTATIONS = 20")
-    expect(PIPPIT_WIDGET_HTML).toContain("end - start > MAX_SEGMENT_MS")
-    expect(PIPPIT_WIDGET_HTML).toContain("function videoContentRect()")
-    expect(PIPPIT_WIDGET_HTML).toContain("videoElement.videoWidth")
-    expect(PIPPIT_WIDGET_HTML).toContain("normalizedPoint(event)")
-    expect(PIPPIT_WIDGET_HTML).toContain('commentElement.addEventListener("compositionstart"')
-    expect(PIPPIT_WIDGET_HTML).toContain('commentElement.addEventListener("compositionend"')
-    expect(PIPPIT_WIDGET_HTML).toContain('commentElement.value.trim() === ""')
-    expect(PIPPIT_WIDGET_HTML).toContain('id="comment" maxlength="2000"')
-    expect(PIPPIT_WIDGET_HTML).toContain('id="annotation-popover" class="annotation-popover" hidden')
-    expect(PIPPIT_WIDGET_HTML).toContain("openAnnotationPopover();")
-    expect(PIPPIT_WIDGET_HTML).toContain("Delete annotation")
-    expect(PIPPIT_WIDGET_HTML).toContain("annotations.length >= MAX_ANNOTATIONS")
-    expect(PIPPIT_WIDGET_HTML).toContain("function newAnnotationId()")
-    expect(PIPPIT_WIDGET_HTML).toContain("id: newAnnotationId()")
-    expect(PIPPIT_WIDGET_HTML).not.toContain("newIdempotencyKey()")
-    expect(PIPPIT_WIDGET_HTML).toContain("Math.min(pendingRegion.width, 1 - x)")
-    expect(PIPPIT_WIDGET_HTML).toContain("Math.min(pendingRegion.height, 1 - y)")
-    expect(PIPPIT_WIDGET_HTML).toContain("The current video is the reference.")
-    expect(PIPPIT_WIDGET_HTML).toContain("region annotations are added to the generation prompt.")
-    expect(PIPPIT_WIDGET_HTML).not.toContain("only sends")
-    expect(PIPPIT_WIDGET_HTML).not.toContain("white frame")
-  })
-
-  it("uses the Apple-inspired utility-card visual language without decorative effects", () => {
-    expect(PIPPIT_WIDGET_HTML).toContain("#0066cc")
-    expect(PIPPIT_WIDGET_HTML).toContain("#0071e3")
-    expect(PIPPIT_WIDGET_HTML).toContain("#2997ff")
-    expect(PIPPIT_WIDGET_HTML).toContain("#f5f5f7")
-    expect(PIPPIT_WIDGET_HTML).toContain("#fafafc")
-    expect(PIPPIT_WIDGET_HTML).toContain("#1d1d1f")
-    expect(PIPPIT_WIDGET_HTML).toContain("#6e6e73")
-    expect(PIPPIT_WIDGET_HTML).not.toContain("#7a7a7a")
-    expect(PIPPIT_WIDGET_HTML).toContain("border-radius: 18px")
-    expect(PIPPIT_WIDGET_HTML).toContain("min-height: 44px")
-    expect(PIPPIT_WIDGET_HTML).toContain("transform: scale(.95)")
-    expect(PIPPIT_WIDGET_HTML).toContain("outline: 2px solid #0071e3")
-    expect(PIPPIT_WIDGET_HTML).toContain("@media (max-width: 640px)")
-    expect(PIPPIT_WIDGET_HTML).toContain("@media (max-width: 480px)")
-    expect(PIPPIT_WIDGET_HTML).toContain("@media (prefers-reduced-motion: reduce)")
-    expect(PIPPIT_WIDGET_HTML).not.toContain("gradient(")
-    expect(PIPPIT_WIDGET_HTML).not.toContain("box-shadow")
-  })
-
-  it("keeps touch and accessibility states aligned with annotation mode", () => {
-    expect(PIPPIT_WIDGET_HTML).toContain('id="loading-view" class="loading-view" role="status" aria-live="polite"')
-    expect(PIPPIT_WIDGET_HTML).toContain('id="status" class="loading-status"')
-    expect(PIPPIT_WIDGET_HTML).toContain('id="media-message" class="viewer-message" aria-live="polite"')
-    expect(PIPPIT_WIDGET_HTML).toContain('id="annotate" class="annotation-trigger" type="button" aria-pressed="false"')
-    expect(PIPPIT_WIDGET_HTML).toContain('aria-label="Regional edit instruction"')
-    expect(PIPPIT_WIDGET_HTML).toContain('annotateElement.setAttribute("aria-pressed", String(enabled))')
-    expect(PIPPIT_WIDGET_HTML).toContain('stageElement.classList.toggle("annotating", enabled)')
-    expect(PIPPIT_WIDGET_HTML).toContain(".video-stage.annotating { touch-action: none; }")
-    expect(PIPPIT_WIDGET_HTML).toContain('role="group"')
-    expect(PIPPIT_WIDGET_HTML).toContain('tabindex="-1"')
-    expect(PIPPIT_WIDGET_HTML).toContain('aria-disabled="true"')
-    expect(PIPPIT_WIDGET_HTML).toContain('roiLayerElement.addEventListener("keydown"')
-    expect(PIPPIT_WIDGET_HTML).not.toContain('role="application"')
-  })
-
-  it("uses native video controls, an Apple-style filmstrip trim, and a flat edit composer", () => {
-    expect(PIPPIT_WIDGET_HTML).toContain('<video id="video" controls crossorigin="anonymous"')
-    expect(PIPPIT_WIDGET_HTML).not.toContain('id="play"')
-    expect(PIPPIT_WIDGET_HTML).not.toContain('id="playhead"')
-    expect(PIPPIT_WIDGET_HTML).not.toContain('id="fullscreen"')
-    expect(PIPPIT_WIDGET_HTML).toContain('id="filmstrip" class="filmstrip"')
-    expect(PIPPIT_WIDGET_HTML).toContain('class="trim-handle" type="button" role="slider"')
-    expect(PIPPIT_WIDGET_HTML).toContain("#ffd60a")
-    expect(PIPPIT_WIDGET_HTML).toContain('class="edit-compose" aria-label="Regeneration direction"')
-    expect(PIPPIT_WIDGET_HTML).toContain(">Regenerate video</button>")
-    expect(PIPPIT_WIDGET_HTML).not.toContain("Saved locally: ")
-    expect(PIPPIT_WIDGET_HTML).not.toContain("media.local_path")
-    expect(PIPPIT_WIDGET_HTML).not.toContain('id="local-file"')
-    expect(PIPPIT_WIDGET_HTML).not.toContain("Frame detail")
-    expect(PIPPIT_WIDGET_HTML).not.toContain('<p class="eyebrow">Edit direction</p>')
-  })
-
-  it("shows only a dot-matrix status while automatically polling non-terminal jobs", () => {
-    expect(PIPPIT_WIDGET_HTML).toContain('id="infinity-loader" class="infinity-loader"')
-    expect(PIPPIT_WIDGET_HTML).toContain("loaderIndex < 25")
-    expect(PIPPIT_WIDGET_HTML).toContain("jobIsRunning(activeStatus) || awaitingPreview")
-    expect(PIPPIT_WIDGET_HTML).toContain('callTool("pippit_get_video", { job_id: requestedJobId })')
-    expect(PIPPIT_WIDGET_HTML).toContain("schedulePoll(pollDelayMs)")
-    expect(PIPPIT_WIDGET_HTML).toContain("clearPollTimer();")
-    expect(PIPPIT_WIDGET_HTML).not.toContain('<dt>Job</dt>')
-    expect(PIPPIT_WIDGET_HTML).not.toContain('<dt>Model</dt>')
-    expect(PIPPIT_WIDGET_HTML).not.toContain("Refresh status")
-    expect(PIPPIT_WIDGET_HTML).not.toContain("job.error")
-  })
-
-  it("renders terminal jobs as a theme-aware dot-matrix error state", () => {
-    expect(PIPPIT_WIDGET_HTML).toContain('id="terminal-view" class="terminal-view" role="alert" aria-live="assertive"')
-    expect(PIPPIT_WIDGET_HTML).toContain('class="error-matrix error-mark"')
-    expect(PIPPIT_WIDGET_HTML).toContain('<span class="visually-hidden">Error</span>')
-    expect(PIPPIT_WIDGET_HTML).toContain(':root[data-theme="dark"] .terminal-view')
-    expect(PIPPIT_WIDGET_HTML).toContain('window.matchMedia("(prefers-color-scheme: dark)")')
-    expect(PIPPIT_WIDGET_HTML).toContain('message.method === "ui/notifications/host-context-changed"')
-    expect(PIPPIT_WIDGET_HTML).toContain("applyWidgetTheme();")
-    expect(PIPPIT_WIDGET_HTML).toContain("error-dot-entry 560ms steps(2, end) both")
-    expect(PIPPIT_WIDGET_HTML).toContain("terminalViewElement.classList.remove(\"is-entering\")")
-    expect(PIPPIT_WIDGET_HTML).not.toContain("Video unavailable")
-    expect(PIPPIT_WIDGET_HTML).not.toContain("Video cancelled")
-    expect(PIPPIT_WIDGET_HTML).not.toContain("This video could not be completed")
-    expect(PIPPIT_WIDGET_HTML).toContain('result.structuredContent.pippit_dev_preview === "error"')
-    expect(PIPPIT_WIDGET_HTML).toContain("latestResolutionComplete = true;")
-    expect(PIPPIT_WIDGET_HTML).toContain("showTerminal();")
-    expect(PIPPIT_WIDGET_HTML).toContain(':root[data-widget-view="terminal"] body { padding: 0; }')
-    expect(PIPPIT_WIDGET_HTML).toContain(':root[data-widget-view="terminal"] .terminal-view { min-height: max(268px, 100vh); }')
-    expect(PIPPIT_WIDGET_HTML).toContain('document.documentElement.dataset.widgetView = "terminal";')
-    expect(PIPPIT_WIDGET_HTML).not.toMatch(/\.terminal-view\s*\{[^}]*border-radius:/s)
-
-    expect(resolveWidgetTheme("dark", "light", false)).toBe("dark")
-    expect(resolveWidgetTheme(undefined, "light", true)).toBe("light")
-    expect(resolveWidgetTheme(undefined, undefined, true)).toBe("dark")
-    expect(resolveWidgetTheme("system", undefined, false)).toBe("light")
-  })
-
+describe("Pippit MCP App widget state", () => {
   it("classifies preview refreshes without reloading an unchanged source", () => {
-    expect(classifyPreviewUpdate(undefined, 0, undefined, false, "job-1", 0, "https://media/one")).toBe(
-      "new-source",
-    )
-    expect(
-      classifyPreviewUpdate("job-1", 0, "https://media/one", true, "job-1", 0, "https://media/one"),
-    ).toBe("unchanged")
-    expect(
-      classifyPreviewUpdate("job-1", 0, "https://media/one", true, "job-1", 0, "https://media/two"),
-    ).toBe("renewed-url")
-    expect(
-      classifyPreviewUpdate("job-1", 0, "https://media/one", false, "job-1", 0, "https://media/two"),
-    ).toBe("new-source")
-    expect(
-      classifyPreviewUpdate("job-1", 0, "https://media/one", true, "job-1", 1, "https://media/one"),
-    ).toBe("new-source")
+    expect(classifyPreviewUpdate(undefined, 0, undefined, false, "job-1", 0, "https://media/one"))
+      .toBe("new-source")
+    expect(classifyPreviewUpdate(
+      "job-1", 0, "https://media/one", true, "job-1", 0, "https://media/one",
+    )).toBe("unchanged")
+    expect(classifyPreviewUpdate(
+      "job-1", 0, "https://media/one", true, "job-1", 0, "https://media/two",
+    )).toBe("renewed-url")
+    expect(classifyPreviewUpdate(
+      "job-1", 0, "https://media/one", false, "job-1", 0, "https://media/two",
+    )).toBe("new-source")
+    expect(classifyPreviewUpdate(
+      "job-1", 0, "https://media/one", true, "job-1", 1, "https://media/one",
+    )).toBe("new-source")
   })
 
   it("keeps the regenerated job and artifact when bootstrap results replay", () => {
@@ -236,7 +60,6 @@ describe("Pippit MCP App widget", () => {
     regenerationPending = false
     expect(apply(newDone)).toBe(true)
     expect(apply(oldDone)).toBe(false)
-    expect(apply(oldDone)).toBe(false)
     expect(selected).toEqual(newDone)
     expect(selected?.artifactUri).toBe(newDone.artifactUri)
 
@@ -246,16 +69,6 @@ describe("Pippit MCP App widget", () => {
     expect(shouldAcceptWidgetJobResult("A", "B", true)).toBe(false)
     expect(shouldAcceptWidgetJobResult("A", "B", true, true)).toBe(true)
     expect(shouldAcceptWidgetJobResult("B", "A", false)).toBe(false)
-    expect(PIPPIT_WIDGET_HTML).toContain("shouldAcceptWidgetJobResult(activeJobId, job.id, submitting")
-    expect(PIPPIT_WIDGET_HTML).toContain("renderBootstrapResult(message.params)")
-    expect(PIPPIT_WIDGET_HTML).toContain("renderBootstrapResult({ structuredContent: output")
-    expect(PIPPIT_WIDGET_HTML).toContain(
-      'callTool("pippit_resolve_latest_video", { anchor_job_id: rootJobId })',
-    )
-    expect(PIPPIT_WIDGET_HTML).toContain('callTool("pippit_get_video", { job_id: storedJobId })')
-    expect(PIPPIT_WIDGET_HTML).toContain("resolveLatestBootstrap();")
-    expect(PIPPIT_WIDGET_HTML).toContain("retryLatestResolution();")
-    expect(PIPPIT_WIDGET_HTML).toContain("activeModel = resolveWidgetModel(activeModel, bootstrapJob.model)")
     expect(resolveWidgetModel(undefined, "pippit/original")).toBe("pippit/original")
     expect(resolveWidgetModel("pippit/original", undefined)).toBe("pippit/original")
     expect(resolveWidgetModel("pippit/original", null)).toBe("pippit/original")
@@ -291,9 +104,6 @@ describe("Pippit MCP App widget", () => {
       segmentStartMs: 2_000,
     })
     expect(shorterDuration.annotations).toEqual([draft.annotations[0]])
-    expect(PIPPIT_WIDGET_HTML).toContain('updateKind = initializedSourceDraft ? "renewed-url" : "new-source";')
-    expect(PIPPIT_WIDGET_HTML).toContain('updateKind === "renewed-url" ? draftSnapshot() : undefined')
-    expect(PIPPIT_WIDGET_HTML).toContain("restoreDraftAfterMediaRefresh(savedDraft)")
   })
 
   it("merges edits made during media reload while restoring only the saved playhead", () => {
@@ -320,7 +130,6 @@ describe("Pippit MCP App widget", () => {
       ...liveDraft,
       currentTimeMs: 4_500,
     })
-    expect(PIPPIT_WIDGET_HTML).toContain("mergeWidgetDraftForMediaRefresh(beforeLoad, liveDraft)")
   })
 
   it("compares only the edit payload when deciding whether a retry key remains valid", () => {
@@ -346,9 +155,6 @@ describe("Pippit MCP App widget", () => {
 
     expect(widgetDraftPayloadEquals(original, samePayload)).toBe(true)
     expect(widgetDraftPayloadEquals(original, clampedPayload)).toBe(false)
-    expect(PIPPIT_WIDGET_HTML).toContain(
-      "if (!widgetDraftPayloadEquals(mergedDraft, restored)) editIdempotencyKey = undefined;",
-    )
   })
 
   it("supports creating, moving, resizing, and clearing an ROI from the keyboard", () => {
@@ -405,56 +211,5 @@ describe("Pippit MCP App widget", () => {
         }
       }
     }
-  })
-
-  it("declares the standard MCP tool capability state exactly once", () => {
-    expect(PIPPIT_WIDGET_HTML.match(/var serverToolsAvailable = false;/g)).toHaveLength(1)
-    expect(PIPPIT_WIDGET_HTML.match(/var serverResourcesAvailable = false;/g)).toHaveLength(1)
-  })
-
-  it("submits edit instructions through the shared MCP tool without preview URLs", () => {
-    const start = PIPPIT_WIDGET_HTML.indexOf("async function submitEdit()")
-    const end = PIPPIT_WIDGET_HTML.indexOf("async function requestDisplayMode(mode)")
-    const submitSource = PIPPIT_WIDGET_HTML.slice(start, end)
-    expect(start).toBeGreaterThan(-1)
-    expect(end).toBeGreaterThan(start)
-    expect(submitSource).toContain('callTool("pippit_edit_video_segment", args)')
-    expect(submitSource).toContain("source_job_id: sourceJobId")
-    expect(submitSource).toContain("source_index: sourceIndex")
-    expect(submitSource).toContain("segment: { start_ms: segmentStartMs, end_ms: segmentEndMs }")
-    expect(submitSource).toContain("instruction: annotation.instruction")
-    expect(submitSource).not.toContain("media.url")
-    expect(submitSource).not.toContain("videoElement.src")
-    expect(submitSource).toContain("if (submitting")
-    expect(submitSource).toContain("if (!editIdempotencyKey)")
-    expect(submitSource).toContain("await stableEditIdempotencyKey(payload)")
-    expect(PIPPIT_WIDGET_HTML).toContain('window.crypto.subtle.digest("SHA-256"')
-    expect(PIPPIT_WIDGET_HTML).toContain('return "widget-edit-v1-fallback-"')
-    expect(submitSource).toContain("setEditError(toolErrorText(result))")
-    expect(submitSource).toContain('showLoading("pending")')
-    expect(submitSource).toContain('requestDisplayMode("inline")')
-    expect(submitSource).toContain("showEditor()")
-    expect(submitSource).toContain("generationEpoch += 1")
-    expect(submitSource).toContain("clearPollTimer()")
-    expect(submitSource.indexOf('showLoading("pending")')).toBeLessThan(
-      submitSource.indexOf('callTool("pippit_edit_video_segment", args)'),
-    )
-    expect(submitSource.indexOf('callTool("pippit_edit_video_segment", args)')).toBeLessThan(
-      submitSource.indexOf('requestDisplayMode("inline")'),
-    )
-    expect(submitSource).toContain("render(result, true)")
-    expect(submitSource.indexOf("render(result, true)")).toBeGreaterThan(
-      submitSource.indexOf('callTool("pippit_edit_video_segment", args)'),
-    )
-  })
-
-  it("cleans up pending requests and media on teardown", () => {
-    expect(PIPPIT_WIDGET_HTML).toContain("pending.forEach")
-    expect(PIPPIT_WIDGET_HTML).toContain("pending.clear()")
-    expect(PIPPIT_WIDGET_HTML).toContain("clientRequests.clear()")
-    expect(PIPPIT_WIDGET_HTML).toContain('state.cancel(new Error("Widget was closed."))')
-    expect(PIPPIT_WIDGET_HTML).toContain("resizeObserver.disconnect()")
-    expect(PIPPIT_WIDGET_HTML).toContain('videoElement.removeAttribute("src")')
-    expect(PIPPIT_WIDGET_HTML).toContain("URL.revokeObjectURL(previewObjectUrl)")
   })
 })

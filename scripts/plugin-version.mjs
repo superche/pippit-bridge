@@ -19,7 +19,43 @@ const textTargets = [
   ["packages/mcp-server-pippit/src/version.ts", /PIPPIT_PLUGIN_VERSION = "[^"]+"/u, version => `PIPPIT_PLUGIN_VERSION = "${version}"`],
   ["packages/mcp-server-pippit/src/image-widget.ts", /version: "\d+\.\d+\.\d+(?:-[^"]+)?"/u, version => `version: "${version}"`],
   ["packages/mcp-server-pippit/scripts/smoke-installed-plugin.mjs", /const EXPECTED_PLUGIN_VERSION = "[^"]+"/u, version => `const EXPECTED_PLUGIN_VERSION = "${version}"`],
+  ["packages/mcp-server-pippit/scripts/smoke-installed-bin.mjs", /const EXPECTED_PLUGIN_VERSION = "[^"]+"/u, version => `const EXPECTED_PLUGIN_VERSION = "${version}"`],
   ["packages/mcp-server-pippit/scripts/smoke-installed-plugin-media.mjs", /const EXPECTED_PLUGIN_VERSION = "[^"]+"/u, version => `const EXPECTED_PLUGIN_VERSION = "${version}"`],
+]
+
+const internalDependencyVersions = [
+  {
+    source: "packages/contracts/package.json",
+    targets: [
+      ["packages/mcp-server-pippit/package.json", ["dependencies", "@pippit-bridge/contracts"]],
+      ["apps/openrouter-facade/package.json", ["dependencies", "@pippit-bridge/contracts"]],
+      ["package-lock.json", ["packages", "packages/contracts", "version"]],
+      ["package-lock.json", ["packages", "packages/mcp-server-pippit", "dependencies", "@pippit-bridge/contracts"]],
+      ["package-lock.json", ["packages", "apps/openrouter-facade", "dependencies", "@pippit-bridge/contracts"]],
+    ],
+  },
+  {
+    source: "packages/core/package.json",
+    targets: [
+      ["packages/mcp-server-pippit/package.json", ["dependencies", "@pippit-bridge/core"]],
+      ["apps/openrouter-facade/package.json", ["dependencies", "@pippit-bridge/core"]],
+      ["packages/opencode-plugin-pippit/package.json", ["devDependencies", "@pippit-bridge/core"]],
+      ["package-lock.json", ["packages", "packages/core", "version"]],
+      ["package-lock.json", ["packages", "packages/mcp-server-pippit", "dependencies", "@pippit-bridge/core"]],
+      ["package-lock.json", ["packages", "apps/openrouter-facade", "dependencies", "@pippit-bridge/core"]],
+      ["package-lock.json", ["packages", "packages/opencode-plugin-pippit", "devDependencies", "@pippit-bridge/core"]],
+    ],
+  },
+  {
+    source: "packages/sdk/package.json",
+    targets: [
+      ["apps/openrouter-facade/package.json", ["dependencies", "@pippit-bridge/sdk"]],
+      ["packages/opencode-plugin-pippit/package.json", ["devDependencies", "@pippit-bridge/sdk"]],
+      ["package-lock.json", ["packages", "packages/sdk", "version"]],
+      ["package-lock.json", ["packages", "apps/openrouter-facade", "dependencies", "@pippit-bridge/sdk"]],
+      ["package-lock.json", ["packages", "packages/opencode-plugin-pippit", "devDependencies", "@pippit-bridge/sdk"]],
+    ],
+  },
 ]
 
 function getAt(value, path) {
@@ -76,6 +112,25 @@ for (const [relativePath, pattern, replacement] of textTargets) {
   }
   if (match === undefined) throw new Error(`Version marker missing in ${relativePath}`)
   await writeFile(filePath, contents.replace(pattern, expected))
+}
+
+for (const dependency of internalDependencyVersions) {
+  const dependencyVersion = JSON.parse(await readFile(resolve(root, dependency.source), "utf8")).version
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(dependencyVersion)) {
+    throw new Error(`A valid exact semver is required in ${dependency.source}.`)
+  }
+  for (const [relativePath, jsonPath] of dependency.targets) {
+    const filePath = resolve(root, relativePath)
+    const value = JSON.parse(await readFile(filePath, "utf8"))
+    const actual = getAt(value, jsonPath)
+    if (actual === dependencyVersion) continue
+    if (process.argv[2] !== "sync") {
+      drift.push(`${relativePath}:${jsonPath.join(".")}=${String(actual)} expected=${dependencyVersion}`)
+      continue
+    }
+    setAt(value, jsonPath, dependencyVersion)
+    await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`)
+  }
 }
 
 if (drift.length > 0) {

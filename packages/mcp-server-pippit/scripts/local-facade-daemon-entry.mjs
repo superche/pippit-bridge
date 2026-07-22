@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { dirname, resolve } from "node:path"
 
-import { buildApp } from "../../../apps/openrouter-facade/src/app.ts"
+import { buildApp } from "@pippit-bridge/openrouter-facade"
 import {
   PIPPIT_LOCAL_RUNTIME_SCHEMA_VERSION,
   PIPPIT_LOCAL_RUNTIME_VERSION,

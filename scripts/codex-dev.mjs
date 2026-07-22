@@ -28,6 +28,34 @@ async function atomicJson(path, value) {
   await rename(temporary, path)
 }
 
+async function withStatusLock(operation) {
+  const { acquirePrivateFileLock } = await import("../packages/core/dist/private-file/index.js")
+  const { devStatusLockPath } = await import("../packages/mcp-server-pippit/dist/dev-manifest.js")
+  const lock = await acquirePrivateFileLock(devStatusLockPath(statePath), {
+    instanceId: `codex-dev-controller-${process.pid}`,
+    retryAttempts: 200,
+    retryDelayMs: 10,
+  })
+  try {
+    return await operation()
+  } finally {
+    await lock.release()
+  }
+}
+
+async function mutateStatus(transform) {
+  return await withStatusLock(async () => {
+    const current = JSON.parse(await readFile(statePath, "utf8").catch(() => "{}"))
+    const next = transform(current)
+    await atomicJson(statePath, next)
+    return { current, next }
+  })
+}
+
+async function replaceStatus(value) {
+  await withStatusLock(async () => await atomicJson(statePath, value))
+}
+
 function exec(command, args) {
   return new Promise((resolveExec, reject) => {
     const child = spawn(command, args, { cwd: root, stdio: "inherit" })
@@ -70,6 +98,29 @@ async function hashTree(path) {
   return hash.digest("hex")
 }
 
+async function readArtifactIdentity(kind) {
+  return JSON.parse(await readFile(resolve(root, `packages/mcp-server-pippit/dist/meta/${kind}.json`), "utf8"))
+}
+
+async function verifyArtifactSources(identity) {
+  for (const input of identity.sourceGraph) {
+    const contents = await readFile(resolve(root, input.path))
+    const actual = createHash("sha256").update(contents).digest("hex")
+    if (actual !== input.bytesHash) throw new Error("DEV_CANDIDATE_SUPERSEDED source-changed-during-build")
+  }
+}
+
+function hashCanonical(value) {
+  const canonical = item => {
+    if (Array.isArray(item)) return item.map(canonical)
+    if (item && typeof item === "object") {
+      return Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, canonical(child)]))
+    }
+    return item
+  }
+  return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex")
+}
+
 async function snapshotFiles(targets) {
   const snapshot = new Map()
   const visit = async (path) => {
@@ -105,10 +156,13 @@ async function bootstrap() {
   if (typeof process.getuid === "function" && rootStats.uid !== process.getuid()) throw new Error("Dev root owner mismatch.")
   await exec("npm", ["run", "check:plugin-contract"])
   const contractHash = await hashTree(resolve(root, "packages/mcp-server-pippit/contracts"))
-  const sourceHash = await hashTree(resolve(root, "packages/mcp-server-pippit/src"))
+  const hostArtifact = await readArtifactIdentity("dev-host")
+  const daemonArtifact = await readArtifactIdentity("facade-daemon")
+  const workerArtifact = await readArtifactIdentity("worker-generation")
+  await Promise.all([hostArtifact, daemonArtifact, workerArtifact].map(verifyArtifactSources))
   const runtimeRoot = resolve(dataRoot, "runtime")
   await mkdir(runtimeRoot, { mode: 0o700, recursive: true })
-  const generationId = `bootstrap-${sourceHash.slice(0, 12)}`
+  const generationId = `bootstrap-${workerArtifact.artifactHash.slice(0, 12)}`
   const generationRoot = resolve(dataRoot, "generations", generationId)
   await mkdir(generationRoot, { recursive: true })
   await cp(resolve(root, "packages/mcp-server-pippit/dist"), resolve(generationRoot, "dist"), { force: true, recursive: true })
@@ -118,13 +172,41 @@ async function bootstrap() {
     entryPath: resolve(generationRoot, "dist/plugin-stdio.mjs"),
     env: { ...process.env, PIPPIT_BRIDGE_HOME: runtimeRoot },
     generationId,
-    implementationHash: sourceHash,
+    implementationHash: workerArtifact.artifactHash,
     migrationEpoch: 1,
     storageBackwardCompatible: true,
   })
+  const productionContractPath = resolve(dataRoot, "production-contract.json")
   const frozenContractPath = resolve(dataRoot, "frozen-contract.json")
-  await atomicJson(frozenContractPath, started.contract)
+  const { createEffectiveDevHostContract } = await import("../packages/mcp-server-pippit/dist/dev-gateway.js")
+  const effectiveContract = createEffectiveDevHostContract(started.contract, { enableErrorPreview: true })
+  await atomicJson(productionContractPath, started.contract)
+  await atomicJson(frozenContractPath, effectiveContract)
   await started.worker.close()
+  const { candidateSubjectHash, reviewDecisionHash } = await import("../packages/mcp-server-pippit/dist/dev-manifest.js")
+  const candidateManifest = {
+    buildRecipeHash: hashCanonical([hostArtifact.buildRecipeHash, daemonArtifact.buildRecipeHash, workerArtifact.buildRecipeHash]),
+    daemonArtifactHash: daemonArtifact.artifactHash,
+    hostContractHash: hashCanonical(effectiveContract),
+    migrationEpoch: 1,
+    sourceGraphHash: hashCanonical([hostArtifact.sourceGraphHash, daemonArtifact.sourceGraphHash, workerArtifact.sourceGraphHash]),
+    storageSchemaEpoch: 1,
+    testEvidenceHash: hashCanonical({ gate: "check:plugin-contract", phase: "bootstrap" }),
+    workerArtifactHash: workerArtifact.artifactHash,
+    workerContractHash: contractHash,
+  }
+  const review = {
+    classification: "hot-compatible",
+    migrationEpoch: 1,
+    storageBackwardCompatible: true,
+    subjectHash: "",
+  }
+  const subjectHash = candidateSubjectHash({
+    activationClass: "hot-compatible",
+    baseImplementationHash: workerArtifact.artifactHash,
+    candidateManifest,
+  })
+  review.subjectHash = subjectHash
   const bundle = resolve(dataRoot, "gateway-bundle")
   await cp(resolve(root, "packages/mcp-server-pippit"), bundle, { filter: source => !source.includes(`${sep}node_modules${sep}`), force: true, recursive: true })
   await atomicJson(resolve(bundle, ".mcp.json"), {
@@ -140,25 +222,32 @@ async function bootstrap() {
       source: { path: "./gateway-bundle", source: "local" },
     }],
   })
-  await atomicJson(statePath, {
-    activeGeneration: generationId,
+  await replaceStatus({
+    baseImplementationHash: workerArtifact.artifactHash,
+    candidateManifest,
     candidatePhase: "none",
-    generationRoot,
+    desiredGeneration: generationId,
+    desiredGenerationRoot: generationRoot,
     migrationEpoch: 1,
-    phase: "active",
-    sourceHash,
+    phase: "desired",
+    review,
+    reviewDecisionHash: reviewDecisionHash(review),
     storageBackwardCompatible: true,
+    subjectHash,
     updatedAt: new Date().toISOString(),
   })
   await atomicJson(pointerPath, {
     capability: randomBytes(32).toString("hex"),
     contractHash,
+    daemonArtifactHash: daemonArtifact.artifactHash,
     devIdentity: "pippit-video@pippit-bridge-dev",
     frozenContractPath,
     gatewayBundle: bundle,
+    hostArtifactHash: hostArtifact.artifactHash,
     marketplaceRoot: dataRoot,
     releaseIdentity: "pippit-video@pippit-bridge",
     repoRoot: root,
+    productionContractPath,
     runtimeRoot,
     statusPath: statePath,
     version: 1,
@@ -167,66 +256,122 @@ async function bootstrap() {
 }
 
 async function buildCandidate(changedFiles) {
-  const sourceHash = await hashTree(resolve(root, "packages/mcp-server-pippit/src"))
   const previous = JSON.parse(await readFile(statePath, "utf8").catch(() => "{}"))
+  const baseImplementationHash = previous.activeImplementationHash
+  if (typeof baseImplementationHash !== "string" || previous.phase !== "active") {
+    await mutateStatus(current => ({
+      ...current,
+      candidateError: "DEV_BASE_GENERATION_UNOBSERVED",
+      candidatePhase: "rejected",
+      updatedAt: new Date().toISOString(),
+    }))
+    return
+  }
   const candidateStartedAt = Date.now()
-  await atomicJson(statePath, {
-    ...previous,
+  await mutateStatus(current => ({
+    ...current,
     candidateChangedFiles: changedFiles.map(path => relative(root, path)).sort(),
     candidatePhase: "staging",
-    candidateSourceHash: sourceHash,
     candidateTestMode: process.env.PIPPIT_CODEX_DEV_FULL_TESTS === "1" ? "full" : "related+hot-core",
     updatedAt: new Date().toISOString(),
-  })
+  }))
   try {
-    await exec("npm", ["run", "build", "-w", "@pippit-bridge/mcp-server"])
+    await exec("npm", ["run", "build:libs"])
     const testMode = await testCandidate(changedFiles)
     await exec("npm", ["run", "check:plugin-contract"])
+    const hostArtifact = await readArtifactIdentity("dev-host")
+    const daemonArtifact = await readArtifactIdentity("facade-daemon")
+    const workerArtifact = await readArtifactIdentity("worker-generation")
+    await Promise.all([hostArtifact, daemonArtifact, workerArtifact].map(verifyArtifactSources))
+    const pointer = JSON.parse(await readFile(pointerPath, "utf8"))
+    const { assertHotArtifactBinding, assertActiveGenerationBase, candidateSubjectHash, reviewDecisionHash } = await import("../packages/mcp-server-pippit/dist/dev-manifest.js")
+    assertHotArtifactBinding(
+      { daemonArtifactHash: daemonArtifact.artifactHash, hostArtifactHash: hostArtifact.artifactHash },
+      { daemonArtifactHash: pointer.daemonArtifactHash, hostArtifactHash: pointer.hostArtifactHash },
+    )
+    const productionContract = JSON.parse(await readFile(pointer.productionContractPath, "utf8"))
+    const effectiveContract = JSON.parse(await readFile(pointer.frozenContractPath, "utf8"))
+    const candidateManifest = {
+      buildRecipeHash: hashCanonical([hostArtifact.buildRecipeHash, daemonArtifact.buildRecipeHash, workerArtifact.buildRecipeHash]),
+      daemonArtifactHash: daemonArtifact.artifactHash,
+      hostContractHash: hashCanonical(effectiveContract),
+      migrationEpoch: previous.migrationEpoch ?? 1,
+      sourceGraphHash: hashCanonical([hostArtifact.sourceGraphHash, daemonArtifact.sourceGraphHash, workerArtifact.sourceGraphHash]),
+      storageSchemaEpoch: 1,
+      testEvidenceHash: hashCanonical({ changedFiles: changedFiles.map(path => relative(root, path)).sort(), testMode }),
+      workerArtifactHash: workerArtifact.artifactHash,
+      workerContractHash: pointer.contractHash,
+    }
+    const subjectHash = candidateSubjectHash({
+      activationClass: "hot-compatible",
+      baseImplementationHash,
+      candidateManifest,
+    })
     const review = JSON.parse(await readFile(resolve(root, ".pippit-dev/semantic-review.json"), "utf8"))
-    if (review.sourceHash !== sourceHash || review.classification !== "hot-compatible") throw new Error("DEV_SEMANTIC_REVIEW_REQUIRED")
-    const generationId = `${Date.now()}-${sourceHash.slice(0, 12)}`
+    if (review.subjectHash !== subjectHash || review.classification !== "hot-compatible") throw new Error("DEV_SEMANTIC_REVIEW_REQUIRED")
+    const generationId = `${Date.now()}-${workerArtifact.artifactHash.slice(0, 12)}`
     const generationRoot = resolve(dataRoot, "generations", generationId)
     await mkdir(generationRoot, { recursive: true })
     await cp(resolve(root, "packages/mcp-server-pippit/dist"), resolve(generationRoot, "dist"), { recursive: true })
-    const pointer = JSON.parse(await readFile(pointerPath, "utf8"))
-    const frozenContract = JSON.parse(await readFile(pointer.frozenContractPath, "utf8"))
+    const stagedWorker = resolve(generationRoot, "dist/plugin-stdio.mjs")
+    const stagedDaemon = resolve(generationRoot, "dist/local-facade-daemon.mjs")
+    if (createHash("sha256").update(await readFile(stagedWorker)).digest("hex") !== workerArtifact.artifactHash
+      || createHash("sha256").update(await readFile(stagedDaemon)).digest("hex") !== daemonArtifact.artifactHash) {
+      throw new Error("DEV_CANDIDATE_SUPERSEDED staged-artifact-changed")
+    }
     const { ChildMcpWorkerGeneration } = await import("../packages/mcp-server-pippit/dist/dev-worker-process.js")
     const candidate = await ChildMcpWorkerGeneration.start({
       contractHash: pointer.contractHash,
       entryPath: resolve(generationRoot, "dist/plugin-stdio.mjs"),
       env: { ...process.env, PIPPIT_BRIDGE_HOME: resolve(dataRoot, "runtime") },
       generationId,
-      implementationHash: sourceHash,
+      implementationHash: workerArtifact.artifactHash,
       migrationEpoch: review.migrationEpoch ?? previous.migrationEpoch ?? 1,
       storageBackwardCompatible: review.storageBackwardCompatible === true,
     })
     try {
-      if (JSON.stringify(candidate.contract) !== JSON.stringify(frozenContract)) throw new Error("DEV_CONTRACT_MISMATCH requires-release-and-new-task")
+      if (JSON.stringify(candidate.contract) !== JSON.stringify(productionContract)) throw new Error("DEV_CONTRACT_MISMATCH requires-release-and-new-task")
     } finally {
       await candidate.worker.close()
     }
-    await atomicJson(statePath, {
-      activeGeneration: generationId,
+    await mutateStatus(current => {
+      assertActiveGenerationBase(current, baseImplementationHash)
+      return {
+      ...current,
+      baseImplementationHash,
+      candidateManifest,
       candidateDurationMs: Date.now() - candidateStartedAt,
       candidatePhase: "none",
       candidateTestMode: testMode,
-      generationRoot,
+      desiredGeneration: generationId,
+      desiredGenerationRoot: generationRoot,
       migrationEpoch: review.migrationEpoch ?? previous.migrationEpoch ?? 1,
-      phase: "active",
-      sourceHash,
+      phase: "desired",
+      review: {
+        classification: review.classification,
+        migrationEpoch: review.migrationEpoch ?? previous.migrationEpoch ?? 1,
+        storageBackwardCompatible: review.storageBackwardCompatible === true,
+        subjectHash,
+      },
+      reviewDecisionHash: reviewDecisionHash({
+        classification: review.classification,
+        migrationEpoch: review.migrationEpoch ?? previous.migrationEpoch ?? 1,
+        storageBackwardCompatible: review.storageBackwardCompatible === true,
+        subjectHash,
+      }),
       storageBackwardCompatible: review.storageBackwardCompatible === true,
+      subjectHash,
       updatedAt: new Date().toISOString(),
+      }
     })
   } catch (error) {
-    const current = JSON.parse(await readFile(statePath, "utf8").catch(() => JSON.stringify(previous)))
-    await atomicJson(statePath, {
+    await mutateStatus(current => ({
       ...current,
       candidateDurationMs: Date.now() - candidateStartedAt,
       candidateError: error instanceof Error ? error.message : String(error),
       candidatePhase: "rejected",
-      candidateSourceHash: sourceHash,
       updatedAt: new Date().toISOString(),
-    })
+    }))
   }
 }
 
@@ -254,12 +399,36 @@ async function run() {
   await mkdir(reviewRoot, { recursive: true })
   const packageRoot = resolve(root, "packages/mcp-server-pippit")
   const implementationTargets = [
+    resolve(root, "package.json"),
+    resolve(root, "package-lock.json"),
+    resolve(root, "tsconfig.base.json"),
+    resolve(root, "packages/contracts/src"),
+    resolve(root, "packages/contracts/package.json"),
+    resolve(root, "packages/contracts/tsconfig.json"),
+    resolve(root, "packages/contracts/tsconfig.build.json"),
+    resolve(root, "packages/core/src"),
+    resolve(root, "packages/core/package.json"),
+    resolve(root, "packages/core/tsconfig.json"),
+    resolve(root, "packages/core/tsconfig.build.json"),
+    resolve(root, "packages/sdk/src"),
+    resolve(root, "packages/sdk/package.json"),
+    resolve(root, "packages/sdk/tsconfig.json"),
+    resolve(root, "packages/sdk/tsconfig.build.json"),
+    resolve(root, "apps/openrouter-facade/src"),
+    resolve(root, "apps/openrouter-facade/package.json"),
+    resolve(root, "apps/openrouter-facade/tsconfig.json"),
+    resolve(root, "apps/openrouter-facade/tsconfig.build.json"),
     resolve(packageRoot, "src"),
+    resolve(packageRoot, "scripts/build-artifact.mjs"),
+    resolve(packageRoot, "scripts/build-widget.mjs"),
+    resolve(packageRoot, "scripts/local-facade-daemon-entry.mjs"),
     resolve(packageRoot, "skills"),
     resolve(packageRoot, "contracts"),
     resolve(packageRoot, "assets"),
     resolve(packageRoot, ".codex-plugin"),
     resolve(packageRoot, "package.json"),
+    resolve(packageRoot, "tsconfig.json"),
+    resolve(packageRoot, "tsconfig.build.json"),
     resolve(packageRoot, ".mcp.json"),
     resolve(packageRoot, "plugin-entry.mjs"),
     resolve(packageRoot, "plugin-entry.sh"),

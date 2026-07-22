@@ -1,7 +1,12 @@
-import { constants } from "node:fs"
-import { chmod, lstat, mkdir, open, rename, unlink } from "node:fs/promises"
-import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
-import { basename, dirname, resolve } from "node:path"
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto"
+import { dirname, resolve } from "node:path"
+import {
+  atomicReplacePrivateFile,
+  ensurePrivateDirectory,
+  PrivateFileError,
+  readPrivateFileIfExists,
+  withPrivateFileTransaction,
+} from "./private-file/index.js"
 
 export type IdempotencyPhase =
   | "preparing"
@@ -321,14 +326,6 @@ export class MemoryIdempotencyStore extends BaseIdempotencyStore {
   }
 }
 
-async function readHandle(handle: Awaited<ReturnType<typeof open>>, maxBytes: number): Promise<string> {
-  const metadata = await handle.stat()
-  if (!metadata.isFile() || metadata.size > maxBytes) throw new IdempotencyStoreError("INVALID_STATE", "The idempotency store is not a valid bounded file.")
-  const buffer = Buffer.alloc(metadata.size)
-  if (metadata.size > 0) await handle.read(buffer, 0, metadata.size, 0)
-  return buffer.toString("utf8")
-}
-
 export class FileIdempotencyStore extends BaseIdempotencyStore {
   readonly #filePath: string
   readonly #lockPath: string
@@ -345,75 +342,12 @@ export class FileIdempotencyStore extends BaseIdempotencyStore {
     this.#maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES
   }
 
-  async #removeStaleLock(): Promise<boolean> {
-    let handle: Awaited<ReturnType<typeof open>>
-    try {
-      handle = await open(this.#lockPath, constants.O_RDONLY | constants.O_NOFOLLOW)
-    } catch (error) {
-      if (isRecord(error) && error.code === "ENOENT") return true
-      throw new IdempotencyStoreError("INVALID_STATE", "The idempotency lock could not be inspected safely.", error)
-    }
-    let handleStats: Awaited<ReturnType<typeof handle.stat>>
-    let pid: number
-    try {
-      handleStats = await handle.stat()
-      if (!handleStats.isFile() || (handleStats.mode & 0o077) !== 0 || handleStats.size > 1_024) {
-        throw new IdempotencyStoreError("INVALID_STATE", "The idempotency lock is not a private bounded file.")
-      }
-      const parsed: unknown = JSON.parse(await handle.readFile("utf8"))
-      if (!isRecord(parsed) || !Number.isSafeInteger(parsed.pid) || Number(parsed.pid) < 1) {
-        throw new IdempotencyStoreError("INVALID_STATE", "The idempotency lock is invalid.")
-      }
-      pid = Number(parsed.pid)
-    } finally {
-      await handle.close()
-    }
-    if (isProcessAlive(pid)) return false
-    const pathStats = await lstat(this.#lockPath).catch((error: unknown) => {
-      if (isRecord(error) && error.code === "ENOENT") return undefined
-      throw error
-    })
-    if (pathStats === undefined) return true
-    if (pathStats.dev !== handleStats.dev || pathStats.ino !== handleStats.ino) return false
-    await unlink(this.#lockPath)
-    return true
-  }
-
-  async #acquireLock(): Promise<Awaited<ReturnType<typeof open>>> {
-    await mkdir(dirname(this.#filePath), { mode: 0o700, recursive: true })
-    await chmod(dirname(this.#filePath), 0o700)
-    for (let attempt = 0; attempt <= this.#lockRetryCount; attempt += 1) {
-      try {
-        const handle = await open(this.#lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
-        await handle.writeFile(JSON.stringify({ created_at: Date.now(), pid: process.pid }), "utf8")
-        await handle.sync()
-        return handle
-      } catch (error) {
-        if (!isRecord(error) || error.code !== "EEXIST") throw error
-        if (await this.#removeStaleLock()) {
-          attempt -= 1
-          continue
-        }
-        if (attempt === this.#lockRetryCount) throw new IdempotencyStoreError("LOCK_BUSY", "The idempotency store lock is busy.", error)
-        await new Promise((resolvePromise) => setTimeout(resolvePromise, this.#lockRetryMs))
-      }
-    }
-    throw new IdempotencyStoreError("LOCK_BUSY", "The idempotency store lock is busy.")
-  }
-
   async #readState(): Promise<IdempotencyRecord[]> {
-    let handle: Awaited<ReturnType<typeof open>>
+    let raw: Buffer | undefined
     try {
-      handle = await open(this.#filePath, constants.O_RDONLY | constants.O_NOFOLLOW)
-    } catch (error) {
-      if (isRecord(error) && error.code === "ENOENT") return []
-      throw error
-    }
-    try {
-      const metadata = await handle.stat()
-      if ((metadata.mode & 0o077) !== 0) throw new IdempotencyStoreError("INVALID_STATE", "The idempotency store must not be accessible by group or other users.")
-      const raw = await readHandle(handle, this.#maxFileBytes)
-      const parsed: unknown = JSON.parse(raw)
+      raw = await readPrivateFileIfExists(this.#filePath, this.#maxFileBytes)
+      if (raw === undefined) return []
+      const parsed: unknown = JSON.parse(raw.toString("utf8"))
       if (!isRecord(parsed) || parsed.format !== FORMAT || parsed.version !== VERSION || !Array.isArray(parsed.records) || typeof parsed.integrity !== "string") {
         throw new IdempotencyStoreError("INVALID_STATE", "The idempotency store has an unsupported format.")
       }
@@ -426,7 +360,7 @@ export class FileIdempotencyStore extends BaseIdempotencyStore {
       if (error instanceof IdempotencyStoreError) throw error
       throw new IdempotencyStoreError("INVALID_STATE", "The idempotency store could not be read safely.", error)
     } finally {
-      await handle.close()
+      raw?.fill(0)
     }
   }
 
@@ -435,35 +369,36 @@ export class FileIdempotencyStore extends BaseIdempotencyStore {
     const state: IdempotencyState = { ...payload, integrity: this.stateIntegrity(payload) }
     const serialized = `${canonicalJson(state)}\n`
     if (Buffer.byteLength(serialized) > this.#maxFileBytes) throw new IdempotencyStoreError("STORE_FULL", "The idempotency store reached its file-size limit.")
-    const temporaryPath = resolve(dirname(this.#filePath), `.${basename(this.#filePath)}.${randomBytes(12).toString("hex")}.tmp`)
-    const handle = await open(temporaryPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
+    const contents = Buffer.from(serialized, "utf8")
     try {
-      await handle.writeFile(serialized, "utf8")
-      await handle.sync()
-    } finally {
-      await handle.close()
-    }
-    try {
-      await rename(temporaryPath, this.#filePath)
-      await chmod(this.#filePath, 0o600)
-      const directory = await open(dirname(this.#filePath), constants.O_RDONLY)
-      try { await directory.sync() } finally { await directory.close() }
+      await atomicReplacePrivateFile(this.#filePath, contents)
     } catch (error) {
-      await unlink(temporaryPath).catch(() => {})
-      throw error
+      throw new IdempotencyStoreError("INVALID_STATE", "The idempotency store could not be replaced safely.", error)
+    } finally {
+      contents.fill(0)
     }
   }
 
   protected async transact<T>(operation: (records: IdempotencyRecord[]) => { changed: boolean; result: T }): Promise<T> {
-    const lock = await this.#acquireLock()
     try {
-      const records = await this.#readState()
-      const outcome = operation(records)
-      if (outcome.changed) await this.#writeState(records)
-      return cloneValue(outcome.result)
-    } finally {
-      await lock.close()
-      await unlink(this.#lockPath).catch(() => {})
+      await ensurePrivateDirectory(dirname(this.#filePath))
+      return await withPrivateFileTransaction(this.#lockPath, async () => {
+        const records = await this.#readState()
+        const outcome = operation(records)
+        if (outcome.changed) await this.#writeState(records)
+        return cloneValue(outcome.result)
+      }, {
+        retryAttempts: this.#lockRetryCount + 1,
+        retryDelayMs: this.#lockRetryMs,
+      })
+    } catch (error) {
+      if (error instanceof IdempotencyStoreError) throw error
+      const code = error instanceof PrivateFileError && error.code === "PRIVATE_FILE_BUSY"
+        ? "LOCK_BUSY"
+        : "INVALID_STATE"
+      throw new IdempotencyStoreError(code, code === "LOCK_BUSY"
+        ? "The idempotency store lock is busy."
+        : "The idempotency transaction failed safely.", error)
     }
   }
 }

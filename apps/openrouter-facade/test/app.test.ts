@@ -573,12 +573,14 @@ describe("OpenRouter video facade", () => {
 
     expect(response.statusCode).toBe(200)
     expect(response.json().paths["/api/v1/byok/active"]).toHaveProperty("put")
-    expect(response.json().paths["/api/v1/byok"].get.parameters).toContainEqual({
-      $ref: "#/components/parameters/OptionalFacadeApiKeyHash",
+    const callerScopeParameter = expect.objectContaining({
+      in: "query",
+      name: "facade_api_key_hash",
+      required: false,
+      schema: { pattern: "^[a-f0-9]{64}$", type: "string" },
     })
-    expect(response.json().paths["/api/v1/byok/{id}"].delete.parameters).toContainEqual({
-      $ref: "#/components/parameters/OptionalFacadeApiKeyHash",
-    })
+    expect(response.json().paths["/api/v1/byok"].get.parameters).toContainEqual(callerScopeParameter)
+    expect(response.json().paths["/api/v1/byok/{id}"].delete.parameters).toContainEqual(callerScopeParameter)
     expect(response.json().paths["/api/v1/videos/edits"]).toHaveProperty("post")
     expect(response.json().components.parameters).not.toHaveProperty("IdempotencyKey")
     expect(response.json().components.schemas.VideoEditRequest.required).toEqual([

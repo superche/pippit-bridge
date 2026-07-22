@@ -30,16 +30,109 @@ jobs:
           cache: npm
       - run: npm install --global npm@12.0.1
       - run: test "$(node -p "require('./packages/mcp-server-pippit/package.json').version")" = "${{ inputs.version }}"
+      - id: package-versions
+        name: Resolve release dependency versions
+        run: |
+          echo "contracts=$(node -p "require('./packages/contracts/package.json').version")" >> "$GITHUB_OUTPUT"
+          echo "core=$(node -p "require('./packages/core/package.json').version")" >> "$GITHUB_OUTPUT"
       - name: Refuse an occupied npm version
         run: if npm view "@pippit-bridge/mcp-server@${{ inputs.version }}" version --registry=https://registry.npmjs.org; then exit 1; fi
       - run: npm run check:public-lockfile
       - run: npm ci
-      - run: npm run check:plugin-version && npm run check:plugin-contract && npm run check && npm run check:release-artifact
-      - run: mkdir release && npm pack -w @pippit-bridge/mcp-server --pack-destination release
+      - run: npm run check:plugin-version && npm run check:plugin-contract && npm run check && npm run check:release-artifact && npm run check:dev-gateway
+      - name: Pack runtime dependencies before their consumer
+        run: |
+          mkdir release
+          npm pack -w @pippit-bridge/contracts --pack-destination release
+          npm pack -w @pippit-bridge/core --pack-destination release
+      - name: Publish or verify the exact contracts dependency
+        env:
+          CONTRACTS_VERSION: ${{ steps.package-versions.outputs.contracts }}
+        run: |
+          set -euo pipefail
+          local_tarball="release/pippit-bridge-contracts-${CONTRACTS_VERSION}.tgz"
+          package_spec="@pippit-bridge/contracts@${CONTRACTS_VERSION}"
+          if npm view "$package_spec" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+            mkdir registry-contracts local-contracts registry-contracts-extracted
+            npm pack "$package_spec" --pack-destination registry-contracts --registry=https://registry.npmjs.org
+            tar -xzf "$local_tarball" -C local-contracts
+            tar -xzf "registry-contracts/pippit-bridge-contracts-${CONTRACTS_VERSION}.tgz" -C registry-contracts-extracted
+            diff -ru local-contracts/package registry-contracts-extracted/package
+          else
+            npm publish "$local_tarball" --access public --provenance --registry=https://registry.npmjs.org
+          fi
+      - name: Re-download and install the contracts dependency
+        env:
+          CONTRACTS_VERSION: ${{ steps.package-versions.outputs.contracts }}
+        run: |
+          set -euo pipefail
+          package_spec="@pippit-bridge/contracts@${CONTRACTS_VERSION}"
+          for attempt in 1 2 3 4 5 6; do
+            if npm view "$package_spec" version dist.integrity dist.tarball --json --registry=https://registry.npmjs.org; then
+              break
+            fi
+            if [ "$attempt" = 6 ]; then exit 1; fi
+            sleep 10
+          done
+          mkdir registry-contracts-verify
+          npm pack "$package_spec" --pack-destination registry-contracts-verify --registry=https://registry.npmjs.org
+          mkdir local-contracts-verify registry-contracts-extracted-verify
+          tar -xzf "release/pippit-bridge-contracts-${CONTRACTS_VERSION}.tgz" -C local-contracts-verify
+          tar -xzf "registry-contracts-verify/pippit-bridge-contracts-${CONTRACTS_VERSION}.tgz" -C registry-contracts-extracted-verify
+          diff -ru local-contracts-verify/package registry-contracts-extracted-verify/package
+          npm install --prefix /tmp/pippit-contracts-registry-install --ignore-scripts "registry-contracts-verify/pippit-bridge-contracts-${CONTRACTS_VERSION}.tgz"
+          cd /tmp/pippit-contracts-registry-install
+          node --input-type=module --eval 'const contracts = await import("@pippit-bridge/contracts"); contracts.credentialIdContract.parse("123e4567-e89b-42d3-a456-426614174000")'
+      - name: Publish or verify the exact core dependency
+        env:
+          CORE_VERSION: ${{ steps.package-versions.outputs.core }}
+        run: |
+          set -euo pipefail
+          local_tarball="release/pippit-bridge-core-${CORE_VERSION}.tgz"
+          package_spec="@pippit-bridge/core@${CORE_VERSION}"
+          if npm view "$package_spec" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+            mkdir registry-core local-core registry-core-extracted
+            npm pack "$package_spec" --pack-destination registry-core --registry=https://registry.npmjs.org
+            tar -xzf "$local_tarball" -C local-core
+            tar -xzf "registry-core/pippit-bridge-core-${CORE_VERSION}.tgz" -C registry-core-extracted
+            diff -ru local-core/package registry-core-extracted/package
+          else
+            npm publish "$local_tarball" --access public --provenance --registry=https://registry.npmjs.org
+          fi
+      - name: Re-download and install the core dependency
+        env:
+          CORE_VERSION: ${{ steps.package-versions.outputs.core }}
+        run: |
+          set -euo pipefail
+          package_spec="@pippit-bridge/core@${CORE_VERSION}"
+          for attempt in 1 2 3 4 5 6; do
+            if npm view "$package_spec" version dist.integrity dist.tarball --json --registry=https://registry.npmjs.org; then
+              break
+            fi
+            if [ "$attempt" = 6 ]; then exit 1; fi
+            sleep 10
+          done
+          mkdir registry-core-verify
+          npm pack "$package_spec" --pack-destination registry-core-verify --registry=https://registry.npmjs.org
+          mkdir local-core-verify registry-core-extracted-verify
+          tar -xzf "release/pippit-bridge-core-${CORE_VERSION}.tgz" -C local-core-verify
+          tar -xzf "registry-core-verify/pippit-bridge-core-${CORE_VERSION}.tgz" -C registry-core-extracted-verify
+          diff -ru local-core-verify/package registry-core-extracted-verify/package
+          npm install --prefix /tmp/pippit-core-registry-install --ignore-scripts "registry-core-verify/pippit-bridge-core-${CORE_VERSION}.tgz"
+          cd /tmp/pippit-core-registry-install
+          node --input-type=module --eval 'const core = await import("@pippit-bridge/core"); if (typeof core.readPrivateFile !== "function") throw new Error("CORE_PRIVATE_FILE_EXPORT_MISSING")'
+      - run: npm pack -w @pippit-bridge/mcp-server --pack-destination release
       - run: npm publish "release/pippit-bridge-mcp-server-${{ inputs.version }}.tgz" --access public --provenance --registry=https://registry.npmjs.org
       - run: npm view "@pippit-bridge/mcp-server@${{ inputs.version }}" version dist.integrity dist.tarball --json --registry=https://registry.npmjs.org
       - run: mkdir registry-verify && npm pack "@pippit-bridge/mcp-server@${{ inputs.version }}" --pack-destination registry-verify --registry=https://registry.npmjs.org
+      - name: Compare the registry MCP artifact with the published candidate
+        run: |
+          mkdir local-mcp-verify registry-mcp-extracted-verify
+          tar -xzf "release/pippit-bridge-mcp-server-${{ inputs.version }}.tgz" -C local-mcp-verify
+          tar -xzf "registry-verify/pippit-bridge-mcp-server-${{ inputs.version }}.tgz" -C registry-mcp-extracted-verify
+          diff -ru local-mcp-verify/package registry-mcp-extracted-verify/package
       - run: npm install --prefix /tmp/pippit-registry-install --ignore-scripts "registry-verify/pippit-bridge-mcp-server-${{ inputs.version }}.tgz"
+      - run: node packages/mcp-server-pippit/scripts/smoke-installed-bin.mjs /tmp/pippit-registry-install/node_modules/.bin/pippit-mcp
       - if: ${{ inputs.activate_marketplace }}
         run: node scripts/activate-marketplace.mjs "${{ inputs.version }}"
       - if: ${{ inputs.activate_marketplace }}
