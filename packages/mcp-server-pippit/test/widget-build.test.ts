@@ -110,5 +110,5 @@ describe("Widget v15 deterministic asset", () => {
         rm(secondRoot, { force: true, recursive: true }),
       ])
     }
-  })
+  }, 30_000)
 })

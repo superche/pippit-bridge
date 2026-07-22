@@ -117,7 +117,7 @@ async function checkWorkspacePackageCycles(paths) {
 async function checkProductionModuleSizes(paths) {
   for (const file of (await Promise.all(paths.map(filesUnder))).flat()) {
     if (!file.endsWith(".ts") || file.endsWith(".d.ts")) continue
-    const repoPath = relative(root, file)
+    const repoPath = relative(root, file).replaceAll("\\", "/")
     if (/(?:^|\/)(?:generated|golden|fixtures|test|tests)(?:\/|$)/u.test(repoPath)) continue
     const source = await readFile(file, "utf8")
     const lines = source.trim().split("\n").length
