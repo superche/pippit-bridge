@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
 import { MemoryIdempotencyStore } from "@pippit-bridge/core"
+import { PippitFacadeError } from "../src/client.ts"
 import {
   createPippitToolRuntime,
   getPippitToolDefinition,
@@ -147,6 +148,47 @@ describe("Pippit tool runtime", () => {
     await createPippitToolRuntime(options).callTool("pippit_generate_video", request)
 
     expect(generateVideo).toHaveBeenCalledTimes(1)
+  })
+
+  it("records the sanitized upstream operation for a definitive failed submission", async () => {
+    const editVideo = vi.fn(async () => {
+      throw new PippitFacadeError({
+        code: "HTTP_ERROR",
+        message: "Pippit facade rejected edit_video_segment with HTTP 502.",
+        operation: "edit_video_segment",
+        status: 502,
+        upstreamCode: "VIDEO.MODEL-42",
+        upstreamLogId: "20260722163045A1B2C3D4E5F6071829AB",
+        upstreamOperation: "submit_run",
+      })
+    })
+    const idempotencyStore = new MemoryIdempotencyStore({ hmacKey: Buffer.alloc(32, 9) })
+    const options = {
+      client: backend({ editVideo }),
+      idempotencyScope: "facade-identity",
+      idempotencyStore,
+      outputRoot: "/tmp/pippit-test",
+    }
+    const request = {
+      annotations: [{
+        at_ms: 0,
+        instruction: "Change the style",
+        region: { height: 1, width: 1, x: 0, y: 0 },
+      }],
+      idempotency_key: "failed-edit",
+      model: "pippit/seedance-2.0",
+      segment: { end_ms: 5_000, start_ms: 0 },
+      source_job_id: "source-job",
+    }
+
+    await createPippitToolRuntime(options).callTool("pippit_edit_video_segment", request)
+    const replay = await createPippitToolRuntime(options).callTool("pippit_edit_video_segment", request)
+
+    expect(replay.content).toEqual([{
+      text: "The previous recovery request failed (http_error_submit_run_code_video_model_42_logid_20260722163045a1b2c3d4e5f6071829ab).",
+      type: "text",
+    }])
+    expect(editVideo).toHaveBeenCalledTimes(1)
   })
 
   it("rejects mixed frame and general references", async () => {

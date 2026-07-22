@@ -11,11 +11,30 @@ import type { QueriedJob } from "./job-query.js"
 
 const MAX_COMPILED_EDIT_PROMPT_LENGTH = 20_000
 
+function videoEditDurationSeconds(request: VideoEditRequest): number {
+  const durationMs = request.segment.end_ms - request.segment.start_ms
+  return Math.max(1, Math.round(durationMs / 1_000))
+}
+
 export function compileVideoEditPrompt(request: VideoEditRequest): string {
+  const annotationGuidance = request.annotations.flatMap((annotation, index) => {
+    const region = annotation.region
+    const target = region.x === 0 && region.y === 0 && region.width === 1 && region.height === 1
+      ? "the full intrinsic video frame"
+      : `the normalized intrinsic-frame rectangle x=${region.x}, y=${region.y}, width=${region.width}, height=${region.height}`
+    return [
+      `Annotation ${index + 1} at ${annotation.at_ms} ms targets ${target}.`,
+      `Required visible change: ${annotation.instruction}`,
+    ]
+  })
   const prompt = [
-    "Pippit reference-guided video regeneration instruction v1.",
+    "Pippit reference-guided video regeneration instruction v2.",
     "The complete source video is attached as the only video reference.",
-    "Treat segment and normalized region values as edit guidance only; preserve unrelated content outside them.",
+    `Apply the requested change decisively during ${request.segment.start_ms}-${request.segment.end_ms} ms; do not return a visually unchanged copy when a visible change is requested.`,
+    ...annotationGuidance,
+    ...(request.prompt === undefined ? [] : [`Overall guidance: ${request.prompt}`]),
+    "Treat the time segment and normalized intrinsic-frame rectangles as generation guidance, not hard masks; preserve unrelated content outside the guided area as much as possible.",
+    "Structured Bridge edit contract:",
     JSON.stringify({
       annotations: request.annotations,
       instruction: request.prompt ?? null,
@@ -78,7 +97,7 @@ export function createVideoEditService(input: {
     const source = await input.queryJob(caller, request.source_job_id, signal)
     const sourceUrl = editSourceVideoUrl(source.result, request.source_index)
     const body = videoGenerationRequestSchema.parse({
-      duration: Math.max(1, Math.ceil((request.segment.end_ms - request.segment.start_ms) / 1_000)),
+      duration: videoEditDurationSeconds(request),
       input_references: [{ type: "video_url", video_url: { url: sourceUrl } }],
       model: request.model,
       prompt: compileVideoEditPrompt(request),

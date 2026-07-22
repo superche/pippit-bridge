@@ -7,17 +7,21 @@ import type {
 } from "../openrouter/contracts.js"
 import type { PippitApi, PippitMediaReference } from "@pippit-bridge/sdk"
 import { ReferenceLoadError, type ReferenceKind, type ReferenceLoader } from "@pippit-bridge/core"
+import { inferVideoGeometry } from "./video-aspect-ratio.js"
 
 interface ReferenceToUpload {
   readonly kind: ReferenceKind
   readonly url: string
 }
 
+const SEEDANCE_VIDEO_SECURITY_CHECK_SCENE = "pippit_seedance2_0_user_input_video"
+
 export interface PreparedReferences {
-  readonly assetIds: readonly string[]
   readonly audios: readonly PippitMediaReference[]
   readonly generateType?: 1
   readonly images: readonly PippitMediaReference[]
+  readonly inferredAspectRatio?: string
+  readonly inferredResolution?: string
   readonly videos: readonly PippitMediaReference[]
 }
 
@@ -242,7 +246,11 @@ export async function prepareReferences(input: {
   readonly signal?: AbortSignal
 }): Promise<PreparedReferences> {
   const selected = selectedReferences(input.request)
-  const uploadCache = new Map<string, Promise<string>>()
+  const uploadCache = new Map<string, Promise<{
+    assetId: string
+    inferredAspectRatio?: string
+    inferredResolution?: string
+  }>>()
   const failureController = new AbortController()
   const signal = input.signal
     ? AbortSignal.any([input.signal, failureController.signal])
@@ -252,9 +260,13 @@ export async function prepareReferences(input: {
 
   const uploaded = await mapWithConcurrency(selected.references, input.concurrency, async (reference) => {
     const cacheKey = `${reference.kind}\u0000${reference.url}`
-    let assetId = uploadCache.get(cacheKey)
-    if (!assetId) {
-      const upload = async (): Promise<string> => {
+    let uploadedReference = uploadCache.get(cacheKey)
+    if (!uploadedReference) {
+      const upload = async (): Promise<{
+        assetId: string
+        inferredAspectRatio?: string
+        inferredResolution?: string
+      }> => {
         const file = await input.loader.load(reference.url, reference.kind, signal)
         totalBytes += file.bytes.byteLength
         totalBytesByKind[reference.kind] += file.bytes.byteLength
@@ -265,17 +277,26 @@ export async function prepareReferences(input: {
         if (kindLimit !== undefined && totalBytesByKind[reference.kind] > kindLimit) {
           throw new ReferenceLoadError("TOTAL_TOO_LARGE")
         }
+        const inferredGeometry = reference.kind === "video" ? inferVideoGeometry(file.bytes) : undefined
         const uploadedFile = await input.pippit.uploadFile({
           accessKey: input.accessKey,
           file,
           signal,
         })
-        return uploadedFile.assetId
+        return {
+          assetId: uploadedFile.assetId,
+          ...(inferredGeometry === undefined
+            ? {}
+            : {
+                inferredAspectRatio: inferredGeometry.aspectRatio,
+                inferredResolution: inferredGeometry.resolution,
+              }),
+        }
       }
-      assetId = input.gate ? input.gate.run(upload, signal) : upload()
-      uploadCache.set(cacheKey, assetId)
+      uploadedReference = input.gate ? input.gate.run(upload, signal) : upload()
+      uploadCache.set(cacheKey, uploadedReference)
     }
-    return { assetId: await assetId, kind: reference.kind }
+    return { ...(await uploadedReference), kind: reference.kind }
   }, () => failureController.abort())
 
   const images: PippitMediaReference[] = []
@@ -283,17 +304,25 @@ export async function prepareReferences(input: {
   const audios: PippitMediaReference[] = []
 
   for (const reference of uploaded) {
-    const item = { pippit_asset_id: reference.assetId }
+    const item: PippitMediaReference = {
+      pippit_asset_id: reference.assetId,
+      ...(reference.kind === "video"
+        ? { security_check_scene: [SEEDANCE_VIDEO_SECURITY_CHECK_SCENE] }
+        : {}),
+    }
     if (reference.kind === "image") images.push(item)
     if (reference.kind === "video") videos.push(item)
     if (reference.kind === "audio") audios.push(item)
   }
 
+  const inferredAspectRatio = uploaded.find(reference => reference.inferredAspectRatio !== undefined)?.inferredAspectRatio
+  const inferredResolution = uploaded.find(reference => reference.inferredResolution !== undefined)?.inferredResolution
   return {
-    assetIds: uploaded.map((reference) => reference.assetId),
     audios,
     ...(selected.generateType === undefined ? {} : { generateType: selected.generateType }),
     images,
+    ...(inferredAspectRatio === undefined ? {} : { inferredAspectRatio }),
+    ...(inferredResolution === undefined ? {} : { inferredResolution }),
     videos,
   }
 }

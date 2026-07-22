@@ -40,6 +40,10 @@ interface DedupeEntry {
   settled: boolean
 }
 
+function failureCodePart(value: string | number): string {
+  return String(value).toLowerCase().replace(/[^a-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "").slice(0, 64)
+}
+
 function createSubmissionCoordinator(
   options: PippitToolRuntimeOptions,
   dedupeLimit: number,
@@ -96,7 +100,21 @@ function createSubmissionCoordinator(
         const ambiguous = !(error instanceof PippitFacadeError) ||
           ["ABORTED", "INVALID_RESPONSE", "NETWORK_ERROR", "TIMEOUT"].includes(error.code)
         if (ambiguous) await options.idempotencyStore.markIndeterminate(begun.recordId)
-        else await options.idempotencyStore.markFailed(begun.recordId, error.code.toLowerCase())
+        else {
+          const errorCode = error.code.toLowerCase()
+          const operationFailureCode = error.upstreamOperation === undefined
+            ? errorCode
+            : `${errorCode}_${error.upstreamOperation}`
+          const upstreamCode = error.upstreamCode === undefined ? "" : failureCodePart(error.upstreamCode)
+          const failureCode = upstreamCode === ""
+            ? operationFailureCode
+            : `${operationFailureCode}_code_${upstreamCode}`
+          const upstreamLogId = error.upstreamLogId === undefined ? "" : failureCodePart(error.upstreamLogId)
+          await options.idempotencyStore.markFailed(
+            begun.recordId,
+            upstreamLogId === "" ? failureCode : `${failureCode}_logid_${upstreamLogId}`,
+          )
+        }
         throw error
       }
       try {

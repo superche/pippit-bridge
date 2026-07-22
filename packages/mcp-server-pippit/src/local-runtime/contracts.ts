@@ -1,6 +1,6 @@
 export const PIPPIT_LOCAL_RUNTIME_SCHEMA_VERSION = 1
 // Advance only when the bundled daemon changes; the package/plugin version may move independently.
-export const PIPPIT_LOCAL_RUNTIME_VERSION = "0.2.6"
+export const PIPPIT_LOCAL_RUNTIME_VERSION = "0.2.10"
 
 export interface LocalRuntimeSecrets {
   readonly bootstrap_proof_key_hex: string

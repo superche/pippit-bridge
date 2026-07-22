@@ -334,14 +334,14 @@
       gap: 0;
     }
     :root[data-widget-view="editor"] .editor {
-      gap: 16px;
+      gap: 0;
       padding: 0 16px 16px;
     }
     :root[data-widget-view="editor"] .viewer-card {
       margin-inline: -16px;
       border-block-start: 0;
       border-inline: 0;
-      border-radius: 0 0 18px 18px;
+      border-radius: 0;
     }
     .error-lockup {
       display: grid;
@@ -415,39 +415,72 @@
     .viewer-card .annotation-trigger:hover:not(:disabled) { background: rgb(29 29 31 / 92%); }
     .annotation-trigger svg { width: 20px; height: 20px; pointer-events: none; }
     .viewer-card .annotation-trigger.annotation-active { border-color: #ffd60a; background: #ffd60a; color: #1d1d1f; }
-    .annotation-popover {
-      position: absolute;
-      z-index: 4;
-      display: grid;
-      width: min(340px, calc(100% - 24px));
-      gap: 8px;
-      border: 1px solid #d2d2d7;
-      border-radius: 14px;
-      padding: 12px;
-      background: #ffffff;
-      color: #1d1d1f;
-    }
-    .annotation-popover textarea { min-height: 74px; padding: 10px 12px; }
-    .popover-actions { display: flex; justify-content: flex-end; gap: 8px; }
-    .popover-actions button { min-height: 36px; padding: 7px 14px; }
-    .viewer-card .annotation-popover .primary { border-color: #0066cc; background: #0066cc; color: #ffffff; }
-    .viewer-card .annotation-popover .primary:hover:not(:disabled) { background: #0071e3; }
     .viewer-message { margin: 0; padding: 10px 14px; color: #cccccc; font-size: 12px; }
-    .trim-panel {
-      display: grid;
-      gap: 12px;
-      border: 1px solid #e0e0e0;
-      border-radius: 18px;
-      padding: 17px;
+    .annotation-panel {
+      overflow: hidden;
+      border: 1px solid #d6d6db;
+      border-top: 0;
+      border-radius: 0 0 18px 18px;
       background: #ffffff;
     }
-    .trim-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-    .trim-header h2 { font-size: 17px; }
-    .trim-time { color: #6e6e73; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .annotation-panel summary {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      cursor: pointer;
+      list-style: none;
+    }
+    .annotation-panel summary::-webkit-details-marker { display: none; }
+    .annotation-summary-line { display: flex; align-items: baseline; min-width: 0; gap: 10px; }
+    .annotation-title { flex: 0 0 auto; font-size: 14px; font-weight: 700; }
+    .annotation-summary {
+      overflow: hidden;
+      color: #6e6e73;
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .annotation-chevron { width: 20px; height: 20px; color: #6e6e73; transition: transform 160ms ease; }
+    .annotation-panel[open] .annotation-chevron { transform: rotate(180deg); }
+    .annotation-composer {
+      display: grid;
+      grid-template-columns: minmax(0, .95fr) minmax(320px, 1.05fr);
+      gap: 16px;
+      padding: 0 16px 16px;
+    }
+    .time-editor, .intent-editor { min-width: 0; }
+    .range-impact {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin: 0;
+      border: 1px solid #ffe47a;
+      border-radius: 9px;
+      padding: 8px 10px;
+      background: #fff9db;
+      color: #594a00;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .range-impact-icon {
+      display: grid;
+      flex: 0 0 16px;
+      width: 16px;
+      height: 16px;
+      place-items: center;
+      border-radius: 50%;
+      background: #ffd60a;
+      color: #1d1d1f;
+      font-size: 10px;
+      font-weight: 800;
+    }
+    #selection-label { font-variant-numeric: tabular-nums; }
     .trim-timeline {
       position: relative;
-      height: 78px;
-      margin-inline: 22px;
+      height: 58px;
+      margin: 10px 22px 6px;
       border-radius: 8px;
       background: #272729;
       touch-action: none;
@@ -491,7 +524,7 @@
       top: -3px;
       width: 44px;
       min-width: 44px;
-      height: 84px;
+      height: 64px;
       min-height: 44px;
       border: 0;
       border-radius: 8px;
@@ -514,17 +547,30 @@
     .trim-handle::after {
       content: "";
       position: absolute;
-      top: 34px;
+      top: 24px;
       left: 20px;
       width: 4px;
       height: 16px;
       border-radius: 2px;
       background: #1d1d1f;
     }
-    .trim-help { margin: 0; color: #6e6e73; font-size: 12px; }
-    .annotation-list:empty { display: none; }
-    .edit-compose { display: grid; gap: 12px; }
-    .edit-compose textarea { min-height: 116px; }
+    .range-note { display: flex; justify-content: space-between; gap: 12px; margin: 0; color: #6e6e73; font-size: 11px; }
+    .range-note strong { color: #3a3a3c; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .intent-editor { display: flex; flex-direction: column; }
+    .intent-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
+    .intent-label label { color: #6e6e73; font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+    .area-status { color: #6e6e73; font-size: 11px; font-weight: 600; }
+    .area-status.is-selected { color: #267a34; }
+    .intent-editor textarea { flex: 1; min-height: 108px; resize: none; }
+    .annotation-footer {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      border-top: 1px solid #ececf0;
+      padding: 12px 16px;
+      background: #fbfbfd;
+    }
     .visually-hidden {
       position: absolute;
       width: 1px;
@@ -547,12 +593,15 @@
     :root[data-theme="dark"] .message,
     :root[data-theme="dark"] .hint,
     :root[data-theme="dark"] .range-field,
-    :root[data-theme="dark"] .trim-time,
-    :root[data-theme="dark"] .trim-help { color: #a1a1a6; }
+    :root[data-theme="dark"] .annotation-summary,
+    :root[data-theme="dark"] .annotation-chevron,
+    :root[data-theme="dark"] .range-note,
+    :root[data-theme="dark"] .intent-label label,
+    :root[data-theme="dark"] .area-status { color: #a1a1a6; }
     :root[data-theme="dark"] .status,
     :root[data-theme="dark"] .summary,
     :root[data-theme="dark"] .utility-card,
-    :root[data-theme="dark"] .trim-panel {
+    :root[data-theme="dark"] .annotation-panel {
       border-color: #3a3a3c;
       background: #2c2c2e;
     }
@@ -572,33 +621,34 @@
     }
     :root[data-theme="dark"] .timeline-shade { background: #3a3a3c; }
     :root[data-theme="dark"] .comment-input input,
-    :root[data-theme="dark"] textarea,
-    :root[data-theme="dark"] .annotation-popover {
+    :root[data-theme="dark"] textarea {
       border-color: #48484a;
       background: #2c2c2e;
       color: #f5f5f7;
     }
     :root[data-theme="dark"] input::placeholder,
     :root[data-theme="dark"] textarea::placeholder { color: #a1a1a6; }
-    :root[data-theme="dark"] .annotation-chip {
-      border-color: #48484a;
-      background: #3a3a3c;
-    }
+    :root[data-theme="dark"] .range-note strong { color: #d1d1d6; }
+    :root[data-theme="dark"] .range-impact { border-color: #8b7211; background: #332d11; color: #f2df83; }
+    :root[data-theme="dark"] .area-status.is-selected { color: #69c779; }
+    :root[data-theme="dark"] .annotation-footer { border-color: #3a3a3c; background: #242426; }
 
     @media (max-width: 640px) {
       .loading-view { min-height: 240px; }
       .terminal-view { min-height: 236px; padding: 24px 16px; }
       :root[data-widget-view="editor"] .editor { padding: 0 12px 12px; }
       :root[data-widget-view="editor"] .viewer-card { margin-inline: -12px; }
-      .trim-panel { padding: 14px; }
+      .annotation-composer { grid-template-columns: 1fr; }
       .trim-timeline { margin-inline: 18px; }
-      .trim-header { align-items: flex-start; flex-direction: column; gap: 2px; }
-      .annotation-popover { width: calc(100% - 24px); }
+      .annotation-summary-line { display: block; }
+      .annotation-summary { display: block; margin-top: 2px; }
     }
 
     @media (max-width: 480px) {
       :root[data-widget-view="editor"] .editor { padding: 0 8px 8px; }
       :root[data-widget-view="editor"] .viewer-card { margin-inline: -8px; }
+      .annotation-footer { display: grid; }
+      .annotation-footer .primary { width: 100%; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -639,59 +689,56 @@
             tabindex="-1"
             aria-disabled="true"
             aria-keyshortcuts="Enter Space ArrowUp ArrowDown ArrowLeft ArrowRight Escape"
-            aria-label="Video region selector. Press Enter or Space to create a centered region. Use arrow keys to move it, hold Shift with arrow keys to resize it, and press Escape to clear it."
+            aria-label="Video region selector. The full frame is used by default. Press Enter or Space to create a centered region. Use arrow keys to move it, hold Shift with arrow keys to resize it, and press Escape to return to the full frame."
           >
             <div id="roi-box" class="roi-box"></div>
           </div>
-          <button id="annotate" class="annotation-trigger" type="button" aria-pressed="false" aria-label="Annotate a video region" title="Annotate a video region">
+          <button id="annotate" class="annotation-trigger" type="button" aria-pressed="false" aria-label="Select a video area" title="Select a video area">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4M12 8v8M8 12h8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"/>
             </svg>
           </button>
-          <div id="annotation-popover" class="annotation-popover" hidden>
-            <label class="visually-hidden" for="comment">Regional edit instruction</label>
-            <textarea id="comment" maxlength="2000" aria-label="Regional edit instruction" placeholder="Describe what should change in this area…" disabled></textarea>
-            <div class="popover-actions">
-              <button id="cancel-comment" type="button">Cancel</button>
-              <button id="insert-comment" class="primary" type="button" disabled>Add annotation</button>
-            </div>
-          </div>
         </div>
         <p id="media-message" class="viewer-message" aria-live="polite" hidden></p>
       </div>
 
-      <section class="trim-panel" aria-labelledby="trim-heading">
-        <div class="trim-header">
-          <h2 id="trim-heading">Trim</h2>
-          <output id="selection-label" class="trim-time">00:00.0 — 00:00.0</output>
-        </div>
-        <div id="timeline" class="trim-timeline" aria-label="Video trim range">
-          <div id="filmstrip" class="filmstrip" aria-hidden="true">
-            <span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span>
-            <span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span>
+      <details id="annotation-panel" class="annotation-panel" open>
+        <summary>
+          <span class="annotation-summary-line">
+            <span class="annotation-title">Annotation</span>
+            <output id="annotation-summary" class="annotation-summary">Full frame · Describe the change</output>
+          </span>
+          <svg class="annotation-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7"/></svg>
+        </summary>
+        <div class="annotation-composer">
+          <div class="time-editor">
+            <p class="range-impact"><span class="range-impact-icon" aria-hidden="true">i</span><span>Your annotation will affect <strong><output id="selection-label">00:00.0 — 00:00.0</output></strong>.</span></p>
+            <div id="timeline" class="trim-timeline" aria-label="Annotation time range">
+              <div id="filmstrip" class="filmstrip" aria-hidden="true">
+                <span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span>
+                <span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span>
+              </div>
+              <div id="shade-left" class="trim-shade"></div>
+              <div id="selection" class="trim-selection"></div>
+              <div id="shade-right" class="trim-shade"></div>
+              <button id="segment-start" class="trim-handle" type="button" role="slider" aria-label="Annotation range start" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00.0"></button>
+              <button id="segment-end" class="trim-handle" type="button" role="slider" aria-label="Annotation range end" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00.0"></button>
+            </div>
+            <p class="range-note"><span>Drag to choose the time range, up to 30 seconds</span><strong id="range-duration">0.0 sec</strong></p>
           </div>
-          <div id="shade-left" class="trim-shade"></div>
-          <div id="selection" class="trim-selection"></div>
-          <div id="shade-right" class="trim-shade"></div>
-          <button id="segment-start" class="trim-handle" type="button" role="slider" aria-label="Trim start" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00.0"></button>
-          <button id="segment-end" class="trim-handle" type="button" role="slider" aria-label="Trim end" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00.0"></button>
+          <div class="intent-editor">
+            <div class="intent-label"><label for="instruction">Change instruction</label><span id="area-status" class="area-status">Full frame</span></div>
+            <textarea id="instruction" maxlength="2000" aria-label="Annotation change instruction" placeholder="Describe what should change in the video…"></textarea>
+          </div>
         </div>
-        <p class="trim-help">Drag the yellow handles to choose up to 30 seconds. Use arrow keys for precise trimming.</p>
-      </section>
-
-      <div id="annotations" class="annotation-list" aria-live="polite"></div>
-
-      <section class="edit-compose" aria-label="Regeneration direction">
-        <label class="visually-hidden" for="prompt">Regeneration direction</label>
-        <textarea id="prompt" maxlength="20000" aria-label="Regeneration direction" placeholder="Describe the regenerated video…"></textarea>
-        <div class="submit-row">
+        <footer class="annotation-footer">
           <div class="submit-copy">
-            <p class="hint">The current video is the reference. The selected range and region annotations are added to the generation prompt.</p>
+            <p class="hint">This annotation becomes the edit prompt. The current video remains the reference.</p>
             <p id="edit-error" class="error" role="alert" hidden></p>
           </div>
           <button id="submit-edit" class="primary" type="button" disabled>Regenerate video</button>
-        </div>
-      </section>
+        </footer>
+      </details>
     </section>
   </main>
   <script>
@@ -738,7 +785,10 @@
     }
     return {
         ...draft,
-        annotations: draft.annotations.filter(annotation => annotation.at_ms >= segmentStartMs && annotation.at_ms <= segmentEndMs),
+        annotations: draft.annotations.slice(0, 1).map(annotation => ({
+            ...annotation,
+            at_ms: Math.min(segmentEndMs, Math.max(segmentStartMs, annotation.at_ms)),
+        })),
         currentTimeMs: Math.min(Math.max(0, draft.currentTimeMs), durationMs),
         segmentEndMs: Math.round(segmentEndMs),
         segmentStartMs: Math.round(segmentStartMs),
@@ -747,8 +797,20 @@
       var mergeWidgetDraftForMediaRefresh = function mergeWidgetDraftForMediaRefresh(beforeLoad, liveDraft) {
     return { ...liveDraft, currentTimeMs: beforeLoad.currentTimeMs };
 };
+      var normalizeWidgetPoint = function normalizeWidgetPoint(clientX, clientY, rect) {
+    if (rect.width <= 0 || rect.height <= 0)
+        return undefined;
+    const localX = clientX - rect.stageLeft - rect.left;
+    const localY = clientY - rect.stageTop - rect.top;
+    if (localX < 0 || localY < 0 || localX > rect.width || localY > rect.height)
+        return undefined;
+    return {
+        x: Math.min(1, Math.max(0, localX / rect.width)),
+        y: Math.min(1, Math.max(0, localY / rect.height)),
+    };
+};
       var widgetDraftPayloadEquals = function widgetDraftPayloadEquals(left, right) {
-    if (left.prompt !== right.prompt ||
+    if (left.instruction !== right.instruction ||
         left.segmentStartMs !== right.segmentStartMs ||
         left.segmentEndMs !== right.segmentEndMs ||
         left.annotations.length !== right.annotations.length) {
@@ -881,20 +943,20 @@
     }
 };
       var buildWidgetEditPayload = function buildWidgetEditPayload(input) {
+    const instruction = input.annotation.instruction.trim();
+    if (instruction === "")
+        throw new Error("Annotation instruction is required.");
     const payload = {
-        annotations: input.annotations.map(annotation => ({
-            at_ms: annotation.at_ms,
-            instruction: annotation.instruction,
-            region: annotation.region,
-        })),
+        annotations: [{
+                at_ms: input.annotation.at_ms,
+                instruction,
+                region: input.annotation.region,
+            }],
         model: input.model,
         segment: { end_ms: input.segmentEndMs, start_ms: input.segmentStartMs },
         source_index: input.sourceIndex,
         source_job_id: input.sourceJobId,
     };
-    const prompt = input.prompt.trim();
-    if (prompt !== "")
-        payload.prompt = prompt;
     return payload;
 };
       var WidgetRequestManager = class WidgetRequestManager {
@@ -1060,7 +1122,7 @@
     return {
         destroyed: false,
         awaitingPreview: false,
-        draft: { annotationCount: 0, prompt: "", segmentEndMs: 0, segmentStartMs: 0 },
+        draft: { hasAnnotation: false, instruction: "", segmentEndMs: 0, segmentStartMs: 0 },
         generationEpoch: 0,
         previewGeneration: 0,
         previewLoading: false,
@@ -1238,7 +1300,6 @@
     return typeof block?.text === "string" ? block.text : undefined;
 };
 
-      var MAX_ANNOTATIONS = 20;
       var MAX_LOCAL_PREVIEW_BYTES = 256 * 1024 * 1024;
       var LOCAL_PREVIEW_CHUNK_BYTES = 1024 * 1024;
       var LOCAL_RESOURCE_REQUEST_TIMEOUT_MS = 5000;
@@ -1300,8 +1361,8 @@
       var pendingRegion;
       var dragStart;
       var annotationMode = false;
-      var isComposing = false;
       var submitting = false;
+      var editIdempotencyAttempt = 0;
       var editIdempotencyKey;
       var awaitingPreview = false;
       var pollTimer;
@@ -1377,12 +1438,10 @@
       var shadeRightElement = document.getElementById("shade-right");
       var selectionLabelElement = document.getElementById("selection-label");
       var annotateElement = document.getElementById("annotate");
-      var annotationPopoverElement = document.getElementById("annotation-popover");
-      var commentElement = document.getElementById("comment");
-      var cancelCommentElement = document.getElementById("cancel-comment");
-      var insertCommentElement = document.getElementById("insert-comment");
-      var annotationsElement = document.getElementById("annotations");
-      var promptElement = document.getElementById("prompt");
+      var annotationSummaryElement = document.getElementById("annotation-summary");
+      var areaStatusElement = document.getElementById("area-status");
+      var instructionElement = document.getElementById("instruction");
+      var rangeDurationElement = document.getElementById("range-duration");
       var submitEditElement = document.getElementById("submit-edit");
       var editErrorElement = document.getElementById("edit-error");
       var loaderDots = [];
@@ -1646,13 +1705,6 @@
         updateSubmitState();
       }
 
-      function formatTime(milliseconds) {
-        var seconds = Math.max(0, Math.floor(milliseconds / 1000));
-        var minutes = Math.floor(seconds / 60);
-        var remainder = seconds % 60;
-        return String(minutes).padStart(2, "0") + ":" + String(remainder).padStart(2, "0");
-      }
-
       function formatTrimTime(milliseconds) {
         var totalTenths = Math.max(0, Math.floor(milliseconds / 100));
         var minutes = Math.floor(totalTenths / 600);
@@ -1822,11 +1874,6 @@
         return Number(value.toFixed(6));
       }
 
-      function newAnnotationId() {
-        if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
-        return "annotation-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
-      }
-
       function fallbackPayloadDigest(input) {
         var seeds = [2166136261, 2246822507, 3266489909, 668265263];
         for (var index = 0; index < input.length; index += 1) {
@@ -1838,8 +1885,8 @@
         return seeds.map(function (value) { return value.toString(16).padStart(8, "0"); }).join("");
       }
 
-      async function stableEditIdempotencyKey(payload) {
-        var input = JSON.stringify(payload);
+      async function stableEditIdempotencyKey(payload, attempt) {
+        var input = JSON.stringify({ attempt: attempt, payload: payload });
         if (
           window.crypto &&
           window.crypto.subtle &&
@@ -1852,14 +1899,23 @@
             var hex = Array.from(digestBytes).map(function (value) {
               return value.toString(16).padStart(2, "0");
             }).join("");
-            return "widget-edit-v1-" + hex;
+            return "widget-edit-v2-" + hex;
           } catch (_error) {}
         }
-        return "widget-edit-v1-fallback-" + fallbackPayloadDigest(input);
+        return "widget-edit-v2-fallback-" + fallbackPayloadDigest(input);
+      }
+
+      function editFailureIsDefinitive(result) {
+        var message = toolErrorText(result);
+        return /^Pippit facade rejected edit_video_segment with HTTP [1-5][0-9][0-9]\.$/.test(message) ||
+          /^The previous recovery request failed \([a-z0-9_]+\)\.$/.test(message);
       }
 
       function markDraftChanged() {
-        if (!submitting) editIdempotencyKey = undefined;
+        if (!submitting) {
+          editIdempotencyAttempt = 0;
+          editIdempotencyKey = undefined;
+        }
         updateSubmitState();
       }
 
@@ -1871,16 +1927,15 @@
       function updateSubmitState() {
         dispatchWidgetEvent({
           draft: {
-            annotationCount: annotations.length,
-            prompt: promptElement.value,
+            hasAnnotation: instructionElement.value.trim() !== "",
+            instruction: instructionElement.value,
             segmentEndMs: segmentEndMs,
             segmentStartMs: segmentStartMs
           },
           type: "draft-changed"
         });
-        var hasInstruction = promptElement.value.trim() !== "" || annotations.length > 0;
-        submitEditElement.disabled = submitting || previewLoading || !sourceJobId || !activeModel || !hasInstruction || segmentEndMs <= segmentStartMs;
-        insertCommentElement.disabled = annotations.length >= MAX_ANNOTATIONS || !pendingRegion || commentElement.value.trim() === "";
+        var hasCompleteAnnotation = instructionElement.value.trim() !== "";
+        submitEditElement.disabled = submitting || previewLoading || !sourceJobId || !activeModel || !hasCompleteAnnotation || segmentEndMs <= segmentStartMs;
       }
 
       function updateTimeline() {
@@ -1900,12 +1955,16 @@
         endElement.setAttribute("aria-valuenow", String(segmentEndMs));
         endElement.setAttribute("aria-valuetext", formatTrimTime(segmentEndMs));
         selectionLabelElement.textContent = formatTrimTime(segmentStartMs) + " — " + formatTrimTime(segmentEndMs);
+        rangeDurationElement.textContent = ((segmentEndMs - segmentStartMs) / 1000).toFixed(1) + " sec";
+        renderAnnotations();
         updateSubmitState();
       }
 
       function keepAnnotationsInsideSegment() {
-        annotations = annotations.filter(function (annotation) {
-          return annotation.at_ms >= segmentStartMs && annotation.at_ms <= segmentEndMs;
+        annotations = annotations.slice(0, 1).map(function (annotation) {
+          return Object.assign({}, annotation, {
+            at_ms: clamp(annotation.at_ms, segmentStartMs, segmentEndMs)
+          });
         });
         renderAnnotations();
       }
@@ -1986,7 +2045,7 @@
         return {
           annotations: annotations.slice(),
           currentTimeMs: Number.isFinite(videoElement.currentTime) ? Math.round(videoElement.currentTime * 1000) : 0,
-          prompt: promptElement.value,
+          instruction: instructionElement.value,
           segmentEndMs: segmentEndMs,
           segmentStartMs: segmentStartMs
         };
@@ -1998,8 +2057,8 @@
         segmentEndMs = 0;
         syncDurationControls();
         annotations = [];
-        promptElement.value = "";
-        commentElement.value = "";
+        instructionElement.value = "";
+        editIdempotencyAttempt = 0;
         editIdempotencyKey = undefined;
         setAnnotationMode(false);
         renderAnnotations();
@@ -2013,7 +2072,8 @@
         segmentEndMs = Math.min(durationMs, MAX_SEGMENT_MS);
         syncDurationControls();
         annotations = [];
-        promptElement.value = "";
+        instructionElement.value = "";
+        editIdempotencyAttempt = 0;
         editIdempotencyKey = undefined;
         renderAnnotations();
         clearPendingRegion();
@@ -2025,12 +2085,15 @@
         var liveDraft = draftSnapshot();
         var mergedDraft = mergeWidgetDraftForMediaRefresh(beforeLoad, liveDraft);
         var restored = reconcileWidgetDraftForDuration(mergedDraft, nextDurationMs, MAX_SEGMENT_MS);
-        if (!widgetDraftPayloadEquals(mergedDraft, restored)) editIdempotencyKey = undefined;
+        if (!widgetDraftPayloadEquals(mergedDraft, restored)) {
+          editIdempotencyAttempt = 0;
+          editIdempotencyKey = undefined;
+        }
         durationMs = nextDurationMs;
         segmentStartMs = restored.segmentStartMs;
         segmentEndMs = restored.segmentEndMs;
         annotations = restored.annotations;
-        promptElement.value = restored.prompt;
+        instructionElement.value = restored.instruction;
         syncDurationControls();
         videoElement.currentTime = restored.currentTimeMs / 1000;
         renderAnnotations();
@@ -2134,10 +2197,7 @@
       function normalizedPoint(event) {
         var rect = videoContentRect();
         if (!rect) return undefined;
-        var localX = event.clientX - rect.stageLeft - rect.left;
-        var localY = event.clientY - rect.stageTop - rect.top;
-        if (localX < 0 || localY < 0 || localX > rect.width || localY > rect.height) return undefined;
-        return { x: clamp(localX / rect.width, 0, 1), y: clamp(localY / rect.height, 0, 1) };
+        return normalizeWidgetPoint(event.clientX, event.clientY, rect);
       }
 
       function showRegion(region) {
@@ -2153,37 +2213,33 @@
         roiBoxElement.style.height = region.height * rect.height + "px";
       }
 
-      function positionAnnotationPopover() {
-        var rect = videoContentRect();
-        if (!rect || !pendingRegion || annotationPopoverElement.hidden) return;
-        var stageRect = stageElement.getBoundingClientRect();
-        var width = Math.min(340, Math.max(220, stageRect.width - 24));
-        var left = rect.left + pendingRegion.x * rect.width;
-        left = clamp(left, 12, Math.max(12, stageRect.width - width - 12));
-        var below = rect.top + (pendingRegion.y + pendingRegion.height) * rect.height + 10;
-        var above = rect.top + pendingRegion.y * rect.height - 132;
-        var top = below + 122 <= stageRect.height ? below : Math.max(12, above);
-        annotationPopoverElement.style.left = left + "px";
-        annotationPopoverElement.style.top = top + "px";
-      }
-
-      function openAnnotationPopover() {
-        if (!pendingRegion) return;
-        commentElement.disabled = false;
-        annotationPopoverElement.hidden = false;
-        positionAnnotationPopover();
-        commentElement.focus({ preventScroll: true });
-        updateSubmitState();
-      }
-
       function clearPendingRegion() {
-        pendingRegion = undefined;
         dragStart = undefined;
-        roiBoxElement.style.display = "none";
-        annotationPopoverElement.hidden = true;
-        commentElement.value = "";
-        commentElement.disabled = true;
-        updateSubmitState();
+        pendingRegion = annotations[0] ? annotations[0].region : undefined;
+        showRegion(pendingRegion);
+      }
+
+      function clearAnnotationRegion() {
+        dragStart = undefined;
+        pendingRegion = undefined;
+        annotations = [];
+        showRegion(undefined);
+        renderAnnotations();
+        markDraftChanged();
+      }
+
+      function selectAnnotationRegion(region) {
+        var selected = annotations[0];
+        annotations = [{
+          at_ms: annotationAtCurrentTime(),
+          instruction: instructionElement.value,
+          region: region,
+          id: selected && selected.id
+        }];
+        pendingRegion = region;
+        showRegion(region);
+        renderAnnotations();
+        markDraftChanged();
       }
 
       function finishRegion(event) {
@@ -2203,8 +2259,8 @@
           width: roundedCoordinate(Math.min(pendingRegion.width, 1 - x)),
           height: roundedCoordinate(Math.min(pendingRegion.height, 1 - y))
         };
-        showRegion(pendingRegion);
-        openAnnotationPopover();
+        selectAnnotationRegion(pendingRegion);
+        setAnnotationMode(false);
       }
 
       function annotationAtCurrentTime() {
@@ -2212,69 +2268,42 @@
         return clamp(atMs, segmentStartMs, segmentEndMs);
       }
 
-      function insertAnnotation() {
-        var instruction = commentElement.value.trim();
-        if (!pendingRegion || instruction === "") return;
-        if (annotations.length >= MAX_ANNOTATIONS) {
-          setEditError("At most 20 region annotations can be added to one edit.");
-          return;
+      function renderAnnotations() {
+        var selected = annotations[0];
+        var instruction = instructionElement.value.trim();
+        var range = formatTrimTime(segmentStartMs) + "–" + formatTrimTime(segmentEndMs);
+        annotationSummaryElement.textContent = range + " · " + (selected ? "Selected frame area" : "Full frame") + " · " + (instruction || "Describe the change");
+        areaStatusElement.textContent = selected ? "● Selected frame area" : "Full frame";
+        areaStatusElement.classList.toggle("is-selected", Boolean(selected));
+        if (!annotationMode) {
+          pendingRegion = selected ? selected.region : undefined;
+          showRegion(pendingRegion);
         }
-        annotations.push({
-          id: newAnnotationId(),
-          at_ms: annotationAtCurrentTime(),
-          instruction: instruction,
-          region: pendingRegion
-        });
-        setEditError("");
-        setAnnotationMode(false);
-        renderAnnotations();
-        markDraftChanged();
+        updateSubmitState();
       }
 
-      function renderAnnotations() {
-        annotationsElement.replaceChildren();
-        annotations.forEach(function (annotation) {
-          var chip = document.createElement("span");
-          chip.className = "annotation-chip";
-          var timeButton = document.createElement("button");
-          timeButton.type = "button";
-          timeButton.textContent = formatTime(annotation.at_ms);
-          timeButton.title = "Seek to annotation";
-          timeButton.addEventListener("click", function () {
-            videoElement.currentTime = annotation.at_ms / 1000;
-            showRegion(annotation.region);
-          });
-          var text = document.createElement("span");
-          text.className = "chip-text";
-          text.textContent = annotation.instruction;
-          var remove = document.createElement("button");
-          remove.type = "button";
-          remove.textContent = "×";
-          remove.title = "Delete annotation";
-          remove.setAttribute("aria-label", "Delete annotation at " + formatTime(annotation.at_ms));
-          remove.addEventListener("click", function () {
-            annotations = annotations.filter(function (candidate) { return candidate.id !== annotation.id; });
-            renderAnnotations();
-            markDraftChanged();
-          });
-          chip.append(timeButton, text, remove);
-          annotationsElement.appendChild(chip);
-        });
-        updateSubmitState();
+      function updateAnnotationInstruction() {
+        if (annotations[0]) {
+          annotations = [Object.assign({}, annotations[0], { instruction: instructionElement.value })];
+        }
+        renderAnnotations();
+        markDraftChanged();
       }
 
       function setAnnotationMode(enabled) {
         annotationMode = enabled;
         annotateElement.classList.toggle("annotation-active", enabled);
         annotateElement.setAttribute("aria-pressed", String(enabled));
-        annotateElement.setAttribute("aria-label", enabled ? "Stop annotating" : "Annotate a video region");
-        annotateElement.title = enabled ? "Stop annotating" : "Annotate a video region";
+        annotateElement.setAttribute("aria-label", enabled ? "Stop selecting a video area" : "Select a video area");
+        annotateElement.title = enabled ? "Stop selecting a video area" : "Select a video area";
         stageElement.classList.toggle("annotating", enabled);
         roiLayerElement.classList.toggle("active", enabled);
         roiLayerElement.tabIndex = enabled ? 0 : -1;
         roiLayerElement.setAttribute("aria-disabled", String(!enabled));
         if (enabled) {
           videoElement.pause();
+          pendingRegion = annotations[0] ? annotations[0].region : undefined;
+          showRegion(pendingRegion);
           roiLayerElement.focus({ preventScroll: true });
         }
         if (!enabled) clearPendingRegion();
@@ -2513,6 +2542,14 @@
         }
         var bootstrapJob = findJob(result.structuredContent, 0);
         if (!bootstrapJob) return;
+        if (!rootJobId) rootJobId = bootstrapJob.id;
+        if (bootstrapJob.id === rootJobId) bootstrapResult = result;
+        if (
+          latestResolutionComplete &&
+          bootstrapJob.id === rootJobId &&
+          activeJobId &&
+          activeJobId !== rootJobId
+        ) return;
         var bootstrapModel = resolveWidgetModel(activeModel, bootstrapJob.model);
         dispatchWidgetEvent({
           activeJobId: bootstrapJob.id,
@@ -2521,8 +2558,6 @@
           status: bootstrapJob.status || "pending",
           type: "job-received"
         });
-        if (!rootJobId) rootJobId = bootstrapJob.id;
-        if (bootstrapJob.id === rootJobId) bootstrapResult = result;
         if (latestResolutionComplete) {
           if (restoringJobId) return;
           render(result);
@@ -2568,12 +2603,16 @@
 
       async function submitEdit() {
         if (submitting || !sourceJobId || !activeModel) return;
-        var prompt = promptElement.value.trim();
-        if (prompt === "" && annotations.length === 0) return;
+        var instruction = instructionElement.value.trim();
+        if (instruction === "") return;
+        var annotation = annotations[0] || {
+          at_ms: annotationAtCurrentTime(),
+          instruction: instruction,
+          region: { x: 0, y: 0, width: 1, height: 1 }
+        };
         var payload = buildWidgetEditPayload({
-          annotations: annotations,
+          annotation: Object.assign({}, annotation, { instruction: instruction }),
           model: activeModel,
-          prompt: prompt,
           segmentEndMs: segmentEndMs,
           segmentStartMs: segmentStartMs,
           sourceIndex: sourceIndex,
@@ -2588,12 +2627,16 @@
         showLoading("pending");
         statusElement.textContent = "Starting regenerated video…";
         try {
-          if (!editIdempotencyKey) editIdempotencyKey = await stableEditIdempotencyKey(payload);
+          if (!editIdempotencyKey) editIdempotencyKey = await stableEditIdempotencyKey(payload, editIdempotencyAttempt);
           var args = Object.assign({}, payload, { idempotency_key: editIdempotencyKey });
           var editRequest = widgetController.callTool("pippit_edit_video_segment", args);
           void requestDisplayMode("inline");
           var result = await editRequest;
           if (!result || result.isError) {
+            if (result && editFailureIsDefinitive(result)) {
+              editIdempotencyAttempt += 1;
+              editIdempotencyKey = undefined;
+            }
             showEditor();
             setEditError(toolErrorText(result));
             return;
@@ -2605,7 +2648,8 @@
             return;
           }
           annotations = [];
-          promptElement.value = "";
+          instructionElement.value = "";
+          editIdempotencyAttempt = 0;
           editIdempotencyKey = undefined;
           setAnnotationMode(false);
           renderAnnotations();
@@ -2781,32 +2825,17 @@
         if (!result.handled) return;
         event.preventDefault();
         if (!result.region) {
-          clearPendingRegion();
+          clearAnnotationRegion();
           return;
         }
         videoElement.pause();
         pendingRegion = result.region;
-        showRegion(pendingRegion);
-        openAnnotationPopover();
+        selectAnnotationRegion(pendingRegion);
       });
-      commentElement.addEventListener("compositionstart", function () { isComposing = true; });
-      commentElement.addEventListener("compositionend", function () { isComposing = false; updateSubmitState(); });
-      commentElement.addEventListener("input", updateSubmitState);
-      commentElement.addEventListener("keydown", function (event) {
-        if (event.key === "Enter" && !event.shiftKey && !isComposing) {
-          event.preventDefault();
-          insertAnnotation();
-        }
-      });
-      cancelCommentElement.addEventListener("click", function () { setAnnotationMode(false); });
-      insertCommentElement.addEventListener("click", insertAnnotation);
-      promptElement.addEventListener("input", markDraftChanged);
+      instructionElement.addEventListener("input", updateAnnotationInstruction);
       submitEditElement.addEventListener("click", function () { void submitEdit(); });
       window.addEventListener("resize", function () {
-        if (pendingRegion) {
-          showRegion(pendingRegion);
-          positionAnnotationPopover();
-        }
+        if (pendingRegion) showRegion(pendingRegion);
       });
       document.addEventListener("visibilitychange", function () {
         if (document.hidden) {

@@ -5,13 +5,6 @@ export const WIDGET_SCRIPT_VIEW = String.raw`        if (!retryLocalPreview()) {
         updateSubmitState();
       }
 
-      function formatTime(milliseconds) {
-        var seconds = Math.max(0, Math.floor(milliseconds / 1000));
-        var minutes = Math.floor(seconds / 60);
-        var remainder = seconds % 60;
-        return String(minutes).padStart(2, "0") + ":" + String(remainder).padStart(2, "0");
-      }
-
       function formatTrimTime(milliseconds) {
         var totalTenths = Math.max(0, Math.floor(milliseconds / 100));
         var minutes = Math.floor(totalTenths / 600);
@@ -181,11 +174,6 @@ export const WIDGET_SCRIPT_VIEW = String.raw`        if (!retryLocalPreview()) {
         return Number(value.toFixed(6));
       }
 
-      function newAnnotationId() {
-        if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
-        return "annotation-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
-      }
-
       function fallbackPayloadDigest(input) {
         var seeds = [2166136261, 2246822507, 3266489909, 668265263];
         for (var index = 0; index < input.length; index += 1) {
@@ -197,8 +185,8 @@ export const WIDGET_SCRIPT_VIEW = String.raw`        if (!retryLocalPreview()) {
         return seeds.map(function (value) { return value.toString(16).padStart(8, "0"); }).join("");
       }
 
-      async function stableEditIdempotencyKey(payload) {
-        var input = JSON.stringify(payload);
+      async function stableEditIdempotencyKey(payload, attempt) {
+        var input = JSON.stringify({ attempt: attempt, payload: payload });
         if (
           window.crypto &&
           window.crypto.subtle &&
@@ -211,14 +199,23 @@ export const WIDGET_SCRIPT_VIEW = String.raw`        if (!retryLocalPreview()) {
             var hex = Array.from(digestBytes).map(function (value) {
               return value.toString(16).padStart(2, "0");
             }).join("");
-            return "widget-edit-v1-" + hex;
+            return "widget-edit-v2-" + hex;
           } catch (_error) {}
         }
-        return "widget-edit-v1-fallback-" + fallbackPayloadDigest(input);
+        return "widget-edit-v2-fallback-" + fallbackPayloadDigest(input);
+      }
+
+      function editFailureIsDefinitive(result) {
+        var message = toolErrorText(result);
+        return /^Pippit facade rejected edit_video_segment with HTTP [1-5][0-9][0-9]\.$/.test(message) ||
+          /^The previous recovery request failed \([a-z0-9_]+\)\.$/.test(message);
       }
 
       function markDraftChanged() {
-        if (!submitting) editIdempotencyKey = undefined;
+        if (!submitting) {
+          editIdempotencyAttempt = 0;
+          editIdempotencyKey = undefined;
+        }
         updateSubmitState();
       }
 
@@ -230,16 +227,15 @@ export const WIDGET_SCRIPT_VIEW = String.raw`        if (!retryLocalPreview()) {
       function updateSubmitState() {
         dispatchWidgetEvent({
           draft: {
-            annotationCount: annotations.length,
-            prompt: promptElement.value,
+            hasAnnotation: instructionElement.value.trim() !== "",
+            instruction: instructionElement.value,
             segmentEndMs: segmentEndMs,
             segmentStartMs: segmentStartMs
           },
           type: "draft-changed"
         });
-        var hasInstruction = promptElement.value.trim() !== "" || annotations.length > 0;
-        submitEditElement.disabled = submitting || previewLoading || !sourceJobId || !activeModel || !hasInstruction || segmentEndMs <= segmentStartMs;
-        insertCommentElement.disabled = annotations.length >= MAX_ANNOTATIONS || !pendingRegion || commentElement.value.trim() === "";
+        var hasCompleteAnnotation = instructionElement.value.trim() !== "";
+        submitEditElement.disabled = submitting || previewLoading || !sourceJobId || !activeModel || !hasCompleteAnnotation || segmentEndMs <= segmentStartMs;
       }
 
       function updateTimeline() {
@@ -259,12 +255,16 @@ export const WIDGET_SCRIPT_VIEW = String.raw`        if (!retryLocalPreview()) {
         endElement.setAttribute("aria-valuenow", String(segmentEndMs));
         endElement.setAttribute("aria-valuetext", formatTrimTime(segmentEndMs));
         selectionLabelElement.textContent = formatTrimTime(segmentStartMs) + " — " + formatTrimTime(segmentEndMs);
+        rangeDurationElement.textContent = ((segmentEndMs - segmentStartMs) / 1000).toFixed(1) + " sec";
+        renderAnnotations();
         updateSubmitState();
       }
 
       function keepAnnotationsInsideSegment() {
-        annotations = annotations.filter(function (annotation) {
-          return annotation.at_ms >= segmentStartMs && annotation.at_ms <= segmentEndMs;
+        annotations = annotations.slice(0, 1).map(function (annotation) {
+          return Object.assign({}, annotation, {
+            at_ms: clamp(annotation.at_ms, segmentStartMs, segmentEndMs)
+          });
         });
         renderAnnotations();
       }
@@ -345,7 +345,7 @@ export const WIDGET_SCRIPT_VIEW = String.raw`        if (!retryLocalPreview()) {
         return {
           annotations: annotations.slice(),
           currentTimeMs: Number.isFinite(videoElement.currentTime) ? Math.round(videoElement.currentTime * 1000) : 0,
-          prompt: promptElement.value,
+          instruction: instructionElement.value,
           segmentEndMs: segmentEndMs,
           segmentStartMs: segmentStartMs
         };
@@ -357,8 +357,8 @@ export const WIDGET_SCRIPT_VIEW = String.raw`        if (!retryLocalPreview()) {
         segmentEndMs = 0;
         syncDurationControls();
         annotations = [];
-        promptElement.value = "";
-        commentElement.value = "";
+        instructionElement.value = "";
+        editIdempotencyAttempt = 0;
         editIdempotencyKey = undefined;
         setAnnotationMode(false);
         renderAnnotations();
@@ -372,7 +372,8 @@ export const WIDGET_SCRIPT_VIEW = String.raw`        if (!retryLocalPreview()) {
         segmentEndMs = Math.min(durationMs, MAX_SEGMENT_MS);
         syncDurationControls();
         annotations = [];
-        promptElement.value = "";
+        instructionElement.value = "";
+        editIdempotencyAttempt = 0;
         editIdempotencyKey = undefined;
         renderAnnotations();
         clearPendingRegion();
@@ -384,12 +385,15 @@ export const WIDGET_SCRIPT_VIEW = String.raw`        if (!retryLocalPreview()) {
         var liveDraft = draftSnapshot();
         var mergedDraft = mergeWidgetDraftForMediaRefresh(beforeLoad, liveDraft);
         var restored = reconcileWidgetDraftForDuration(mergedDraft, nextDurationMs, MAX_SEGMENT_MS);
-        if (!widgetDraftPayloadEquals(mergedDraft, restored)) editIdempotencyKey = undefined;
+        if (!widgetDraftPayloadEquals(mergedDraft, restored)) {
+          editIdempotencyAttempt = 0;
+          editIdempotencyKey = undefined;
+        }
         durationMs = nextDurationMs;
         segmentStartMs = restored.segmentStartMs;
         segmentEndMs = restored.segmentEndMs;
         annotations = restored.annotations;
-        promptElement.value = restored.prompt;
+        instructionElement.value = restored.instruction;
         syncDurationControls();
         videoElement.currentTime = restored.currentTimeMs / 1000;
         renderAnnotations();

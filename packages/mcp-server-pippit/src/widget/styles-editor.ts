@@ -38,14 +38,14 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
       gap: 0;
     }
     :root[data-widget-view="editor"] .editor {
-      gap: 16px;
+      gap: 0;
       padding: 0 16px 16px;
     }
     :root[data-widget-view="editor"] .viewer-card {
       margin-inline: -16px;
       border-block-start: 0;
       border-inline: 0;
-      border-radius: 0 0 18px 18px;
+      border-radius: 0;
     }
     .error-lockup {
       display: grid;
@@ -119,39 +119,72 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
     .viewer-card .annotation-trigger:hover:not(:disabled) { background: rgb(29 29 31 / 92%); }
     .annotation-trigger svg { width: 20px; height: 20px; pointer-events: none; }
     .viewer-card .annotation-trigger.annotation-active { border-color: #ffd60a; background: #ffd60a; color: #1d1d1f; }
-    .annotation-popover {
-      position: absolute;
-      z-index: 4;
-      display: grid;
-      width: min(340px, calc(100% - 24px));
-      gap: 8px;
-      border: 1px solid #d2d2d7;
-      border-radius: 14px;
-      padding: 12px;
-      background: #ffffff;
-      color: #1d1d1f;
-    }
-    .annotation-popover textarea { min-height: 74px; padding: 10px 12px; }
-    .popover-actions { display: flex; justify-content: flex-end; gap: 8px; }
-    .popover-actions button { min-height: 36px; padding: 7px 14px; }
-    .viewer-card .annotation-popover .primary { border-color: #0066cc; background: #0066cc; color: #ffffff; }
-    .viewer-card .annotation-popover .primary:hover:not(:disabled) { background: #0071e3; }
     .viewer-message { margin: 0; padding: 10px 14px; color: #cccccc; font-size: 12px; }
-    .trim-panel {
-      display: grid;
-      gap: 12px;
-      border: 1px solid #e0e0e0;
-      border-radius: 18px;
-      padding: 17px;
+    .annotation-panel {
+      overflow: hidden;
+      border: 1px solid #d6d6db;
+      border-top: 0;
+      border-radius: 0 0 18px 18px;
       background: #ffffff;
     }
-    .trim-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-    .trim-header h2 { font-size: 17px; }
-    .trim-time { color: #6e6e73; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .annotation-panel summary {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      cursor: pointer;
+      list-style: none;
+    }
+    .annotation-panel summary::-webkit-details-marker { display: none; }
+    .annotation-summary-line { display: flex; align-items: baseline; min-width: 0; gap: 10px; }
+    .annotation-title { flex: 0 0 auto; font-size: 14px; font-weight: 700; }
+    .annotation-summary {
+      overflow: hidden;
+      color: #6e6e73;
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .annotation-chevron { width: 20px; height: 20px; color: #6e6e73; transition: transform 160ms ease; }
+    .annotation-panel[open] .annotation-chevron { transform: rotate(180deg); }
+    .annotation-composer {
+      display: grid;
+      grid-template-columns: minmax(0, .95fr) minmax(320px, 1.05fr);
+      gap: 16px;
+      padding: 0 16px 16px;
+    }
+    .time-editor, .intent-editor { min-width: 0; }
+    .range-impact {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin: 0;
+      border: 1px solid #ffe47a;
+      border-radius: 9px;
+      padding: 8px 10px;
+      background: #fff9db;
+      color: #594a00;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .range-impact-icon {
+      display: grid;
+      flex: 0 0 16px;
+      width: 16px;
+      height: 16px;
+      place-items: center;
+      border-radius: 50%;
+      background: #ffd60a;
+      color: #1d1d1f;
+      font-size: 10px;
+      font-weight: 800;
+    }
+    #selection-label { font-variant-numeric: tabular-nums; }
     .trim-timeline {
       position: relative;
-      height: 78px;
-      margin-inline: 22px;
+      height: 58px;
+      margin: 10px 22px 6px;
       border-radius: 8px;
       background: #272729;
       touch-action: none;
@@ -195,7 +228,7 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
       top: -3px;
       width: 44px;
       min-width: 44px;
-      height: 84px;
+      height: 64px;
       min-height: 44px;
       border: 0;
       border-radius: 8px;
@@ -218,17 +251,30 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
     .trim-handle::after {
       content: "";
       position: absolute;
-      top: 34px;
+      top: 24px;
       left: 20px;
       width: 4px;
       height: 16px;
       border-radius: 2px;
       background: #1d1d1f;
     }
-    .trim-help { margin: 0; color: #6e6e73; font-size: 12px; }
-    .annotation-list:empty { display: none; }
-    .edit-compose { display: grid; gap: 12px; }
-    .edit-compose textarea { min-height: 116px; }
+    .range-note { display: flex; justify-content: space-between; gap: 12px; margin: 0; color: #6e6e73; font-size: 11px; }
+    .range-note strong { color: #3a3a3c; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .intent-editor { display: flex; flex-direction: column; }
+    .intent-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
+    .intent-label label { color: #6e6e73; font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+    .area-status { color: #6e6e73; font-size: 11px; font-weight: 600; }
+    .area-status.is-selected { color: #267a34; }
+    .intent-editor textarea { flex: 1; min-height: 108px; resize: none; }
+    .annotation-footer {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      border-top: 1px solid #ececf0;
+      padding: 12px 16px;
+      background: #fbfbfd;
+    }
     .visually-hidden {
       position: absolute;
       width: 1px;
@@ -251,12 +297,15 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
     :root[data-theme="dark"] .message,
     :root[data-theme="dark"] .hint,
     :root[data-theme="dark"] .range-field,
-    :root[data-theme="dark"] .trim-time,
-    :root[data-theme="dark"] .trim-help { color: #a1a1a6; }
+    :root[data-theme="dark"] .annotation-summary,
+    :root[data-theme="dark"] .annotation-chevron,
+    :root[data-theme="dark"] .range-note,
+    :root[data-theme="dark"] .intent-label label,
+    :root[data-theme="dark"] .area-status { color: #a1a1a6; }
     :root[data-theme="dark"] .status,
     :root[data-theme="dark"] .summary,
     :root[data-theme="dark"] .utility-card,
-    :root[data-theme="dark"] .trim-panel {
+    :root[data-theme="dark"] .annotation-panel {
       border-color: #3a3a3c;
       background: #2c2c2e;
     }
@@ -276,33 +325,34 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
     }
     :root[data-theme="dark"] .timeline-shade { background: #3a3a3c; }
     :root[data-theme="dark"] .comment-input input,
-    :root[data-theme="dark"] textarea,
-    :root[data-theme="dark"] .annotation-popover {
+    :root[data-theme="dark"] textarea {
       border-color: #48484a;
       background: #2c2c2e;
       color: #f5f5f7;
     }
     :root[data-theme="dark"] input::placeholder,
     :root[data-theme="dark"] textarea::placeholder { color: #a1a1a6; }
-    :root[data-theme="dark"] .annotation-chip {
-      border-color: #48484a;
-      background: #3a3a3c;
-    }
+    :root[data-theme="dark"] .range-note strong { color: #d1d1d6; }
+    :root[data-theme="dark"] .range-impact { border-color: #8b7211; background: #332d11; color: #f2df83; }
+    :root[data-theme="dark"] .area-status.is-selected { color: #69c779; }
+    :root[data-theme="dark"] .annotation-footer { border-color: #3a3a3c; background: #242426; }
 
     @media (max-width: 640px) {
       .loading-view { min-height: 240px; }
       .terminal-view { min-height: 236px; padding: 24px 16px; }
       :root[data-widget-view="editor"] .editor { padding: 0 12px 12px; }
       :root[data-widget-view="editor"] .viewer-card { margin-inline: -12px; }
-      .trim-panel { padding: 14px; }
+      .annotation-composer { grid-template-columns: 1fr; }
       .trim-timeline { margin-inline: 18px; }
-      .trim-header { align-items: flex-start; flex-direction: column; gap: 2px; }
-      .annotation-popover { width: calc(100% - 24px); }
+      .annotation-summary-line { display: block; }
+      .annotation-summary { display: block; margin-top: 2px; }
     }
 
     @media (max-width: 480px) {
       :root[data-widget-view="editor"] .editor { padding: 0 8px 8px; }
       :root[data-widget-view="editor"] .viewer-card { margin-inline: -8px; }
+      .annotation-footer { display: grid; }
+      .annotation-footer .primary { width: 100%; }
     }
 
     @media (prefers-reduced-motion: reduce) {

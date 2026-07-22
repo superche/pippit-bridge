@@ -7,6 +7,7 @@ import { ApiError, toOpenRouterError } from "../errors.js"
 function normalizePippitError(error: PippitApiError): ApiError {
   const metadata = {
     operation: error.operation,
+    ...(error.logId === undefined ? {} : { upstream_log_id: error.logId }),
     ...(error.upstreamCode === undefined ? {} : { upstream_code: error.upstreamCode }),
   }
   if (error.code === "HTTP_ERROR" && (error.status === 401 || error.status === 403)) {

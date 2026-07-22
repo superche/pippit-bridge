@@ -30,58 +30,55 @@ export const WIDGET_MARKUP = String.raw`<body>
             tabindex="-1"
             aria-disabled="true"
             aria-keyshortcuts="Enter Space ArrowUp ArrowDown ArrowLeft ArrowRight Escape"
-            aria-label="Video region selector. Press Enter or Space to create a centered region. Use arrow keys to move it, hold Shift with arrow keys to resize it, and press Escape to clear it."
+            aria-label="Video region selector. The full frame is used by default. Press Enter or Space to create a centered region. Use arrow keys to move it, hold Shift with arrow keys to resize it, and press Escape to return to the full frame."
           >
             <div id="roi-box" class="roi-box"></div>
           </div>
-          <button id="annotate" class="annotation-trigger" type="button" aria-pressed="false" aria-label="Annotate a video region" title="Annotate a video region">
+          <button id="annotate" class="annotation-trigger" type="button" aria-pressed="false" aria-label="Select a video area" title="Select a video area">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4M12 8v8M8 12h8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"/>
             </svg>
           </button>
-          <div id="annotation-popover" class="annotation-popover" hidden>
-            <label class="visually-hidden" for="comment">Regional edit instruction</label>
-            <textarea id="comment" maxlength="2000" aria-label="Regional edit instruction" placeholder="Describe what should change in this area…" disabled></textarea>
-            <div class="popover-actions">
-              <button id="cancel-comment" type="button">Cancel</button>
-              <button id="insert-comment" class="primary" type="button" disabled>Add annotation</button>
-            </div>
-          </div>
         </div>
         <p id="media-message" class="viewer-message" aria-live="polite" hidden></p>
       </div>
 
-      <section class="trim-panel" aria-labelledby="trim-heading">
-        <div class="trim-header">
-          <h2 id="trim-heading">Trim</h2>
-          <output id="selection-label" class="trim-time">00:00.0 — 00:00.0</output>
-        </div>
-        <div id="timeline" class="trim-timeline" aria-label="Video trim range">
-          <div id="filmstrip" class="filmstrip" aria-hidden="true">
-            <span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span>
-            <span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span>
+      <details id="annotation-panel" class="annotation-panel" open>
+        <summary>
+          <span class="annotation-summary-line">
+            <span class="annotation-title">Annotation</span>
+            <output id="annotation-summary" class="annotation-summary">Full frame · Describe the change</output>
+          </span>
+          <svg class="annotation-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7"/></svg>
+        </summary>
+        <div class="annotation-composer">
+          <div class="time-editor">
+            <p class="range-impact"><span class="range-impact-icon" aria-hidden="true">i</span><span>Your annotation will affect <strong><output id="selection-label">00:00.0 — 00:00.0</output></strong>.</span></p>
+            <div id="timeline" class="trim-timeline" aria-label="Annotation time range">
+              <div id="filmstrip" class="filmstrip" aria-hidden="true">
+                <span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span>
+                <span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span>
+              </div>
+              <div id="shade-left" class="trim-shade"></div>
+              <div id="selection" class="trim-selection"></div>
+              <div id="shade-right" class="trim-shade"></div>
+              <button id="segment-start" class="trim-handle" type="button" role="slider" aria-label="Annotation range start" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00.0"></button>
+              <button id="segment-end" class="trim-handle" type="button" role="slider" aria-label="Annotation range end" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00.0"></button>
+            </div>
+            <p class="range-note"><span>Drag to choose the time range, up to 30 seconds</span><strong id="range-duration">0.0 sec</strong></p>
           </div>
-          <div id="shade-left" class="trim-shade"></div>
-          <div id="selection" class="trim-selection"></div>
-          <div id="shade-right" class="trim-shade"></div>
-          <button id="segment-start" class="trim-handle" type="button" role="slider" aria-label="Trim start" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00.0"></button>
-          <button id="segment-end" class="trim-handle" type="button" role="slider" aria-label="Trim end" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00.0"></button>
+          <div class="intent-editor">
+            <div class="intent-label"><label for="instruction">Change instruction</label><span id="area-status" class="area-status">Full frame</span></div>
+            <textarea id="instruction" maxlength="2000" aria-label="Annotation change instruction" placeholder="Describe what should change in the video…"></textarea>
+          </div>
         </div>
-        <p class="trim-help">Drag the yellow handles to choose up to 30 seconds. Use arrow keys for precise trimming.</p>
-      </section>
-
-      <div id="annotations" class="annotation-list" aria-live="polite"></div>
-
-      <section class="edit-compose" aria-label="Regeneration direction">
-        <label class="visually-hidden" for="prompt">Regeneration direction</label>
-        <textarea id="prompt" maxlength="20000" aria-label="Regeneration direction" placeholder="Describe the regenerated video…"></textarea>
-        <div class="submit-row">
+        <footer class="annotation-footer">
           <div class="submit-copy">
-            <p class="hint">The current video is the reference. The selected range and region annotations are added to the generation prompt.</p>
+            <p class="hint">This annotation becomes the edit prompt. The current video remains the reference.</p>
             <p id="edit-error" class="error" role="alert" hidden></p>
           </div>
           <button id="submit-edit" class="primary" type="button" disabled>Regenerate video</button>
-        </div>
-      </section>
+        </footer>
+      </details>
     </section>
   </main>`

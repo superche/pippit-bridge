@@ -40,6 +40,7 @@ export function readEnvelopeData(
   value: unknown,
   operation: PippitOperation,
   accessKey: string,
+  logId?: string,
 ): Record<string, unknown> {
   if (!isRecord(value)) throw invalidResponse(operation)
   const ret = value.ret
@@ -48,6 +49,7 @@ export function readEnvelopeData(
     const upstreamCode = sanitizeUpstreamCode(ret, accessKey)
     throw new PippitApiError({
       code: "UPSTREAM_ERROR",
+      ...(logId === undefined ? {} : { logId }),
       operation,
       ...(upstreamCode === undefined ? {} : { upstreamCode }),
     })

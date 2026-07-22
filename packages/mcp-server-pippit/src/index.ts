@@ -119,6 +119,7 @@ export {
   adjustWidgetRegionFromKey,
   classifyPreviewUpdate,
   mergeWidgetDraftForMediaRefresh,
+  normalizeWidgetPoint,
   reconcileWidgetDraftForDuration,
   resolveWidgetModel,
   resolveWidgetTheme,
@@ -129,6 +130,7 @@ export {
   type WidgetDraftState,
   type WidgetRegion,
   type WidgetTheme,
+  type WidgetVideoContentRect,
 } from "./widget.ts"
 export {
   PIPPIT_RESOLVE_LATEST_VIDEO_TOOL_NAME,

@@ -111,7 +111,7 @@ describe("Widget v15 state machine", () => {
       type: "job-received",
     }).state
     state = reduceWidgetState(state, {
-      draft: { annotationCount: 1, prompt: "change", segmentEndMs: 2_000, segmentStartMs: 1_000 },
+      draft: { hasAnnotation: true, instruction: "change", segmentEndMs: 2_000, segmentStartMs: 1_000 },
       type: "draft-changed",
     }).state
     state = reduceWidgetState(state, { identity: "preview-1", type: "begin-preview" }).state
@@ -123,7 +123,7 @@ describe("Widget v15 state machine", () => {
       activeModel: "pippit/seedance",
       awaitingPreview: true,
       displayMode: "fullscreen",
-      draft: { annotationCount: 1, prompt: "change", segmentEndMs: 2_000, segmentStartMs: 1_000 },
+      draft: { hasAnnotation: true, instruction: "change", segmentEndMs: 2_000, segmentStartMs: 1_000 },
       pollInFlightEpoch: state.generationEpoch,
       previewIdentity: "preview-1",
       previewLoading: true,
@@ -238,16 +238,15 @@ describe("Widget v15 state machine", () => {
     expect(loader.hasObjectUrl()).toBe(false)
   })
 
-  it("builds a trimmed edit payload without leaking annotation UI ids", () => {
+  it("builds one annotation payload without leaking UI ids or an overall prompt", () => {
     expect(buildWidgetEditPayload({
-      annotations: [{
+      annotation: {
         at_ms: 1000,
         id: "ui-only",
-        instruction: "replace logo",
+        instruction: "  replace logo  ",
         region: { height: 0.4, width: 0.3, x: 0.1, y: 0.2 },
-      }],
+      },
       model: "pippit/seedance",
-      prompt: "  brighter sky  ",
       segmentEndMs: 5000,
       segmentStartMs: 1000,
       sourceIndex: 2,
@@ -259,11 +258,22 @@ describe("Widget v15 state machine", () => {
         region: { height: 0.4, width: 0.3, x: 0.1, y: 0.2 },
       }],
       model: "pippit/seedance",
-      prompt: "brighter sky",
       segment: { end_ms: 5000, start_ms: 1000 },
       source_index: 2,
       source_job_id: "job-source",
     })
+    expect(() => buildWidgetEditPayload({
+      annotation: {
+        at_ms: 1000,
+        instruction: "   ",
+        region: { height: 0.4, width: 0.3, x: 0.1, y: 0.2 },
+      },
+      model: "pippit/seedance",
+      segmentEndMs: 5000,
+      segmentStartMs: 1000,
+      sourceIndex: 2,
+      sourceJobId: "job-source",
+    })).toThrow("Annotation instruction is required")
   })
 
   it("times out standard and legacy bridge calls and cancels both during teardown", async () => {

@@ -16,28 +16,74 @@ import { normalizePippitFacadeBaseUrl, PIPPIT_DEFAULT_FACADE_TIMEOUT_MS } from "
 
 export const MAX_IMAGE_JSON_RESPONSE_BYTES = 420 * 1024 * 1024
 const MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024
+const PIPPIT_UPSTREAM_OPERATIONS = new Set([
+  "client",
+  "query_generate_video_result",
+  "submit_run",
+  "upload_file",
+] as const)
+
+type PippitUpstreamOperation = "client" | "query_generate_video_result" | "submit_run" | "upload_file"
 
 export class PippitFacadeError extends Error {
   readonly code: PippitFacadeErrorCode
   readonly operation: PippitFacadeOperation
   readonly status?: number
+  readonly upstreamCode?: string | number
+  readonly upstreamLogId?: string
+  readonly upstreamOperation?: PippitUpstreamOperation
 
   constructor(input: {
     readonly code: PippitFacadeErrorCode
     readonly message: string
     readonly operation: PippitFacadeOperation
     readonly status?: number
+    readonly upstreamCode?: string | number
+    readonly upstreamLogId?: string
+    readonly upstreamOperation?: PippitUpstreamOperation
   }) {
     super(input.message)
     this.name = "PippitFacadeError"
     this.code = input.code
     this.operation = input.operation
     if (input.status !== undefined) this.status = input.status
+    if (input.upstreamCode !== undefined) this.upstreamCode = input.upstreamCode
+    if (input.upstreamLogId !== undefined) this.upstreamLogId = input.upstreamLogId
+    if (input.upstreamOperation !== undefined) this.upstreamOperation = input.upstreamOperation
   }
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function facadeUpstreamMetadata(value: unknown): {
+  readonly upstreamCode?: string | number
+  readonly upstreamLogId?: string
+  readonly upstreamOperation?: PippitUpstreamOperation
+} {
+  if (!isRecord(value) || !isRecord(value.error) || !isRecord(value.error.metadata)) return {}
+  const metadata = value.error.metadata
+  const operation = metadata.operation
+  const upstreamOperation = typeof operation === "string"
+    && PIPPIT_UPSTREAM_OPERATIONS.has(operation as PippitUpstreamOperation)
+    ? operation as PippitUpstreamOperation
+    : undefined
+  const code = metadata.upstream_code
+  const upstreamCode = typeof code === "number" && Number.isSafeInteger(code)
+    ? code
+    : typeof code === "string" && /^[A-Za-z0-9_.:-]{1,64}$/u.test(code)
+      ? code
+      : undefined
+  const logId = metadata.upstream_log_id
+  const upstreamLogId = typeof logId === "string" && /^[A-Za-z0-9_-]{8,128}$/u.test(logId)
+    ? logId
+    : undefined
+  return {
+    ...(upstreamCode === undefined ? {} : { upstreamCode }),
+    ...(upstreamLogId === undefined ? {} : { upstreamLogId }),
+    ...(upstreamOperation === undefined ? {} : { upstreamOperation }),
+  }
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -397,12 +443,18 @@ export async function requestWithBearer(input: {
     throw new PippitFacadeError({ code, message, operation: input.operation })
   }
   if (!response.ok) {
-    try { await response.body?.cancel() } catch { /* The generic HTTP error is still safe. */ }
+    let upstreamMetadata: ReturnType<typeof facadeUpstreamMetadata> = {}
+    try {
+      upstreamMetadata = facadeUpstreamMetadata(await readJson(response, input.operation))
+    } catch {
+      try { await response.body?.cancel() } catch { /* The generic HTTP error is still safe. */ }
+    }
     throw new PippitFacadeError({
       code: "HTTP_ERROR",
       message: `Pippit facade rejected ${input.operation} with HTTP ${response.status}.`,
       operation: input.operation,
       status: response.status,
+      ...upstreamMetadata,
     })
   }
   return response

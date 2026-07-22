@@ -314,6 +314,40 @@ describe('PippitClient', () => {
     expect(JSON.stringify(networkError)).not.toContain(accessKey);
   });
 
+  it('retains only a safe Pippit log id on upstream errors', async () => {
+    const safeLogId = '20260722163045A1B2C3D4E5F6071829AB'
+    const safeClient = new PippitClient({
+      fetchImpl: async () => new Response(JSON.stringify({ ret: 2, data: {} }), {
+        headers: { 'content-type': 'application/json', 'x-tt-logid': safeLogId },
+        status: 200,
+      }),
+    })
+    await expect(safeClient.queryVideoResult({
+      accessKey: 'ak-test',
+      runId: 'run-1',
+      threadId: 'thread-1',
+    })).rejects.toMatchObject({
+      code: 'UPSTREAM_ERROR',
+      logId: safeLogId,
+      operation: 'query_generate_video_result',
+      upstreamCode: 2,
+    })
+
+    const unsafeClient = new PippitClient({
+      fetchImpl: async () => new Response(JSON.stringify({ ret: 2, data: {} }), {
+        headers: { 'content-type': 'application/json', 'x-tt-logid': 'unsafe log id' },
+        status: 200,
+      }),
+    })
+    const error = await unsafeClient.queryVideoResult({
+      accessKey: 'ak-test',
+      runId: 'run-1',
+      threadId: 'thread-1',
+    }).catch((caught: unknown) => caught)
+    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', upstreamCode: 2 })
+    expect((error as PippitApiError).logId).toBeUndefined()
+  })
+
   it('times out even when an injected fetch implementation ignores abort', async () => {
     vi.useFakeTimers();
     try {

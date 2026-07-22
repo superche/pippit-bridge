@@ -45,6 +45,14 @@ export const WIDGET_SCRIPT_CONTROLLER = String.raw`          resolveLatestBootst
         }
         var bootstrapJob = findJob(result.structuredContent, 0);
         if (!bootstrapJob) return;
+        if (!rootJobId) rootJobId = bootstrapJob.id;
+        if (bootstrapJob.id === rootJobId) bootstrapResult = result;
+        if (
+          latestResolutionComplete &&
+          bootstrapJob.id === rootJobId &&
+          activeJobId &&
+          activeJobId !== rootJobId
+        ) return;
         var bootstrapModel = resolveWidgetModel(activeModel, bootstrapJob.model);
         dispatchWidgetEvent({
           activeJobId: bootstrapJob.id,
@@ -53,8 +61,6 @@ export const WIDGET_SCRIPT_CONTROLLER = String.raw`          resolveLatestBootst
           status: bootstrapJob.status || "pending",
           type: "job-received"
         });
-        if (!rootJobId) rootJobId = bootstrapJob.id;
-        if (bootstrapJob.id === rootJobId) bootstrapResult = result;
         if (latestResolutionComplete) {
           if (restoringJobId) return;
           render(result);
@@ -100,12 +106,16 @@ export const WIDGET_SCRIPT_CONTROLLER = String.raw`          resolveLatestBootst
 
       async function submitEdit() {
         if (submitting || !sourceJobId || !activeModel) return;
-        var prompt = promptElement.value.trim();
-        if (prompt === "" && annotations.length === 0) return;
+        var instruction = instructionElement.value.trim();
+        if (instruction === "") return;
+        var annotation = annotations[0] || {
+          at_ms: annotationAtCurrentTime(),
+          instruction: instruction,
+          region: { x: 0, y: 0, width: 1, height: 1 }
+        };
         var payload = buildWidgetEditPayload({
-          annotations: annotations,
+          annotation: Object.assign({}, annotation, { instruction: instruction }),
           model: activeModel,
-          prompt: prompt,
           segmentEndMs: segmentEndMs,
           segmentStartMs: segmentStartMs,
           sourceIndex: sourceIndex,
@@ -120,12 +130,16 @@ export const WIDGET_SCRIPT_CONTROLLER = String.raw`          resolveLatestBootst
         showLoading("pending");
         statusElement.textContent = "Starting regenerated video…";
         try {
-          if (!editIdempotencyKey) editIdempotencyKey = await stableEditIdempotencyKey(payload);
+          if (!editIdempotencyKey) editIdempotencyKey = await stableEditIdempotencyKey(payload, editIdempotencyAttempt);
           var args = Object.assign({}, payload, { idempotency_key: editIdempotencyKey });
           var editRequest = widgetController.callTool("pippit_edit_video_segment", args);
           void requestDisplayMode("inline");
           var result = await editRequest;
           if (!result || result.isError) {
+            if (result && editFailureIsDefinitive(result)) {
+              editIdempotencyAttempt += 1;
+              editIdempotencyKey = undefined;
+            }
             showEditor();
             setEditError(toolErrorText(result));
             return;
@@ -137,7 +151,8 @@ export const WIDGET_SCRIPT_CONTROLLER = String.raw`          resolveLatestBootst
             return;
           }
           annotations = [];
-          promptElement.value = "";
+          instructionElement.value = "";
+          editIdempotencyAttempt = 0;
           editIdempotencyKey = undefined;
           setAnnotationMode(false);
           renderAnnotations();
@@ -313,32 +328,17 @@ export const WIDGET_SCRIPT_CONTROLLER = String.raw`          resolveLatestBootst
         if (!result.handled) return;
         event.preventDefault();
         if (!result.region) {
-          clearPendingRegion();
+          clearAnnotationRegion();
           return;
         }
         videoElement.pause();
         pendingRegion = result.region;
-        showRegion(pendingRegion);
-        openAnnotationPopover();
+        selectAnnotationRegion(pendingRegion);
       });
-      commentElement.addEventListener("compositionstart", function () { isComposing = true; });
-      commentElement.addEventListener("compositionend", function () { isComposing = false; updateSubmitState(); });
-      commentElement.addEventListener("input", updateSubmitState);
-      commentElement.addEventListener("keydown", function (event) {
-        if (event.key === "Enter" && !event.shiftKey && !isComposing) {
-          event.preventDefault();
-          insertAnnotation();
-        }
-      });
-      cancelCommentElement.addEventListener("click", function () { setAnnotationMode(false); });
-      insertCommentElement.addEventListener("click", insertAnnotation);
-      promptElement.addEventListener("input", markDraftChanged);
+      instructionElement.addEventListener("input", updateAnnotationInstruction);
       submitEditElement.addEventListener("click", function () { void submitEdit(); });
       window.addEventListener("resize", function () {
-        if (pendingRegion) {
-          showRegion(pendingRegion);
-          positionAnnotationPopover();
-        }
+        if (pendingRegion) showRegion(pendingRegion);
       });
       document.addEventListener("visibilitychange", function () {
         if (document.hidden) {
