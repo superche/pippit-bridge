@@ -53,6 +53,16 @@ describe("Pippit widget protocol", () => {
     expect(definitions.find((definition) => definition.name === "pippit_download_video")?._meta).toBeUndefined()
   })
 
+  it("styles video loading and results for dark hosts with a flush, square top edge", () => {
+    expect(PIPPIT_WIDGET_HTML).toContain(':root[data-theme="dark"] .loading-status')
+    expect(PIPPIT_WIDGET_HTML).toContain(':root[data-theme="dark"] .trim-panel')
+    expect(PIPPIT_WIDGET_HTML).toContain(':root[data-theme="dark"] textarea')
+    expect(PIPPIT_WIDGET_HTML).toContain(':root[data-widget-view="editor"] body { padding: 0; }')
+    expect(PIPPIT_WIDGET_HTML).toContain('padding: 0 16px 16px;')
+    expect(PIPPIT_WIDGET_HTML).toContain('border-radius: 0 0 18px 18px;')
+    expect(PIPPIT_WIDGET_HTML).toContain('.video-stage { border-radius: 0; }')
+  })
+
   it("projects Codex images to persistent local resource identities without exposing local paths", async () => {
     const encodedImage = "a".repeat(1_900_000)
     const prepareImage = vi.fn(async () => ({

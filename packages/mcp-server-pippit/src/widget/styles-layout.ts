@@ -18,6 +18,15 @@ export const WIDGET_STYLES_LAYOUT = String.raw`  <style>
       line-height: 1.47;
       -webkit-font-smoothing: antialiased;
     }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      background: #1d1d1f;
+      color: #f5f5f7;
+    }
+    :root[data-theme="dark"] body {
+      background: #1d1d1f;
+      color: #f5f5f7;
+    }
     button, input, textarea { font: inherit; }
     button {
       min-width: 44px;
@@ -275,6 +284,8 @@ export const WIDGET_STYLES_LAYOUT = String.raw`  <style>
       opacity: .08;
       transition: opacity 40ms linear;
     }
+    :root[data-theme="dark"] .loading-status { color: #a1a1a6; }
+    :root[data-theme="dark"] .infinity-loader { color: #f5f5f7; }
     .terminal-view {
       --error-surface: #ffffff;
       --error-foreground: #1d1d1f;`
