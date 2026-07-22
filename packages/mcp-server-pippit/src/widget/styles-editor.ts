@@ -37,14 +37,10 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
       max-width: none;
       gap: 0;
     }
-    :root[data-widget-view="editor"] .editor {
-      gap: 0;
-      padding: 0 16px 16px;
-    }
+    :root[data-widget-view="editor"] .editor { gap: 0; padding: 0; }
     :root[data-widget-view="editor"] .viewer-card {
-      margin-inline: -16px;
-      border-block-start: 0;
-      border-inline: 0;
+      margin: 0;
+      border: 0;
       border-radius: 0;
     }
     .error-lockup {
@@ -95,7 +91,7 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
         color-scheme: dark;
       }
     }
-    .viewer-card { position: relative; }
+    .viewer-card { position: relative; border: 0; border-radius: 0; }
     .video-stage { border-radius: 0; }
     video { position: relative; z-index: 0; }
     .roi-layer { z-index: 2; }
@@ -122,27 +118,31 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
     .viewer-message { margin: 0; padding: 10px 14px; color: #cccccc; font-size: 12px; }
     .annotation-panel {
       overflow: hidden;
-      border: 1px solid #d6d6db;
-      border-top: 0;
-      border-radius: 0 0 18px 18px;
-      background: #ffffff;
+      border: 0;
+      border-radius: 0;
+      background: #f7f7f8;
+      box-shadow: inset 0 1px rgb(29 29 31 / 10%);
     }
     .annotation-panel summary {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
       align-items: center;
       gap: 12px;
-      padding: 12px 16px;
+      min-height: 58px;
+      padding: 16px 28px 12px;
       cursor: pointer;
       list-style: none;
+      transition: background-color 160ms ease;
     }
+    .annotation-panel summary:hover { background: rgb(29 29 31 / 4%); }
     .annotation-panel summary::-webkit-details-marker { display: none; }
-    .annotation-summary-line { display: flex; align-items: baseline; min-width: 0; gap: 10px; }
-    .annotation-title { flex: 0 0 auto; font-size: 14px; font-weight: 700; }
+    .annotation-summary-line { display: flex; align-items: baseline; min-width: 0; gap: 12px; }
+    .annotation-title { flex: 0 0 auto; font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
     .annotation-summary {
       overflow: hidden;
       color: #6e6e73;
-      font-size: 12px;
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
@@ -151,42 +151,33 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
     .annotation-composer {
       display: grid;
       grid-template-columns: minmax(0, .95fr) minmax(320px, 1.05fr);
-      gap: 16px;
-      padding: 0 16px 16px;
+      gap: clamp(24px, 3vw, 40px);
+      padding: 8px 28px 24px;
     }
     .time-editor, .intent-editor { min-width: 0; }
     .range-impact {
-      display: flex;
-      align-items: flex-start;
-      gap: 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      max-width: 100%;
       margin: 0;
       border: 1px solid #ffe47a;
-      border-radius: 9px;
-      padding: 8px 10px;
+      border-radius: 6px;
+      padding: 5px 9px;
       background: #fff9db;
       color: #594a00;
       font-size: 12px;
       line-height: 1.4;
     }
-    .range-impact-icon {
-      display: grid;
-      flex: 0 0 16px;
-      width: 16px;
-      height: 16px;
-      place-items: center;
-      border-radius: 50%;
-      background: #ffd60a;
-      color: #1d1d1f;
-      font-size: 10px;
-      font-weight: 800;
-    }
+    .range-impact strong { font-weight: 700; }
     #selection-label { font-variant-numeric: tabular-nums; }
     .trim-timeline {
       position: relative;
-      height: 58px;
-      margin: 10px 22px 6px;
+      height: 68px;
+      margin: 16px 22px 8px;
       border-radius: 8px;
       background: #272729;
+      box-shadow: 0 8px 24px rgb(0 0 0 / 10%);
       touch-action: none;
       user-select: none;
     }
@@ -228,7 +219,7 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
       top: -3px;
       width: 44px;
       min-width: 44px;
-      height: 64px;
+      height: 74px;
       min-height: 44px;
       border: 0;
       border-radius: 8px;
@@ -251,7 +242,7 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
     .trim-handle::after {
       content: "";
       position: absolute;
-      top: 24px;
+      top: 29px;
       left: 20px;
       width: 4px;
       height: 16px;
@@ -261,20 +252,29 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
     .range-note { display: flex; justify-content: space-between; gap: 12px; margin: 0; color: #6e6e73; font-size: 11px; }
     .range-note strong { color: #3a3a3c; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .intent-editor { display: flex; flex-direction: column; }
-    .intent-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
+    .intent-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; margin-bottom: 8px; }
     .intent-label label { color: #6e6e73; font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
-    .area-status { color: #6e6e73; font-size: 11px; font-weight: 600; }
+    .area-status {
+      border: 1px solid #d6d6db;
+      border-radius: 6px;
+      padding: 4px 8px;
+      color: #6e6e73;
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 16px;
+    }
     .area-status.is-selected { color: #267a34; }
-    .intent-editor textarea { flex: 1; min-height: 108px; resize: none; }
+    .intent-editor textarea { flex: 1; min-height: 132px; border-radius: 12px; resize: none; }
     .annotation-footer {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       justify-content: space-between;
-      gap: 14px;
+      gap: 24px;
       border-top: 1px solid #ececf0;
-      padding: 12px 16px;
-      background: #fbfbfd;
+      padding: 20px 28px 24px;
+      background: transparent;
     }
+    .annotation-footer .primary { flex: 0 0 auto; min-width: 190px; }
     .visually-hidden {
       position: absolute;
       width: 1px;
@@ -304,11 +304,15 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
     :root[data-theme="dark"] .area-status { color: #a1a1a6; }
     :root[data-theme="dark"] .status,
     :root[data-theme="dark"] .summary,
-    :root[data-theme="dark"] .utility-card,
-    :root[data-theme="dark"] .annotation-panel {
+    :root[data-theme="dark"] .utility-card {
       border-color: #3a3a3c;
       background: #2c2c2e;
     }
+    :root[data-theme="dark"] .annotation-panel {
+      background: #141517;
+      box-shadow: inset 0 1px rgb(255 255 255 / 9%);
+    }
+    :root[data-theme="dark"] .annotation-panel summary:hover { background: rgb(255 255 255 / 4%); }
     :root[data-theme="dark"] .status { color: #a1a1a6; }
     :root[data-theme="dark"] .status.completed {
       border-color: #2997ff;
@@ -327,32 +331,35 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
     :root[data-theme="dark"] .comment-input input,
     :root[data-theme="dark"] textarea {
       border-color: #48484a;
-      background: #2c2c2e;
+      background: #1c1d1f;
       color: #f5f5f7;
     }
     :root[data-theme="dark"] input::placeholder,
     :root[data-theme="dark"] textarea::placeholder { color: #a1a1a6; }
     :root[data-theme="dark"] .range-note strong { color: #d1d1d6; }
-    :root[data-theme="dark"] .range-impact { border-color: #8b7211; background: #332d11; color: #f2df83; }
+    :root[data-theme="dark"] .range-impact { border-color: #75600c; background: #242109; color: #f2df83; }
+    :root[data-theme="dark"] .area-status { border-color: #3a3a3c; background: #1c1d1f; }
     :root[data-theme="dark"] .area-status.is-selected { color: #69c779; }
-    :root[data-theme="dark"] .annotation-footer { border-color: #3a3a3c; background: #242426; }
+    :root[data-theme="dark"] .annotation-footer { border-color: #2c2c2e; background: transparent; }
 
     @media (max-width: 640px) {
       .loading-view { min-height: 240px; }
       .terminal-view { min-height: 236px; padding: 24px 16px; }
-      :root[data-widget-view="editor"] .editor { padding: 0 12px 12px; }
-      :root[data-widget-view="editor"] .viewer-card { margin-inline: -12px; }
+      :root[data-widget-view="editor"] .editor { padding: 0; }
+      :root[data-widget-view="editor"] .viewer-card { margin: 0; }
       .annotation-composer { grid-template-columns: 1fr; }
       .trim-timeline { margin-inline: 18px; }
-      .annotation-summary-line { display: block; }
-      .annotation-summary { display: block; margin-top: 2px; }
+      .annotation-panel summary { padding: 14px 20px 10px; }
+      .annotation-composer { gap: 24px; padding: 8px 20px 20px; }
+      .annotation-summary-line { flex-wrap: wrap; row-gap: 2px; }
+      .annotation-footer { padding: 18px 20px 20px; }
     }
 
     @media (max-width: 480px) {
-      :root[data-widget-view="editor"] .editor { padding: 0 8px 8px; }
-      :root[data-widget-view="editor"] .viewer-card { margin-inline: -8px; }
+      :root[data-widget-view="editor"] .editor { padding: 0; }
+      :root[data-widget-view="editor"] .viewer-card { margin: 0; }
       .annotation-footer { display: grid; }
-      .annotation-footer .primary { width: 100%; }
+      .annotation-footer .primary { width: 100%; min-width: 0; }
     }
 
     @media (prefers-reduced-motion: reduce) {

@@ -142,9 +142,8 @@ export const WIDGET_SCRIPT_EDITOR = String.raw`          function done() {
 
       function renderAnnotations() {
         var selected = annotations[0];
-        var instruction = instructionElement.value.trim();
         var range = formatTrimTime(segmentStartMs) + "–" + formatTrimTime(segmentEndMs);
-        annotationSummaryElement.textContent = range + " · " + (selected ? "Selected frame area" : "Full frame") + " · " + (instruction || "Describe the change");
+        annotationSummaryElement.textContent = range + " · " + (selected ? "Selected frame area" : "Full frame");
         areaStatusElement.textContent = selected ? "● Selected frame area" : "Full frame";
         areaStatusElement.classList.toggle("is-selected", Boolean(selected));
         if (!annotationMode) {

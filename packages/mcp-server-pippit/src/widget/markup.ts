@@ -47,13 +47,13 @@ export const WIDGET_MARKUP = String.raw`<body>
         <summary>
           <span class="annotation-summary-line">
             <span class="annotation-title">Annotation</span>
-            <output id="annotation-summary" class="annotation-summary">Full frame · Describe the change</output>
+            <output id="annotation-summary" class="annotation-summary">00:00.0–00:00.0 · Full frame</output>
           </span>
           <svg class="annotation-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7"/></svg>
         </summary>
         <div class="annotation-composer">
           <div class="time-editor">
-            <p class="range-impact"><span class="range-impact-icon" aria-hidden="true">i</span><span>Your annotation will affect <strong><output id="selection-label">00:00.0 — 00:00.0</output></strong>.</span></p>
+            <p class="range-impact">Applies to <strong><output id="selection-label">00:00.0–00:00.0</output></strong></p>
             <div id="timeline" class="trim-timeline" aria-label="Annotation time range">
               <div id="filmstrip" class="filmstrip" aria-hidden="true">
                 <span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span><span class="filmstrip-frame"></span>
