@@ -1,309 +1,372 @@
-# Architecture and contract boundaries
+# Pippit Bridge 架构
 
-## Product scope and non-goals
+> 本文描述 `feat/architecture-refactor-20260721` 完成后的代码架构、运行时调用链和必须长期保持的边界。
+> 分阶段实施记录、契约 hash 与逐项验收证据见
+> [重构技术方案与工作项](./refactoring-architecture-plan.md)。Codex Dev/发布工程细节见
+> [Codex Plugin 开发热更新与正式发布工程](./codex-plugin-dev-release-engineering.md)。
 
-Pippit Bridge is a **single-user, local-first plugin architecture**. Its primary product surfaces are the Codex `pippit-video` plugin and `@pippit-bridge/opencode-plugin`. The generic MCP package, loopback Facade and local ChatGPT developer app support the same user on one trusted host; they are not a hosted multi-tenant control plane.
+## 1. 架构定位
 
-This positioning makes a private user-level file store, one active local Facade daemon and single-writer locks deliberate choices. Multi-user OAuth, tenant isolation, horizontally scaled Facade replicas, distributed locks, shared remote persistence and cross-machine state synchronization are explicit non-goals unless the product scope changes. Documentation may describe what a future public ChatGPT deployment would require, but those requirements are not acceptance criteria for the current project.
+Pippit Bridge 是面向单个本地用户的 API gateway 与 adapter monorepo。它把同一组 Pippit
+图片、视频和账号能力投影到不同入口，但不把这些入口错误地合并成一种协议或一种产品形态：
 
-## Monorepo dependency direction
+- OpenRouter Facade 是纯 HTTP/JSON API，没有 UI。
+- 通用 MCP、Codex plugin 与 ChatGPT App 通过 MCP tool/resource contract 接入。
+- Widget v15 是由 Codex/ChatGPT Host 挂载的浏览器展示层，不是 Facade Application Service。
+- OpenCode plugin 是独立 custom-tool adapter，直接使用 Core/SDK，不伪装成语言模型 provider。
+- Dev Host、Worker Generation 与 Local Facade Daemon 是构建和生命周期平面，不是业务分层。
+
+当前产品边界是 single-user、local-first、single-writer。私有用户文件、loopback daemon、进程内
+或本地文件锁都是有意设计。多用户 OAuth、租户隔离、分布式锁、横向扩容、共享远程数据库和跨机器
+状态同步不属于当前架构目标。
+
+## 2. 总体架构
+
+![Pippit Bridge 架构](./assets/pippit-bridge-architecture.png)
+
+图中展示 Facade、MCP、Codex/ChatGPT Widget 与 Dev 三平面的主路径。OpenCode custom-tool plugin
+不经过 Facade，作为独立 adapter 在[第 9 节](#9-opencode-独立适配器)说明。
+
+架构必须保持入口在上、核心依赖在下。两条主要运行时路径最终汇入同一个 HTTP Facade：
 
 ```text
+OpenRouter API client
+  -> OpenRouter HTTP entry
+  -> OpenRouter Facade / Fastify routes
+  -> Facade application services
+  -> Pippit SDK / domain ports
+  -> Pippit upstream
+
+Codex / ChatGPT Host
+  -> MCP stdio or ChatGPT App MCP
+  -> PippitToolRuntime
+  -> PippitFacadeClient
+  -> HTTP /api/v1/*
+  -> the same OpenRouter Facade / Fastify routes
+  -> the same application services and SDK path
+```
+
+这意味着 MCP 不直接 import Facade business handler；即使使用自动启动的本地 Facade daemon，工具调用
+仍经过认证的 HTTP contract。外部部署 Facade 与本地 loopback Facade 因而共享同一运行时语义。
+
+## 3. Workspace 与依赖方向
+
+```text
+packages/contracts
+  -> runtime contracts and JSON Schema projection
+
 packages/core
-  |-- stable video model catalog
-  `-- public-network and media-signature primitives
+  -> private-file primitives, idempotency, reference loading, release epoch
 
 packages/sdk
-  `-- Pippit upload / submit / query client
+  -> Pippit upstream upload / submit / query client
 
-apps/openrouter-facade ------------------+
-  |-- auth, BYOK, job token, HTTP routes |
-  `--------------------------------------+- depends on core + sdk
+apps/openrouter-facade
+  -> Fastify routes, application services, BYOK, OpenAPI
+  -> depends on contracts + core + sdk
 
-packages/mcp-server-pippit --------------+
-  |-- facade-only client                 |
-  |-- shared account + video MCP tools   |
-  |-- one-time loopback AK enrollment    |
-  |-- stdio transport + local MP4 server |
-  `-- embedded Codex plugin metadata     |
-                                         +- depends on facade HTTP contract
-apps/chatgpt-app ------------------------+
-  |-- Streamable HTTP /mcp               |
-  |-- safe MCP capability projection     |
-  |-- Apps SDK regeneration widget       |
-  `-- short-lived signed media proxy     |
+packages/mcp-server-pippit
+  -> MCP protocol, tools, Facade client, Widget, local runtime, Codex plugin
+  -> runtime depends on contracts + core
+  -> bundles the Facade daemon as an explicit build-time artifact
 
-packages/opencode-plugin-pippit ---------+  (@pippit-bridge/opencode-plugin)
-  |-- custom tools only; no LLM provider/auth hook
-  |-- reuses MCP package loopback enrollment server
-  |-- global multi-account AK keyring
-  |-- pippit_manage_access_keys
-  |-- pippit_generate_video
-  `-- pippit_get_video
+apps/chatgpt-app
+  -> Streamable HTTP MCP, safe tool projection, Widget resources, signed media proxy
+  -> reuses the MCP package runtime and Widget contracts
+
+packages/opencode-plugin-pippit
+  -> OpenCode custom tools and account store
+  -> direct Core/SDK adapter; no Facade runtime dependency
 ```
 
-`core` and `sdk` do not depend on an adapter. The MCP request/tool layer consumes only the facade HTTP contract. For zero-config local distribution, the MCP package additionally ships a build-time single-file bundle of the facade daemon; stdio still talks to it over the same authenticated HTTP contract rather than importing business handlers. The ChatGPT App reuses the MCP tool implementation but owns its HTTP transport, widget, and preview proxy. The Codex plugin is distribution metadata embedded in the MCP package, not another protocol implementation. This keeps the stable model ids and upstream request types reusable when CLI, ComfyUI, n8n, or OpenMontage packages are added.
+核心规则：
 
-The root scripts intentionally start the facade from the repository root. This preserves the existing meaning of `.env` and relative `BYOK_STORE_PATH=./data/byok-credentials.json` after the workspace move.
+1. `contracts` 不依赖任何 consumer package。
+2. `core` 和 `sdk` 不依赖 MCP、Fastify、Widget 或 OpenCode adapter。
+3. HTTP routes 只负责 transport/auth/parsing/presentation，不直接访问 SDK、文件系统或具体 store。
+4. Facade application services 不依赖 `FastifyRequest` 或 `FastifyReply`。
+5. Widget browser source 不 import `node:*`。
+6. MCP daemon 不通过相对路径穿透到 `apps/openrouter-facade/src`。
+7. Dev Host source 不进入 Worker artifact；Worker 不能修改 Host frozen discovery。
 
-## MCP, ChatGPT App, and Codex distribution boundary
+`npm run check:architecture` 对上述关键 forbidden imports、compatibility facade、模块体积、循环依赖和
+artifact external 边界执行自动检查。
 
-The three wrappers expose one current media capability family: asynchronous video generation and reference-guided regeneration jobs. Image, video, and audio URLs may be video-generation references, but no wrapper advertises text generation, image generation, speech, or transcription. The generic MCP/Codex surfaces additionally expose facade account administration; the current ChatGPT `noauth` projection deliberately does not.
+## 4. OpenRouter Facade
+
+OpenRouter Facade 是唯一的业务 HTTP 边界。`buildApp()` 负责 composition：构造配置、BYOK store、
+reference loader、Pippit SDK client 和各 application service，再把它们注入 routes。
 
 ```text
-generic MCP client                  Codex plugin
-  | stdio                             | embedded .mcp.json -> stdio
-  +-------------------+---------------+
-                      v
-          shared MCP account + video tools
-                      | lazy local resolver or complete external config
-                      v
-       user-level loopback Facade daemon --------> encrypted BYOK store
-       or explicitly deployed external Facade
-                      |
-                      | completed full download
-                      v
-       Movies/Videos/Pippit/*.mp4 <----- persistent artifact store
-                      ^
-                      | stable opaque artifact id
-                      `----- MCP resources/read or app-only chunk reader
-
-ChatGPT
-  | HTTPS Streamable HTTP POST /mcp
-  v
-ChatGPT App transport + MCP App result/regeneration widget
-  | safe projection of shared MCP video tools
-  | same local resolver / external Facade boundary
-  +-------------------------------------> Facade
-  `-- GET /media?token=... -------------> protected facade content route
+apps/openrouter-facade/src/
+  app.ts                         compatibility entry
+  app/composition.ts             dependency composition
+  app/register-routes.ts         route assembly
+  app/route-contracts.ts         method/path/auth/body/cache contract
+  app/routes/                    Fastify adapters
+  app/services/                  application use cases
+  app/presenters/                response projection
+  byok/                          encrypted credential domain
+  openapi/                       OpenAPI document projection
 ```
 
-`@pippit-bridge/mcp-server` owns the canonical definitions, validation and handlers for account list/add/switch/delete, model discovery, generation, reference-guided regeneration, job polling, automatic completed-file materialization, and local download. Completed Codex/stdio results are atomically published under `PIPPIT_MCP_OUTPUT_ROOT`; absolute paths stay server-side while the widget receives only an opaque filename, byte count, and stable artifact URI. A live MCP Apps view reads that URI through `resources/read`. A historical view whose original session bridge has ended can rebind through `pippit_read_video_chunk`, an app-only, model-hidden reader that resolves the same artifact from the current plugin process without initializing the Facade. The first stale or invalid resource response demotes that bridge for the remainder of the widget lifetime, so later chunks use the current app bridge without repeated timeouts. Both transports enforce a 1 MiB chunk limit, the configured inline-size limit, private-file permissions, and no-follow file access. The download tool realpath-confines an optional caller-supplied additional relative path under the same root and never overwrites an existing file. The ChatGPT App projects exact canonical video tool names and adds file parameters, UI metadata and signed previews; it deliberately omits the local-filesystem and all Management-Key-backed tools.
-
-Raw Pippit AK is not a normal MCP tool argument. `pippit_add_access_key` creates a bounded, high-entropy, one-time loopback enrollment URL. Its password form POSTs directly to the MCP process, which uses the distinct Management key only on `/api/v1/byok/**`. Runtime Facade API Key and Management API Key are never substituted for one another. The MCP process does not persist another copy of the AK.
-
-Local installation is deliberately lazy. Codex plugin installation and MCP `initialize` / `tools/list` do not execute the daemon or create secret material. The first actual tool call obtains a private bootstrap lock, creates one stable set of independent internal keys, starts the bundled Facade on port `0`, verifies an HMAC-signed ready descriptor plus a challenge proof, and then sends the Facade bearer key. Concurrent clients converge on the same process. An authenticated daemon with an older runtime version is stopped and replaced under that lock after an upgrade. Partial external configuration fails closed instead of borrowing local values.
-
-Local runtime state lives in a platform user-data directory (macOS `~/Library/Application Support/Pippit Bridge`), with directories `0700` and state files `0600`. Widget regeneration lineage is stored beneath `widget-state/lineage-v1`, partitioned by a hash of the resolved Facade identity. Its private append-only records contain only source and child job ids plus timestamps; they never contain prompts, annotations, AKs, media URLs, or local paths. The app-only `pippit_resolve_latest_video` tool follows this lineage, then delegates to canonical `pippit_get_video`, so a widget recreated from an older bootstrap result still renders the newest regenerated descendant and its local artifact. Ordinary completed videos instead default to `~/Movies/Pippit` on macOS or `~/Videos/Pippit` elsewhere. Both are outside the plugin cache and checkout, so upgrade/uninstall does not rotate encryption/job keys, delete accounts, or remove completed MP4 files. If encrypted BYOK state exists without its matching secret file, bootstrap refuses to generate replacements. Bootstrap recognizes and removes only the exact same-inode private candidate hard link left by a dead lock owner; unfamiliar hard links fail closed. A crashed local daemon's store lock is removed only after the signed descriptor owner and lock PID are no longer alive; arbitrary live or malformed locks are not removed.
-
-The encrypted facade BYOK state stores active credential selections keyed by the runtime Facade API Key SHA-256. This makes the selection consistent across stdio MCP, Codex and the ChatGPT App when they intentionally share one runtime identity. MCP account list/delete also carry that hash only on the server-to-server management hop; the facade filters list results and performs scoped delete checks atomically, while the unscoped Management API retains administrator-wide behavior. An explicit `provider.options.pippit.byok_id` still wins. Without an explicit id, an active selection is fail-closed: a missing, disabled or ineligible selected credential is not silently replaced by another account. Existing signed job ids remain bound to the credential/key version used at submission.
-
-Generation and reference-guided regeneration accept an optional abnormal-recovery `idempotency_key` inside the MCP and OpenCode plugin contracts. It is never forwarded to or implemented by the Facade, whose API remains OpenRouter-compatible. A keyless invocation is always a new submission; an explicitly keyed invocation uses the plugin's private HMAC-authenticated ledger, and a stale record beyond the submit boundary becomes `indeterminate` instead of being auto-resubmitted. See [Durable idempotency](./idempotency.md).
-
-The Codex plugin root is `packages/mcp-server-pippit`. Its `.codex-plugin/plugin.json`, `.mcp.json`, `plugin-entry.mjs`, skills, and assets are installed from the public GitHub marketplace snapshot. The manifest's local source is relative to that downloaded snapshot, never an end-user checkout path. When the self-contained `dist/plugin-stdio.mjs` and bundled local Facade are present, the shim runs them directly without resolving monorepo packages from the plugin cache; otherwise the Git marketplace shim launches the pinned public `@pippit-bridge/mcp-server` package through `npx`. Codex has no trusted arbitrary postinstall/secret-injection surface here, so automatic setup occurs on first capability use.
-
-The local ChatGPT App resolves the same user-level Facade and internal media-signing key at server startup, but explicitly removes the Management key before building its configuration. It registers only `/mcp`, a versioned result/regeneration widget resource, the four safe canonical video tools, and the app-only latest-video resolver. Its current `noauth` declaration is a developer-mode boundary for local or controlled-tunnel use. A public, multi-user deployment still requires a reachable HTTPS service, a separately registered real App ID, OAuth 2.1 MCP resource-server validation, scopes, per-user mapping, remote persistence, and a secret manager; local plugin installation cannot create those production identity surfaces.
-
-The stable `pippit_edit_video_segment` contract carries `source_job_id`, output index, a segment no longer than 30 seconds, timestamped intrinsic-video normalized rectangles, and global/local instructions. The facade resolves and uploads the complete source through the signed job boundary as the only video reference, compiles the guidance into the prompt, and submits a new asynchronous `pippit_video_part_agent` generation job. The currently documented upstream protocol has no hard-trim or pixel-mask field, so the UI presents this as regeneration and must not claim an in-place edit, omitted unselected bytes, or a pixel-exact mask.
-
-An Apps SDK registration creates a real identifier beginning with `plugin_asdk_app`. The repository therefore keeps only `apps/chatgpt-app/.app.json.example`. Until a real ID exists, the Codex plugin manifest must not claim an `apps` component. After registration, a real `packages/mcp-server-pippit/.app.json` may be created and the manifest may point `apps` at it; placeholder IDs are not a distributable integration.
-
-## OpenCode custom-tool plugin boundary
-
-OpenCode currently loads model providers as AI SDK `LanguageModelV3`. Pippit's asynchronous video endpoint does not implement that contract. The OpenCode adapter is therefore a custom-tool plugin, not a provider. It must not add `config.provider.pippit`, return an `auth`/`provider` hook, or occupy an OpenCode credential slot:
+典型图片调用链：
 
 ```text
-agent
-  -> pippit_manage_access_keys
-  -> configure: one-time 127.0.0.1 password-form URL
-  -> browser same-origin POST directly into plugin global keyring
-  -> list / switch / delete (never returns or accepts a raw AK as a tool argument)
-
-agent
-  -> pippit_generate_video (permission ask)
-  -> SDK upload_file / submit_run
-  -> pippit_get_video / query_generate_video_result
-  -> checked download inside current worktree
+POST /api/v1/images
+  -> route contract parser
+  -> runtime authentication
+  -> registerImageRoutes adapter
+  -> createImageGenerationService
+  -> BYOK credential selection
+  -> reference load/upload
+  -> PippitApi.submitRun/queryVideoResult
+  -> OpenRouter-compatible response
 ```
 
-Direct mode does not use the facade's Management API Key, Facade API Key, BYOK store, signed job id, OpenCode `/connect`, or OpenCode `auth.json`. The shared MCP enrollment server binds only `127.0.0.1`, issues bounded high-entropy one-time links, requires the actual loopback Host and same-origin Origin, consumes tokens before asynchronous persistence, limits request bodies, and never logs or echoes raw AKs. The plugin keyring uses a `0700` directory, a `0600` atomically replaced plaintext file, masked public summaries, and an explicit active pointer. It has the same local same-UID threat boundary as OpenCode state, but it is not the encrypted server BYOK store or a system keychain.
+Route contract 同时约束 Fastify 注册、输入解析、auth、cache policy 和 OpenAPI path。Service 接收普通
+DTO、domain ports 与 `AbortSignal`，不知道 Fastify 的存在。SDK 是 Facade service 到 Pippit upstream 的
+边界；MCP 和 Widget 都不能越过 Facade 直接调用它。
 
-Each managed-account submission persists upstream `thread_id + run_id` with the `account_id` used at submission. A later switch or environment override only changes new work; a saved binding wins when polling. If binding persistence fails after a successful upstream submission, the tool returns the run instead of turning it into a retryable failure, marks `account_binding_persisted: false`, and returns the explicit `account_id` recovery selector. Polling fails closed if its bound account was deleted instead of silently crossing account scope. Local inputs are realpath-confined to the worktree; remote inputs and generated outputs use the shared public-network checks.
+## 5. MCP、Codex Plugin 与 ChatGPT App
 
-Because the plugin contributes no provider filter, an OpenCode 1.18.3 `session.prompt` that omits `model` continues to resolve the host's default LLM. The package pins OpenCode 1.18.3 as a development integration dependency and regression-tests its resolved config. See [opencode-ak-binding.md](./opencode-ak-binding.md).
+### 5.1 MCP 工具路径
 
-## Control plane and runtime flow
+通用 stdio MCP 与 Codex plugin 使用同一 `PippitToolRuntime`。ChatGPT App 对同一个 runtime 做安全投影，
+增加 Streamable HTTP transport、Apps metadata 和上传字段，但不复制业务 handler。
 
 ```text
-Deployment administrator
-  | Authorization: Bearer <Management API Key>
-  | POST/PATCH/GET/DELETE /api/v1/byok
-  v
-BYOK management plane
-  |-- accepts officially issued Pippit AK
-  |-- never returns the raw AK
-  v
-single-instance encrypted file store
-  |-- AES-256-GCM envelope
-  |-- exclusive .lock
-  |-- credential + retained key versions
+MCP initialize/tools/list/resources/list
+  -> frozen discovery, no Facade startup
 
-OpenRouter-style client
-  | Authorization: Bearer <Facade API Key>
-  | POST /api/v1/videos
-  v
-Facade authentication and BYOK routing
-  |-- Facade API Key -> SHA-256 allowlist
-  |-- model/workspace/API-key constraints -> credential version
-  |-- model id -> exact Pippit model
-  |-- reference URL -> bytes
-  |-- bytes -> upload_file -> data.pippit_asset_id
-  v
-Pippit submit_run (using decrypted Pippit AK)
-  |-- returns run_id
-  |-- returns thread_id
-  v
-signed facade job id
-  | GET /api/v1/videos/{jobId}
-  v
-same credential key version -> Pippit query_generate_video_result
-  |-- run_state -> OpenRouter status
-  |-- video_urls -> facade content endpoints
-  v
-GET /api/v1/videos/{jobId}/content?index=N
-  -> stream selected Pippit result URL
+first tools/call
+  -> lazy runtime initialization
+  -> resolve external Facade or ensure local Facade daemon
+  -> PippitToolRuntime input parsing and result mapping
+  -> PippitFacadeClient
+  -> authenticated HTTP /api/v1/*
 ```
 
-All image, video, and audio references cross an explicit two-step boundary: the facade first calls `POST /api/biz/v1/skill/upload_file`, reads `data.pippit_asset_id`, and only then places those asset ids into `POST /api/biz/v1/skill/submit_run`. A source URL, downloaded byte stream, and `pippit_asset_id` are distinct handles.
+本地模式只在第一次实际 tool call 时创建或复用用户级 loopback Facade；安装、`initialize` 和
+`tools/list` 不启动 daemon，也不创建密钥。若显式配置外部 Facade，base URL 与 runtime API key 必须
+成对存在，半套配置 fail closed。
 
-## Authentication matrix
+Runtime 与 Management client 是不同 capability：前者只调用模型、生成、查询和内容路由；后者只调用
+BYOK 管理路由。Pippit AK 只能通过一次性 loopback password form 写入加密 store，不进入普通 tool
+arguments、Widget、日志或聊天上下文。
 
-| Credential | Stored representation | Accepted surface | Explicitly not accepted for |
-| --- | --- | --- | --- |
-| Management API Key | One SHA-256 digest in deployment config | `/api/v1/byok` CRUD only | Models, video create/poll/content |
-| Facade API Key | SHA-256 allowlist in deployment config | Models, video create/poll/content | `/api/v1/byok` management |
-| Wrapper copy of Facade API Key | Raw runtime secret in `PIPPIT_FACADE_API_KEY` | MCP/ChatGPT App/Codex server-to-facade requests | Pippit upstream auth, widget state, tool results, URLs |
-| Pippit AK | Encrypted at rest in the BYOK store | Server-to-Pippit upstream calls | Any facade `Authorization` header |
-| BYOK encryption key | Raw 32-byte deployment secret | Decrypt/encrypt BYOK store | Job signing |
-| Job signing key | Different raw 32-byte deployment secret | Job-token HMAC and API-key binding | BYOK encryption |
-| ChatGPT media signing key | Independent raw 32-byte app secret | Short-lived app preview tokens | Facade auth, Pippit upstream auth, BYOK/job signing |
-| Codex/stdio preview capability key | Process-random, memory only | Current plugin-lifecycle local MP4 URLs | Persistence, Facade auth, ChatGPT previews |
+### 5.2 Codex plugin
 
-The raw Management and Facade API Keys are generated and distributed outside this service; only their SHA-256 digests are configured. Startup rejects a Management digest that also appears in the Facade allowlist, so one raw key cannot be configured for both audiences.
+Codex plugin 是 MCP package 内的分发与宿主声明层：
 
-Authorization headers and BYOK request bodies are logger-redacted. BYOK responses expose a masked `label`, never the raw Pippit AK, encrypted payload, or key-version secret.
+- `.codex-plugin/plugin.json`、`.mcp.json` 和 Skill 属于 immutable cold contract。
+- launcher 启动同一个 stdio MCP server，不维护另一份业务协议。
+- Skills 由 Codex Host 扫描，MCP gateway 不管理也不热更新 Skills。
+- Production identity `pippit-video@pippit-bridge` 与 Dev identity
+  `pippit-video@pippit-bridge-dev` 必须使用物理隔离的 profile、cache、runtime root 和 credentials。
 
-## OpenRouter-compatible BYOK surface and facade extensions
+### 5.3 ChatGPT App
 
-The management resource follows OpenRouter's current BYOK route family:
+ChatGPT App 注册 Streamable HTTP `/mcp`、安全的 MCP tools、Widget resources 和可选的 signed media
+proxy。它复用 MCP tool runtime，但不投影 Management-Key-backed account tools。当前 `noauth`
+配置只适用于本地或受控 tunnel 的 developer-mode；公共多用户部署仍需要真实 App ID、OAuth、远程
+secret manager、per-user mapping 与远程持久化。
+
+## 6. Widget v15：独立展示层
+
+Widget v15 与 OpenRouter API 无关。OpenRouter HTTP caller 只得到 JSON；只有支持 MCP Apps 的 Host
+才会根据 tool metadata 中的 `ui.resourceUri` / `openai/outputTemplate` 挂载 Widget resource。
 
 ```text
-POST   /api/v1/byok
-GET    /api/v1/byok
-GET    /api/v1/byok/{id}
-PATCH  /api/v1/byok/{id}
-DELETE /api/v1/byok/{id}
+Host
+  -> resources/read ui://widget/pippit-video-job-v15.html
+  -> mount dependency-free HTML
+  -> deliver structuredContent + _meta["pippit/media"]
+
+Widget user action
+  -> Host Bridge tools/call
+  -> MCP runtime
+  -> PippitToolRuntime
+  -> PippitFacadeClient
+  -> Facade HTTP
 ```
 
-Every route requires the Management API Key and returns `Cache-Control: no-store`. The following request fields are deliberate facade extensions rather than claims about OpenRouter's official provider contract:
+浏览器内部边界：
 
-- `provider: "pippit"`: extends the facade's provider set with Pippit.
-- writable `allowed_api_key_hashes`: narrows a credential to the listed lowercase SHA-256 hashes of Facade API Keys.
-- `provider.options.pippit.byok_id`: pins a video request to one credential.
-- `provider.options.pippit.thread_id`: continues a Pippit thread under the selected credential.
+- Reducer 只执行 `WidgetState + Event -> WidgetState + Effect`，不访问 DOM、Timer、Promise 或 Blob URL。
+- Controller 执行 polling、tool call、preview renewal、state persistence 和 display mode。
+- Renderer 只执行 `state -> DOM`，不解析 MCP result，也不发起工具调用。
+- Preview loader 独占 `AbortSignal`、Blob URL 和清理责任。
+- 每个异步结果携带 generation/preview identity；过期响应被统一拒绝。
+- Widget 只消费服务端投影的 `structuredContent` 和 `_meta["pippit/media"]`，不处理私有 upstream URL。
 
-This v1 file store is a single-workspace implementation. Its workspace is `00000000-0000-0000-0000-000000000000`; callers should omit `workspace_id` or send that value. Another workspace id is rejected instead of being silently collapsed into the default workspace.
+Typed browser-safe modules 经 deterministic assembly 生成单一、无外部依赖的
+`assets/generated/pippit-video-job-v15.html`。Widget URI、MIME、CSP、tool binding、schema、默认值和
+结果语义都是 cold contract。v14 只作为 legacy reader 保留。当前没有把 dev Widget primitives 接入已
+挂载 iframe，因此 Widget source 变化仍需 cold rebuild 和新 Widget instance；不得声称 mounted iframe HMR。
 
-The current facade authenticates static API keys and does not resolve a per-user identity. Consequently, `allowed_user_ids: null` is the usable runtime setting; any non-null `allowed_user_ids` list currently matches no video request. The field is retained for contract compatibility and future identity-aware routing, but must not be interpreted as implemented user routing.
+## 7. Contracts 与 OpenAPI 单一真源
 
-Pippit AKs must be issued through the official Pippit web surface. This provider neither imports a Pippit Cookie nor manages official AK issuance. It only accepts an already-issued AK and stores it through its own Management-Key-protected BYOK API.
+`@pippit-bridge/contracts` 提供 Zod-backed `RuntimeContract<T>`：
 
-## Credential selection, fallback, and rotation
+```ts
+interface RuntimeContract<T> {
+  readonly schema: z.ZodType<T>
+  parse(value: unknown): T
+  toJsonSchema(): JsonSchema
+}
+```
 
-For a video create request, the store filters credentials by these rules:
+同一 runtime contract 投影到：
 
-1. The credential is enabled and belongs to the store's workspace.
-2. `provider` is `pippit`.
-3. `allowed_models` is `null` or contains the resolved stable facade model id.
-4. `allowed_api_key_hashes` is `null` or contains the current Facade API Key's SHA-256.
-5. `allowed_user_ids` is `null`; the current runtime has no caller user id to match against a list.
-6. If `provider.options.pippit.byok_id` is present, only that credential is eligible.
+- MCP input/output JSON Schema；
+- Facade request/response parser；
+- OpenAPI components/path request body；
+- Widget MCP helper tool contracts；
+- TypeScript DTO。
 
-Main credentials are ordered before `is_fallback: true` credentials; within each group, `sort_order` controls selection. Fallback occurs only after an explicit Pippit HTTP `401`, `403`, or `429`. It does not occur after a network error, timeout, cancellation, or ambiguous `submit_run` outcome, because retrying could create a duplicate upstream run.
+单一真源不代表把所有 surface 合成同一种 shape。MCP 顶层 `byok_id`、`thread_id` 和
+`idempotency_key`，Facade 的 `provider.options.pippit`，仅允许 HTTP(S) 的引用 URL，以及允许特定
+data URL 的图片输入继续是不同 contract。projection 必须共享 primitive 和语义，但保留 surface-specific
+mapping。
 
-Reference assets are scoped to the selected Pippit AK. If the facade safely advances to another credential, it reloads and reuploads every reference with that credential, obtains a new set of `data.pippit_asset_id` values, and only then calls `submit_run` again.
+UUID、min/max、default、description、schema 或结果含义的变化都按 cold contract 审阅。Golden 只能记录
+已批准的显式变更，不能用于掩盖行为回归。
 
-PATCHing `key` appends a key version and makes it active for new jobs. The signed job token pins the exact credential id and key-version id, so an existing job continues to poll with the version used at submission. The file store retains up to its configured version limit. Deleting a credential removes all versions; a later poll for a job pinned to it fails closed rather than using a different AK.
+## 8. Private-file 与领域存储
 
-## Identifiers are not interchangeable
+`packages/core/src/private-file/` 只统一文件安全机制，不拥有 BYOK、account、idempotency、Widget lineage
+或 Local Runtime 的领域 schema。
 
-| Handle | Owner | Purpose |
+共享机制包括：
+
+- 私有目录与文件 owner/mode 检查；
+- bounded no-follow read；
+- `O_NOFOLLOW | O_EXCL` 创建；
+- `dev/ino` 二次验证和 inode-safe stale-lock recovery；
+- temporary-file `fsync`、atomic rename 与 parent-directory `fsync`；
+- rename 已发生但 directory `fsync` 失败时返回 `DURABILITY_UNCERTAIN`；
+- release/remove 前重新验证 inode owner，避免删除后来者文件；
+- secret buffer 使用后清零。
+
+领域策略保持独立：
+
+| Store | 领域责任 | 不能被共享机制替代的策略 |
 | --- | --- | --- |
-| Input URL | Facade caller | Locate source bytes |
-| `data.pippit_asset_id` | Pippit upload API | Reference an uploaded input in `submit_run` |
-| BYOK credential id | This service | Select credential metadata and its active key version |
-| BYOK key-version id | This service | Pin the exact encrypted Pippit AK used by one job |
-| `thread_id` | Pippit | Conversation/session handle required for result queries |
-| `run_id` | Pippit | Generation task handle required for result queries |
-| facade `jobId` | This service | Signed poll handle containing exact credential/thread/run bindings |
-| `generation_id` | OpenRouter-style response | Exposes the upstream `run_id`; it is not the facade job id |
-| output URL | Pippit query API | Temporary generated-media source proxied by content route |
+| Facade BYOK | 加密 AK、选择、rotation | AES-256-GCM、AAD、key version、lifetime lock |
+| OpenCode account | 本地账号与 active pointer | managed-account binding、plaintext same-UID boundary |
+| MCP idempotency | 异常恢复 ledger | submitting/submitted/indeterminate 状态机 |
+| Widget lineage | source/child job 链 | Facade identity scope、append-only records |
+| Local Runtime | secrets、ready proof、daemon state | HMAC proof、runtime version、bootstrap lock |
 
-The v2 job token is HMAC-signed with `JOB_SIGNING_KEY_HEX` and includes workspace, credential id, key-version id, `thread_id`, `run_id`, model, creation time, and a binding derived from the Facade API Key. Another Facade API Key cannot use it. It is restart-safe only while the signing key and referenced credential version remain available. The token is not a cancellation handle; the documented Pippit API exposes no cancel operation.
+不得为了复用机制而合并这些文件格式、storage path、encryption envelope 或 migration epoch。
 
-## Encrypted file-store boundary
+## 9. OpenCode 独立适配器
 
-The built-in `FileByokStore` is intentionally scoped to a single process and a single local POSIX filesystem. It is not a multi-writer database, does not support NFS/shared filesystems, and must not back multiple provider replicas.
+OpenCode 的 provider contract 是语言模型协议，而 Pippit 提供图片/异步视频任务。OpenCode package 因而
+只注册 custom tools，不增加 `config.provider.pippit`，也不返回 `auth`/`provider` hook。
 
-- The parent directory must be a real directory, owned by the service user, with mode `0700` or stricter. The encrypted store and lock file use `0600`.
-- Startup creates `${BYOK_STORE_PATH}.lock` with exclusive-create semantics and holds its file handle until shutdown. A second process fails to start. After a crash, an operator may remove a stale lock only after confirming that no provider process is using the store.
-- The entire logical state is serialized into an AES-256-GCM envelope. The envelope authenticates the format/version/key id/AAD context and ciphertext.
-- Persistence uses a new `0600` temporary file, file `fsync`, atomic rename, and parent-directory `fsync`. A directory-sync failure after rename is treated as durability-uncertain and the store fails closed.
-- `BYOK_ENCRYPTION_KEY_HEX` and `JOB_SIGNING_KEY_HEX` must be independent. Losing the encryption key makes the store unreadable; losing or changing the signing key invalidates outstanding job tokens.
+```text
+OpenCode agent
+  -> @pippit-bridge/opencode-plugin
+  -> permission-gated custom tool
+  -> Core reference loader / idempotency
+  -> Pippit SDK
+  -> Pippit upstream
+```
 
-AES-GCM authenticates one snapshot but provides no monotonic counter outside that snapshot. Restoring an older, valid encrypted file can therefore roll back rotations, deletes, disables, and ordering without detection. External backups and snapshots must provide access control, version/freshness policy, and recovery testing. A backup containing the ciphertext remains sensitive for as long as its encryption key can be obtained.
+这条路径不经过 Facade API Key、Management API Key、Facade BYOK store 或 signed Facade job token。
+OpenCode account store 与 Facade BYOK store 是两个不同的安全域；它们只复用 private-file 机制和必要的
+模型/SDK contract。
 
-Logical update/delete rewrites the current store, but does not guarantee physical erasure from APFS/filesystem snapshots, backup media, SSD over-provisioning, or wear-leveled flash cells. Immediate credential revocation must be enforced at the authoritative Pippit AK management surface. The facade does not claim forensic deletion.
+## 10. Dev 三平面与产物身份
 
-In the supplied container image, `/app/data` is the persistent store directory. It must be mounted to a single-writer volume. All keys and digests are deployment secrets and must be injected at runtime rather than baked into the image.
+Dev loop 按生命周期拆成三个独立平面：
 
-## State mapping
+| 平面 | 冻结或负责的内容 | 变化后的处理 |
+| --- | --- | --- |
+| Immutable Dev Host | initialize、discovery、manifest、Skills、static Widget resource、stable IPC | 要求 Host rebootstrap |
+| Worker Generation | `tools/call`、动态 artifact read、MCP handler 和 client | 通过 gate 后可切换 generation |
+| Local Facade Daemon | Facade HTTP runtime、BYOK 与 upstream service path | 独立 artifact/restart/ready proof |
 
-| Pippit `run_state` | OpenRouter status |
-| --- | --- |
-| `0` | `failed` |
-| `1` | `pending` |
-| `2`, `7` | `in_progress` |
-| `3` | `completed` |
-| `4` | `failed` |
-| `5` | `cancelled` |
-| `6`, `8`, `9` | `failed` |
-| unknown/forward-compatible | `failed` |
+Candidate identity 绑定 source graph、worker/daemon artifact、Host/Worker contract、build recipe、test
+evidence、migration epoch 和 storage schema epoch。Semantic review 绑定完整 subject hash，不能只绑定源码
+目录 hash。
 
-`expired` exists in the OpenRouter status enum but the referenced Pippit API does not publish an equivalent state. Unknown states fail closed instead of leaving clients polling forever. A Pippit `completed` response without any `video_urls` is treated as an invalid upstream response (`502`), not as a downloadable completed job.
+Gateway 是唯一可以写入 observed active 的组件。慢调用固定在旧 generation；激活后新调用进入新
+generation；调用不 replay。Gateway 重启只能在 active/desired/observed generation、implementation hash、
+subject/review、artifact 和 frozen contract 全部一致时恢复 persisted active generation，否则 fail closed。
 
-## Reference and output network boundary
+Hot-compatible 只允许不改变 discovery 和业务语义的 handler 实现变化。Tool/schema/description/result
+meaning、resource URI/MIME/CSP/binding、manifest、`.mcp.json`、Skills、默认值、校验、确认、审批、付费和
+写操作边界全部是 cold contract，需要 immutable release 和新 task。
 
-The facade accepts HTTP(S) references only. Every source URL and redirect is checked against private/special address ranges, and the validated DNS answer is pinned to the production socket lookup. File signatures, declared media type, extension, per-kind limits, aggregate limits, request concurrency, and process-wide concurrency are enforced before `submit_run`.
+## 11. 兼容边界
 
-Generated output URLs are not returned as direct download targets. The content route resolves and streams them through the same public-network checks, forwards byte ranges, and only reflects video media types. Private-reference access is an explicit opt-in for trusted deployments.
+迁移期保留的兼容面是显式的：
 
-Facade content URLs remain Bearer-protected when consumed through an integration. For Codex/stdio MCP, every completed result is fully materialized first as a regular MP4 in the configured output root using an opaque SHA-256 identity, a private partial file, `fsync`, and an atomic no-overwrite publish. Only then does the widget receive a stable `pippit-video://artifact/<sha256>` resource identity. The sandboxed widget asks the host to proxy bounded `resources/read` chunks, validates and assembles them into a `blob:` URL, and revokes that URL when the source changes or the widget closes. The artifact identity and ordinary local MP4 survive stdio process restarts; no upstream URL, local filesystem path, or loopback HTTP endpoint is assigned to the player. `pippit_download_video` creates only an optional additional user-named copy.
+- 原 `tools.ts`、`local-runtime.ts`、`stdio.ts`、`widget.ts`、`reference-loader.ts` 与 Facade `app.ts`
+  保留小型 re-export/composition facade。
+- Widget v14 URI 只作为 legacy resource reader，不回退 v15 的公开 binding。
+- MCP discovery 在一个 Host/task 生命周期内冻结；Worker activation 不能改变 tool/resource/template contract。
+- Release epoch 在副作用前拒绝超出兼容窗口的旧 task。
 
-The ChatGPT widget cannot attach or receive `PIPPIT_FACADE_API_KEY`, so the ChatGPT App replaces its preview targets with short-lived signed URLs on its own media proxy. The proxy validates the token and expiry, then attaches the Facade API Key only on the server-to-server hop. Neither the raw key nor any other credential is placed in widget HTML, ChatGPT tool results, preview URLs, or the token payload.
+Compatibility facade 只保护 public import/启动入口，不允许形成反向依赖，也不能隐藏新的业务实现。
 
-The default bind address is `127.0.0.1`. Authentication is mandatory regardless of bind address: the Management API Key digest and at least one Facade API Key digest are required at startup. Generated content has separate response-header and body-idle timeouts so a stalled origin cannot occupy a stream indefinitely.
+## 12. 构建、验证与发布边界
 
-## Unsupported OpenRouter controls
+构建顺序必须显式满足 workspace 依赖：
 
-- `callback_url`: Pippit documentation specifies polling and no facade callback delivery contract is implemented.
-- `generate_audio`: Pippit may generate or use audio, but the documented immersive-video request has no equivalent boolean control.
+```text
+contracts -> core -> sdk -> openrouter-facade -> mcp-server
+```
 
-Both are rejected rather than silently ignored. `seed` is forwarded because the upstream immersive-video request contract includes it.
+MCP production package 在 runtime 只依赖 published contracts/core；Local Facade 作为经过检查的单文件
+artifact 在构建阶段进入 launcher，不能遗留私有 workspace runtime external。
 
-## Validation boundary
+重构分支的验收快照：
 
-Default tests use injected HTTP/Pippit fakes and an in-memory BYOK store. They prove the facade mapping, credential routing, authentication separation, and lifecycle without claiming real generation. File-store tests prove serialization/encryption, permissions, locking, rotation retention, and tamper rejection on the local test filesystem; they do not prove the behavior of every network filesystem or physical storage device.
+- 全量 gate：52 个测试文件、361 个测试；lint、typecheck、build 与 architecture boundary 通过。
+- MCP full gate：21 个测试文件、145 个测试；contract 与 Dev gateway 通过。
+- 最终 MCP contract hash：
+  `484bbf303fa466fe5f1e00c88cb62edf5eab6443c67b318a11830fd06ec26ed7`。
+- 最终 Plugin contract hash：
+  `bf81d8a8b770a9f74c446769d4d5d59b3e7005b7958c82b97069d0053bd2479c`。
+- OpenAPI canonical golden SHA-256：
+  `54f2b9d749e1db3205b76142e2d30b68d2be5d87382f55e6facccb5697d0e6a5`。
+- Widget v15 canonical HTML：114844 bytes，SHA-256
+  `9a5dae913ef49c263d45ed695082114d5ace36df57f6d8507d22e639ab53ad72`。
+- 真实 BYOK smoke：一次 Seedream 5.0 图片任务生成 1 张 2048×2048 JPEG，并完成轮询、落盘与
+  `resources/read`；未记录 raw AK、Facade key 或 upstream URL。
+- 新 Gateway 进程已验证 persisted active generation 恢复，并成功调用真实 production tool。
 
-A live Pippit proof requires an unmasked, officially issued AK with video permission plus reachable reference assets and may incur generation cost; it is intentionally a separate acceptance step.
+这些结果区分三个证据层级：
 
-## External contract references
+1. 本地 tests/build/contract/artifact gate 已完成。
+2. 隔离 Codex Dev profile 已完成 discovery、Dev preview 与真实 production tool call。
+3. Desktop mounted Widget v15 的 iframe 视觉/交互验收以及 mounted iframe HMR 尚未证明。
 
-- [OpenRouter BYOK overview](https://openrouter.ai/docs/guides/overview/auth/byok)
-- [OpenRouter Management API Keys](https://openrouter.ai/docs/guides/overview/auth/management-api-keys)
-- OpenRouter BYOK CRUD: [create](https://openrouter.ai/docs/api/api-reference/byok/create-byok-key), [list](https://openrouter.ai/docs/api/api-reference/byok/list-byok-keys), [get](https://openrouter.ai/docs/api/api-reference/byok/get-byok-key), [update](https://openrouter.ai/docs/api/api-reference/byok/update-byok-key), [delete](https://openrouter.ai/docs/api/api-reference/byok/delete-byok-key)
-- [OpenAI Apps SDK: Build your MCP server](https://developers.openai.com/apps-sdk/build/mcp-server)
-- [OpenAI Apps SDK: Connect from ChatGPT](https://developers.openai.com/apps-sdk/deploy/connect-chatgpt)
-- [OpenAI Apps SDK: Authentication](https://developers.openai.com/apps-sdk/build/auth)
-- [OpenAI: Build plugins](https://developers.openai.com/codex/build-plugins)
-- [Pippit](https://xyq.jianying.com/)
+未经单独明确授权，不执行 `npm publish`、production marketplace activation、破坏性回滚或用户数据删除。
+Feature branch/PR 授权不等于发布授权。
+
+## 13. 修改架构时的检查清单
+
+提交前至少回答：
+
+1. 变化属于 HTTP、MCP、Widget、OpenCode、Dev 或 storage 哪个 surface？
+2. 是否产生了跨层 import，或绕过 Facade HTTP/SDK/domain port？
+3. 是否改变 tool、schema、description、result meaning、Widget URI/MIME/CSP/binding 或 Skill？
+4. 是否改变领域文件格式、path、encryption envelope、migration/storage epoch？
+5. 是否需要 cold version/golden/new task，而不是 hot activation？
+6. 是否分别记录本地证据、目标 Host 证据和仍未证明的实现细节？
+
+最小结构门禁：
+
+```bash
+npm run check:architecture
+npm run check:plugin-contract
+npm run check:dev-gateway
+```
+
+发布候选还必须执行 AGENTS.md 中定义的完整 install/build/test/pack、真实 launcher、registry 与 release
+artifact gate。
