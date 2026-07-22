@@ -198,18 +198,23 @@ describe("Pippit stdio entrypoint", () => {
       })
       const imageJobId = (callResult.structuredContent as Record<string, string>).image_job_id
       await vi.waitFor(async () => expect(await readdir(outputRoot)).toHaveLength(1))
-      input.write(`${JSON.stringify({
-        id: 6,
-        jsonrpc: "2.0",
-        method: "tools/call",
-        params: { arguments: { image_job_id: imageJobId }, name: "pippit_get_image" },
-      })}\n`)
-      await vi.waitFor(() => expect(stdout.trim().split("\n")).toHaveLength(6))
-      responses = stdout.trim().split("\n").map((line) => JSON.parse(line) as {
-        id: number
-        result: Record<string, unknown>
-      })
-      const completedResult = responses.find((response) => response.id === 6)?.result
+      let completedResult: Record<string, unknown> | undefined
+      for (let attempt = 0; attempt < 20 && completedResult === undefined; attempt += 1) {
+        input.write(`${JSON.stringify({
+          id: 6,
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { arguments: { image_job_id: imageJobId }, name: "pippit_get_image" },
+        })}\n`)
+        await vi.waitFor(() => expect(stdout.trim().split("\n")).toHaveLength(6 + attempt))
+        responses = stdout.trim().split("\n").map((line) => JSON.parse(line) as {
+          id: number
+          result: Record<string, unknown>
+        })
+        const polledResult = responses.filter((response) => response.id === 6).at(-1)?.result
+        const status = (polledResult?.structuredContent as Record<string, unknown> | undefined)?.status
+        if (polledResult !== undefined && status !== "in_progress") completedResult = polledResult
+      }
       if (completedResult === undefined) throw new Error("Missing completed image result in test.")
       expect(completedResult.content).toEqual([{ text: "Generated 1 image.", type: "text" }])
       expect(JSON.stringify(completedResult)).not.toContain("aW1hZ2U=")
@@ -257,7 +262,8 @@ describe("Pippit stdio entrypoint", () => {
         }),
         "",
       ].join("\n"))
-      await vi.waitFor(() => expect(stdout.trim().split("\n")).toHaveLength(9))
+      const responseCountAfterPoll = responses.length
+      await vi.waitFor(() => expect(stdout.trim().split("\n")).toHaveLength(responseCountAfterPoll + 3))
       input.end()
       await running
       responses = stdout.trim().split("\n").map((line) => JSON.parse(line) as {

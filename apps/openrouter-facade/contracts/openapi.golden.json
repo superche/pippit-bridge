@@ -593,9 +593,14 @@
                     }
                   },
                   "model": {
+                    "default": "pippit/seedance-2.0-mini",
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 256
+                    "enum": [
+                      "pippit/seedance-2.0-mini",
+                      "pippit/seedance-2.0",
+                      "pippit/seedance-2.0-mini-lite",
+                      "pippit/seedance-2.0-vision"
+                    ]
                   },
                   "prompt": {
                     "type": "string",
@@ -766,9 +771,12 @@
                     }
                   },
                   "model": {
+                    "default": "pippit/seedream-5.0",
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 256
+                    "enum": [
+                      "pippit/seedream-5.0",
+                      "pippit/seedream-5.0-pro"
+                    ]
                   },
                   "n": {
                     "default": 1,
@@ -1015,8 +1023,14 @@
                     }
                   },
                   "model": {
+                    "default": "pippit/seedance-2.0-mini",
                     "type": "string",
-                    "minLength": 1
+                    "enum": [
+                      "pippit/seedance-2.0-mini",
+                      "pippit/seedance-2.0",
+                      "pippit/seedance-2.0-mini-lite",
+                      "pippit/seedance-2.0-vision"
+                    ]
                   },
                   "prompt": {
                     "type": "string",
@@ -1576,6 +1590,7 @@
             "type": "array"
           },
           "model": {
+            "default": "pippit/seedream-5.0",
             "enum": [
               "pippit/seedream-5.0",
               "pippit/seedream-5.0-pro"
@@ -1607,7 +1622,6 @@
           }
         },
         "required": [
-          "model",
           "prompt"
         ],
         "type": "object"
@@ -2364,8 +2378,13 @@
             "type": "array"
           },
           "model": {
-            "maxLength": 256,
-            "minLength": 1,
+            "default": "pippit/seedance-2.0-mini",
+            "enum": [
+              "pippit/seedance-2.0-mini",
+              "pippit/seedance-2.0",
+              "pippit/seedance-2.0-mini-lite",
+              "pippit/seedance-2.0-vision"
+            ],
             "type": "string"
           },
           "prompt": {
@@ -2431,7 +2450,6 @@
           }
         },
         "required": [
-          "model",
           "segment",
           "source_job_id"
         ],
@@ -2565,6 +2583,13 @@
             "type": "array"
           },
           "model": {
+            "default": "pippit/seedance-2.0-mini",
+            "enum": [
+              "pippit/seedance-2.0-mini",
+              "pippit/seedance-2.0",
+              "pippit/seedance-2.0-mini-lite",
+              "pippit/seedance-2.0-vision"
+            ],
             "type": "string"
           },
           "prompt": {
@@ -2621,7 +2646,6 @@
           }
         },
         "required": [
-          "model",
           "prompt"
         ],
         "type": "object"

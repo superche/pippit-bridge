@@ -48,7 +48,7 @@ describe("PippitVideoService", () => {
       accessKey: "ak-secret",
       aspectRatio: "9:16",
       duration: 10,
-      model: "pippit/seedance-2.0-fast",
+      model: "pippit/seedance-2.0",
       maxWaitSeconds: PIPPIT_MAX_WAIT_SECONDS,
       prompt: "A product reveal",
       references: [
@@ -63,7 +63,7 @@ describe("PippitVideoService", () => {
     })
 
     expect(result).toMatchObject({
-      model: "pippit/seedance-2.0-fast",
+      model: "pippit/seedance-2.0",
       runId: "run-1",
       status: "pending",
       threadId: "thread-1",
@@ -77,7 +77,7 @@ describe("PippitVideoService", () => {
           audios: [{ pippit_asset_id: "asset-3" }],
           duration_sec: 10,
           images: [{ pippit_asset_id: "asset-1" }],
-          model: "seedance2.0_fast_vision",
+          model: "seedance2.0_direct",
           prompt: "A product reveal",
           ratio: "9:16",
           resolution: "720p",
@@ -166,7 +166,7 @@ describe("PippitVideoService", () => {
     await expect(
       service.generate({
         accessKey: "ak-secret",
-        model: "pippit/seedance-2.0-fast",
+        model: "pippit/seedance-2.0",
         prompt: "A product reveal",
         resolution: "1080p",
         rootDirectory: process.cwd(),

@@ -133,6 +133,22 @@ describe("release epoch fencing", () => {
 })
 
 describe("OpenRouter image generation", () => {
+  it("defaults an omitted image model to Seedream 5.0", async () => {
+    const harness = createHarness({ imageUrls: ["https://cdn.test/generated.png"] })
+    const response = await harness.app.inject({
+      headers: bearer(FACADE_KEY),
+      method: "POST",
+      payload: { prompt: "A product poster" },
+      url: "/api/v1/images",
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json().model).toBe("pippit/seedream-5.0")
+    expect(harness.submittedRequests.at(-1)).toMatchObject({
+      general_agent_settings: { image_model: "seedream_5.0" },
+    })
+  })
+
   it("lists Seedream models and completes a Pro reference-image request", async () => {
     const harness = createHarness({ imageUrls: ["https://cdn.test/generated.png"], videoUrls: [] })
 
@@ -605,10 +621,19 @@ describe("OpenRouter video facade", () => {
     expect(response.json().paths["/api/v1/videos/edits"]).toHaveProperty("post")
     expect(response.json().components.parameters).not.toHaveProperty("IdempotencyKey")
     expect(response.json().components.schemas.VideoEditRequest.required).toEqual([
-      "model",
       "segment",
       "source_job_id",
     ])
+    expect(response.json().components.schemas.VideoEditRequest.properties.model.default)
+      .toBe("pippit/seedance-2.0-mini")
+    expect(response.json().components.schemas.ImageGenerationRequest).toMatchObject({
+      properties: { model: { default: "pippit/seedream-5.0" } },
+      required: ["prompt"],
+    })
+    expect(response.json().components.schemas.VideoGenerationRequest).toMatchObject({
+      properties: { model: { default: "pippit/seedance-2.0-mini" } },
+      required: ["prompt"],
+    })
   })
 
   it("requires an authorized facade API key", async () => {
@@ -641,8 +666,42 @@ describe("OpenRouter video facade", () => {
     })
 
     expect(response.statusCode).toBe(200)
-    expect(response.json().data).toHaveLength(4)
+    expect(response.json().data.map((model: { id: string }) => model.id)).toEqual([
+      "pippit/seedance-2.0-mini",
+      "pippit/seedance-2.0",
+      "pippit/seedance-2.0-mini-lite",
+      "pippit/seedance-2.0-vision",
+    ])
     expect(response.json().data[0]).not.toHaveProperty("upstreamModel")
+  })
+
+  it("defaults an omitted video model to Seedance 2.0 Mini", async () => {
+    const harness = createHarness()
+    const response = await harness.app.inject({
+      headers: bearer(FACADE_KEY),
+      method: "POST",
+      payload: { prompt: "Default video" },
+      url: "/api/v1/videos",
+    })
+
+    expect(response.statusCode).toBe(202)
+    expect(response.json().model).toBe("pippit/seedance-2.0-mini")
+    expect(harness.submittedRequests.at(-1)).toMatchObject({
+      video_part_tool_param: { model: "Seedance_2.0_mini" },
+    })
+  })
+
+  it("rejects a removed video model before upstream submission", async () => {
+    const harness = createHarness()
+    const response = await harness.app.inject({
+      headers: bearer(FACADE_KEY),
+      method: "POST",
+      payload: { model: "pippit/seedance-2.0-fast", prompt: "Removed model" },
+      url: "/api/v1/videos",
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(harness.pippit.submitRun).not.toHaveBeenCalled()
   })
 
   it("does not assign idempotency semantics to an unrelated HTTP header", async () => {
@@ -698,7 +757,7 @@ describe("OpenRouter video facade", () => {
           audios: [{ pippit_asset_id: "asset-3" }],
           duration_sec: 10,
           images: [{ pippit_asset_id: "asset-1" }],
-          model: "seedance2.0_vision",
+          model: "seedance2.0_direct",
           prompt: "make a video",
           ratio: "9:16",
           resolution: "720p",
@@ -733,7 +792,6 @@ describe("OpenRouter video facade", () => {
             region: { height: 0.4, width: 0.3, x: 0.1, y: 0.2 },
           },
         ],
-        model: "pippit/seedance-2.0",
         prompt: "Keep the original camera motion",
         resolution: "720p",
         segment: { end_ms: 5_100, start_ms: 0 },
@@ -754,6 +812,7 @@ describe("OpenRouter video facade", () => {
       throw new Error("Expected a video submission")
     }
     expect(submitted.video_part_tool_param.duration_sec).toBe(5)
+    expect(submitted.video_part_tool_param.model).toBe("Seedance_2.0_mini")
     expect(submitted.video_part_tool_param.ratio).toBe("16:9")
     expect(submitted.video_part_tool_param.videos).toEqual([{
       pippit_asset_id: "asset-1",
@@ -800,7 +859,7 @@ describe("OpenRouter video facade", () => {
           instruction: "Restyle the full frame",
           region: { height: 1, width: 1, x: 0, y: 0 },
         }],
-        model: "pippit/seedance-2.0-fast",
+        model: "pippit/seedance-2.0",
         segment: { end_ms: 5_125, start_ms: 0 },
         source_job_id: source.json().id,
       },

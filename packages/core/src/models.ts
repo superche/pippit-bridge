@@ -43,6 +43,8 @@ const imageCommon = {
   supports_streaming: false as const,
 }
 
+export const PIPPIT_DEFAULT_IMAGE_MODEL = "pippit/seedream-5.0"
+
 export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
   {
     ...imageCommon,
@@ -73,14 +75,13 @@ export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
   },
 ]
 
-const imageAliases = new Map<string, ImageModelDefinition>()
+const imageModelsById = new Map<string, ImageModelDefinition>()
 for (const model of IMAGE_MODELS) {
-  imageAliases.set(model.id, model)
-  imageAliases.set(model.upstreamModel, model)
+  imageModelsById.set(model.id, model)
 }
 
 export function resolveImageModel(modelId: string): ImageModelDefinition {
-  const model = imageAliases.get(modelId)
+  const model = imageModelsById.get(modelId)
   if (!model) throw new UnknownImageModelError(modelId)
   return model
 }
@@ -120,32 +121,14 @@ const common = {
   supported_sizes: null,
 }
 
+export const PIPPIT_DEFAULT_VIDEO_MODEL = "pippit/seedance-2.0-mini"
+
 export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
-  {
-    ...common,
-    canonical_slug: "pippit/seedance-2.0-fast",
-    description:
-      "Pippit Seedance 2.0 Fast immersive-video model. Supports uploaded image, video, and audio references.",
-    id: "pippit/seedance-2.0-fast",
-    name: "Pippit: Seedance 2.0 Fast",
-    supported_resolutions: ["480p", "720p"],
-    upstreamModel: "seedance2.0_fast_vision",
-  },
-  {
-    ...common,
-    canonical_slug: "pippit/seedance-2.0",
-    description:
-      "Pippit Seedance 2.0 immersive-video model. Supports uploaded image, video, and audio references.",
-    id: "pippit/seedance-2.0",
-    name: "Pippit: Seedance 2.0",
-    supported_resolutions: ["480p", "720p", "1080p"],
-    upstreamModel: "seedance2.0_vision",
-  },
   {
     ...common,
     canonical_slug: "pippit/seedance-2.0-mini",
     description:
-      "Pippit Seedance 2.0 Mini immersive-video model. Supports uploaded image, video, and audio references.",
+      "Pippit Seedance 2.0 Mini immersive-video model on the VIP channel. Supports uploaded image, video, and audio references.",
     id: "pippit/seedance-2.0-mini",
     name: "Pippit: Seedance 2.0 Mini",
     supported_resolutions: ["480p", "720p"],
@@ -153,24 +136,43 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
   },
   {
     ...common,
+    canonical_slug: "pippit/seedance-2.0",
+    description:
+      "Pippit Seedance 2.0 immersive-video model on the non-VIP channel. Supports uploaded image, video, and audio references.",
+    id: "pippit/seedance-2.0",
+    name: "Pippit: Seedance 2.0",
+    supported_resolutions: ["480p", "720p"],
+    upstreamModel: "seedance2.0_direct",
+  },
+  {
+    ...common,
     canonical_slug: "pippit/seedance-2.0-mini-lite",
     description:
-      "Pippit Seedance 2.0 Mini Lite immersive-video model. Supports uploaded image, video, and audio references.",
+      "Pippit Seedance 2.0 Mini Lite immersive-video model on the non-VIP channel. Supports uploaded image, video, and audio references.",
     id: "pippit/seedance-2.0-mini-lite",
     name: "Pippit: Seedance 2.0 Mini Lite",
     supported_resolutions: ["480p", "720p"],
     upstreamModel: "Seedance_2.0_mini_lite",
   },
+  {
+    ...common,
+    canonical_slug: "pippit/seedance-2.0-vision",
+    description:
+      "Pippit Seedance 2.0 Vision immersive-video model on the VIP channel. Supports uploaded image, video, and audio references.",
+    id: "pippit/seedance-2.0-vision",
+    name: "Pippit: Seedance 2.0 Vision",
+    supported_resolutions: ["480p", "720p", "1080p"],
+    upstreamModel: "seedance2.0_vision",
+  },
 ]
 
-const aliases = new Map<string, VideoModelDefinition>()
+const videoModelsById = new Map<string, VideoModelDefinition>()
 for (const model of VIDEO_MODELS) {
-  aliases.set(model.id, model)
-  aliases.set(model.upstreamModel, model)
+  videoModelsById.set(model.id, model)
 }
 
 export function resolveVideoModel(modelId: string): VideoModelDefinition {
-  const model = aliases.get(modelId)
+  const model = videoModelsById.get(modelId)
   if (!model) {
     throw new UnknownVideoModelError(modelId)
   }

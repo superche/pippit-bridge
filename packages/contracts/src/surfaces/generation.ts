@@ -16,7 +16,7 @@ export const imageGenerationReferenceSchema = z.object({
 
 export const imageGenerationRequestSchema = z.object({
   input_references: z.array(imageGenerationReferenceSchema).max(9).optional(),
-  model: z.string().trim().min(1).max(256),
+  model: z.enum(["pippit/seedream-5.0", "pippit/seedream-5.0-pro"]).default("pippit/seedream-5.0"),
   n: z.number().int().min(1).max(10).default(1),
   prompt: z.string().trim().min(1).max(20_000),
   provider: z.object({ options: providerOptionsSchema.optional() }).strict().optional(),
@@ -57,7 +57,12 @@ export const videoEditSegmentSchema = z.object({
 
 export const videoEditRequestSchema = z.object({
   annotations: z.array(videoEditAnnotationSchema).max(20).default([]),
-  model: z.string().trim().min(1).max(256),
+  model: z.enum([
+    "pippit/seedance-2.0-mini",
+    "pippit/seedance-2.0",
+    "pippit/seedance-2.0-mini-lite",
+    "pippit/seedance-2.0-vision",
+  ]).default("pippit/seedance-2.0-mini"),
   prompt: z.string().trim().min(1).max(20_000).optional(),
   provider: z.object({ options: providerOptionsSchema.optional() }).strict().optional(),
   resolution: z.string().trim().min(1).max(64).optional(),
@@ -87,7 +92,12 @@ export const videoGenerationRequestSchema = z.object({
   frame_images: z.array(frameImageSchema).max(2).optional(),
   generate_audio: z.boolean().optional(),
   input_references: z.array(inputReferenceSchema).max(15).optional(),
-  model: z.string().trim().min(1),
+  model: z.enum([
+    "pippit/seedance-2.0-mini",
+    "pippit/seedance-2.0",
+    "pippit/seedance-2.0-mini-lite",
+    "pippit/seedance-2.0-vision",
+  ]).default("pippit/seedance-2.0-mini"),
   prompt: z.string().trim().min(1).max(20_000),
   provider: z.object({ options: providerOptionsSchema.optional() }).strict().optional(),
   resolution: z.string().trim().min(1).optional(),

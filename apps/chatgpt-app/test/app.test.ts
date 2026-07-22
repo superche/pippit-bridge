@@ -15,6 +15,8 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   CHATGPT_TOOL_NAMES,
   chatGptEditInputSchema,
+  chatGptGenerateInputSchema,
+  chatGptImageInputSchema,
   createChatGptAppRuntime,
   createChatGptAppMcpServer,
   type PippitFacadeClientLike,
@@ -46,6 +48,27 @@ function config(): ChatGptAppConfig {
 }
 
 describe("Pippit ChatGPT MCP App", () => {
+  it("defaults to Seedream 5.0 and Seedance 2.0 Mini and rejects removed models", () => {
+    expect(chatGptImageInputSchema.parse({ prompt: "paint" })).toMatchObject({
+      model: "pippit/seedream-5.0",
+    })
+    expect(chatGptGenerateInputSchema.parse({ idempotency_key: "job", prompt: "animate" })).toMatchObject({
+      model: "pippit/seedance-2.0-mini",
+    })
+    expect(chatGptEditInputSchema.parse({
+      annotations: [],
+      idempotency_key: "edit",
+      prompt: "change",
+      segment: { end_ms: 1_000, start_ms: 0 },
+      source_job_id: "job",
+    })).toMatchObject({ model: "pippit/seedance-2.0-mini" })
+    expect(chatGptGenerateInputSchema.safeParse({
+      idempotency_key: "job",
+      model: "pippit/seedance-2.0-fast",
+      prompt: "animate",
+    }).success).toBe(false)
+  })
+
   it("persists local latest-video lineage across App runtime restarts", async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), "pippit-chatgpt-lineage-"))
     temporaryRoots.push(dataRoot)
@@ -286,7 +309,7 @@ describe("Pippit ChatGPT MCP App", () => {
         byok_id: "credential_1",
         idempotency_key: "retry_1",
         image_urls: ["https://images.example.test/reference.png"],
-        model: "pippit/test",
+        model: "pippit/seedance-2.0-vision",
         prompt: "Animate this product",
         thread_id: "thread_1",
       },
@@ -324,7 +347,7 @@ describe("Pippit ChatGPT MCP App", () => {
         ],
         byok_id: "credential_1",
         idempotency_key: "edit_retry_1",
-        model: "pippit/test",
+        model: "pippit/seedance-2.0-vision",
         prompt: "Preserve the camera movement",
         resolution: "1080p",
         seed: 7,
@@ -346,7 +369,7 @@ describe("Pippit ChatGPT MCP App", () => {
         ],
         byok_id: "credential_1",
         idempotency_key: "edit_retry_1",
-        model: "pippit/test",
+        model: "pippit/seedance-2.0-vision",
         prompt: "Preserve the camera movement",
         resolution: "1080p",
         seed: 7,
@@ -377,7 +400,7 @@ describe("Pippit ChatGPT MCP App", () => {
     const base = {
       annotations: [],
       idempotency_key: "edit_1",
-      model: "pippit/test",
+      model: "pippit/seedance-2.0-vision",
       prompt: "Keep the subject centered",
       segment: { end_ms: 60_000, start_ms: 45_000 },
       source_job_id: "job_123",

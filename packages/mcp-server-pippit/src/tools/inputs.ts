@@ -1,4 +1,5 @@
 import { isAbsolute, win32 } from "node:path"
+import { PIPPIT_DEFAULT_IMAGE_MODEL, PIPPIT_DEFAULT_VIDEO_MODEL } from "@pippit-bridge/core"
 import {
   addAccessKeyToolInputContract,
   deleteAccessKeyToolInputContract,
@@ -153,6 +154,7 @@ export function parseGenerateInput(value: unknown): PippitGenerateVideoToolInput
   if ((frameImages?.length ?? 0) > 0 && (inputReferences?.length ?? 0) > 0) {
     throw new ToolInputError("frame_images cannot be combined with input_references.")
   }
+  const model = value.model === undefined ? PIPPIT_DEFAULT_VIDEO_MODEL : nonEmptyString(value.model, "model", 256)
   return {
     ...(value.aspect_ratio === undefined ? {} : { aspect_ratio: nonEmptyString(value.aspect_ratio, "aspect_ratio", 64) }),
     ...(value.byok_id === undefined ? {} : { byok_id: nonEmptyString(value.byok_id, "byok_id", 256) }),
@@ -160,7 +162,7 @@ export function parseGenerateInput(value: unknown): PippitGenerateVideoToolInput
     ...(frameImages === undefined ? {} : { frame_images: frameImages }),
     ...(value.idempotency_key === undefined ? {} : { idempotency_key: nonEmptyString(value.idempotency_key, "idempotency_key", 200) }),
     ...(inputReferences === undefined ? {} : { input_references: inputReferences }),
-    model: nonEmptyString(value.model, "model", 256),
+    model,
     prompt: nonEmptyString(value.prompt, "prompt", 20_000),
     ...(value.resolution === undefined ? {} : { resolution: nonEmptyString(value.resolution, "resolution", 64) }),
     ...(value.seed === undefined ? {} : { seed: optionalInteger(value.seed, "seed", -1, 4_294_967_295) as number }),
@@ -172,7 +174,7 @@ export function parseGenerateImageInput(value: unknown): PippitGenerateImageTool
   assertRuntimeContract(generateImageToolInputContract, value)
   if (!isRecord(value)) throw new ToolInputError("Tool arguments must be an object.")
   assertExactKeys(value, ["byok_id", "images", "model", "n", "prompt", "resolution", "thread_id"], "arguments")
-  const model = nonEmptyString(value.model, "model", 256)
+  const model = value.model === undefined ? PIPPIT_DEFAULT_IMAGE_MODEL : nonEmptyString(value.model, "model", 256)
   if (model !== "pippit/seedream-5.0" && model !== "pippit/seedream-5.0-pro") {
     throw new ToolInputError("model must be pippit/seedream-5.0 or pippit/seedream-5.0-pro.")
   }
@@ -250,7 +252,7 @@ export function parseEditInput(value: unknown): PippitEditVideoSegmentToolInput 
     annotations,
     ...(value.byok_id === undefined ? {} : { byok_id: nonEmptyString(value.byok_id, "byok_id", 256) }),
     ...(value.idempotency_key === undefined ? {} : { idempotency_key: nonEmptyString(value.idempotency_key, "idempotency_key", 200) }),
-    model: nonEmptyString(value.model, "model", 256),
+    model: value.model === undefined ? PIPPIT_DEFAULT_VIDEO_MODEL : nonEmptyString(value.model, "model", 256),
     ...(prompt === undefined ? {} : { prompt }),
     ...(value.resolution === undefined ? {} : { resolution: nonEmptyString(value.resolution, "resolution", 64) }),
     ...(value.seed === undefined ? {} : { seed: optionalInteger(value.seed, "seed", -1, 4_294_967_295) as number }),

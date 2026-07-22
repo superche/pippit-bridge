@@ -43,7 +43,7 @@ export PIPPIT_FACADE_API_KEY='<facade-api-key>'
 | `pippit_switch_access_key` | 切换同一 Facade API Key identity 的新任务 active 账号 | stdio MCP、Codex plugin |
 | `pippit_delete_access_key` | 显式确认后删除 facade 加密 store 中的账号 | stdio MCP、Codex plugin |
 
-图片生成只覆盖 Seedream 5.0 / 5.0 Pro；参考图片也可用于图片或视频生成，参考视频/音频仅用于视频。本包没有宣告通用文本、语音生成或转录工具。
+图片生成只覆盖 Seedream 5.0（默认）/ 5.0 Pro。视频生成只覆盖非 VIP 通道的 Seedance 2.0 / Seedance 2.0 Mini Lite，以及 VIP 通道的 Seedance 2.0 Vision / Seedance 2.0 Mini（默认）。参考图片也可用于图片或视频生成，参考视频/音频仅用于视频。本包没有宣告通用文本、语音生成或转录工具。
 
 `idempotency_key` 是视频 MCP/OpenCode plugin 的可选异常恢复字段，不属于 Facade/OpenRouter API。图片接口同步返回，不暴露该恢复字段。视频缺省时每次调用均独立提交；显式提供时，MCP 或 OpenCode 才在自己的私有账本中合并同 key 同请求、检测冲突并跨重启恢复。详见 [持久化幂等](./idempotency.md)。
 
