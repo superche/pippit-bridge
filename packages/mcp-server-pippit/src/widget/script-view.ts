@@ -254,7 +254,7 @@ export const WIDGET_SCRIPT_VIEW = String.raw`        if (!retryLocalPreview()) {
         startElement.setAttribute("aria-valuetext", formatTrimTime(segmentStartMs));
         endElement.setAttribute("aria-valuenow", String(segmentEndMs));
         endElement.setAttribute("aria-valuetext", formatTrimTime(segmentEndMs));
-        selectionLabelElement.textContent = formatTrimTime(segmentStartMs) + " — " + formatTrimTime(segmentEndMs);
+        selectionLabelElement.textContent = formatTrimTime(segmentStartMs) + "–" + formatTrimTime(segmentEndMs);
         rangeDurationElement.textContent = ((segmentEndMs - segmentStartMs) / 1000).toFixed(1) + " sec";
         renderAnnotations();
         updateSubmitState();
