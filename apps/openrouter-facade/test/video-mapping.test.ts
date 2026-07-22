@@ -24,12 +24,12 @@ describe("video mapping", () => {
     ).toThrowError(expect.objectContaining({ code: "unsupported_parameter", param: "size" }))
   })
 
-  it("rejects 1080p for every model except Seedance 2.0 vision", () => {
+  it("rejects 1080p for every model except Seedance 2.0 Vision", () => {
     expect(() =>
-      resolveOutputGeometry({ resolution: "1080p" }, resolveVideoModel("pippit/seedance-2.0-fast")),
+      resolveOutputGeometry({ resolution: "1080p" }, resolveVideoModel("pippit/seedance-2.0")),
     ).toThrowError(expect.objectContaining({ code: "unsupported_parameter", param: "resolution" }))
 
-    expect(resolveOutputGeometry({ resolution: "1080p" }, resolveVideoModel("pippit/seedance-2.0"))).toEqual({
+    expect(resolveOutputGeometry({ resolution: "1080p" }, resolveVideoModel("pippit/seedance-2.0-vision"))).toEqual({
       resolution: "1080p",
     })
   })

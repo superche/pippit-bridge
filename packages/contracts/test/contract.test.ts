@@ -42,19 +42,19 @@ describe("RuntimeContract", () => {
 
   it("normalizes explicit MCP defaults in runtime parsers", () => {
     expect(generateImageToolInputContract.parse({
-      model: "pippit/seedream-5.0",
       prompt: "paint",
-    })).toMatchObject({ n: 1 })
+    })).toMatchObject({ model: "pippit/seedream-5.0", n: 1 })
+    expect(generateVideoToolInputContract.parse({ prompt: "go" }))
+      .toMatchObject({ model: "pippit/seedance-2.0-mini" })
     expect(editVideoToolInputContract.parse({
       annotations: [{
         at_ms: 100,
         instruction: "brighten",
         region: { height: 0.5, width: 0.5, x: 0, y: 0 },
       }],
-      model: "pippit/seedance-2.0",
       segment: { end_ms: 1000, start_ms: 0 },
       source_job_id: "job",
-    })).toMatchObject({ source_index: 0 })
+    })).toMatchObject({ model: "pippit/seedance-2.0-mini", source_index: 0 })
     expect(downloadVideoToolInputContract.parse({ job_id: "job", output_path: "clips/result.mp4" }))
       .toMatchObject({ index: 0 })
   })
@@ -89,6 +89,24 @@ describe("RuntimeContract", () => {
       expect(() => contract.parse(rejected)).toThrow()
       expect(contract.toJsonSchema()).toMatchObject({ additionalProperties: false, type: "object" })
     }
+  })
+
+  it("rejects models outside the governed generation catalog", () => {
+    expect(() => generateVideoToolInputContract.parse({
+      model: "pippit/seedance-2.0-fast",
+      prompt: "go",
+    })).toThrow()
+    expect(() => editVideoToolInputContract.parse({
+      annotations: [],
+      model: "pippit/seedance-2.0-fast",
+      prompt: "edit",
+      segment: { end_ms: 100, start_ms: 0 },
+      source_job_id: "job",
+    })).toThrow()
+    expect(() => generateImageToolInputContract.parse({
+      model: "pippit/seedream-4.5",
+      prompt: "paint",
+    })).toThrow()
   })
 
   it("keeps BYOK secret/default handling in the publishable contract", () => {

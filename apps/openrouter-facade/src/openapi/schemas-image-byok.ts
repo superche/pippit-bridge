@@ -3,13 +3,13 @@ export const OPENAPI_IMAGE_BYOK_SCHEMAS = {
     additionalProperties: false,
     properties: {
       input_references: { items: { $ref: "#/components/schemas/ImageGenerationReference" }, maxItems: 9, type: "array" },
-      model: { enum: ["pippit/seedream-5.0", "pippit/seedream-5.0-pro"], type: "string" },
+      model: { default: "pippit/seedream-5.0", enum: ["pippit/seedream-5.0", "pippit/seedream-5.0-pro"], type: "string" },
       n: { default: 1, maximum: 10, minimum: 1, type: "integer" },
       prompt: { maxLength: 20000, minLength: 1, type: "string" },
       provider: { $ref: "#/components/schemas/ProviderRouting" },
       resolution: { description: "Seedream 5.0 Pro only; omit for Seedream 5.0.", enum: ["1K", "2K", "4K"], type: "string" },
     },
-    required: ["model", "prompt"],
+    required: ["prompt"],
     type: "object",
   },
   ImageGenerationResponse: {

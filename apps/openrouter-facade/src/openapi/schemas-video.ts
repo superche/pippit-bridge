@@ -81,7 +81,16 @@ export const OPENAPI_VIDEO_SCHEMAS = {
         maxItems: 20,
         type: "array",
       },
-      model: { maxLength: 256, minLength: 1, type: "string" },
+      model: {
+        default: "pippit/seedance-2.0-mini",
+        enum: [
+          "pippit/seedance-2.0-mini",
+          "pippit/seedance-2.0",
+          "pippit/seedance-2.0-mini-lite",
+          "pippit/seedance-2.0-vision",
+        ],
+        type: "string",
+      },
       prompt: {
         description: "Overall regeneration instruction. The compiled prompt, including annotations, may not exceed 20000 characters.",
         maxLength: 20000,
@@ -120,7 +129,7 @@ export const OPENAPI_VIDEO_SCHEMAS = {
         type: "string",
       },
     },
-    required: ["model", "segment", "source_job_id"],
+    required: ["segment", "source_job_id"],
     type: "object",
   },
   VideoEditSegment: {
@@ -182,7 +191,16 @@ export const OPENAPI_VIDEO_SCHEMAS = {
         maxItems: 15,
         type: "array",
       },
-      model: { type: "string" },
+      model: {
+        default: "pippit/seedance-2.0-mini",
+        enum: [
+          "pippit/seedance-2.0-mini",
+          "pippit/seedance-2.0",
+          "pippit/seedance-2.0-mini-lite",
+          "pippit/seedance-2.0-vision",
+        ],
+        type: "string",
+      },
       prompt: { maxLength: 20000, minLength: 1, type: "string" },
       provider: {
         additionalProperties: false,
@@ -227,7 +245,7 @@ export const OPENAPI_VIDEO_SCHEMAS = {
         type: "string",
       },
     },
-    required: ["model", "prompt"],
+    required: ["prompt"],
     type: "object",
   },
   VideoModel: {

@@ -59,12 +59,49 @@ describe("Pippit tool runtime", () => {
     const runtime = createPippitToolRuntime({ client: backend(), outputRoot: "/tmp/pippit-test" })
     expect(runtime.listTools().map((tool) => tool.name)).toEqual(PIPPIT_RUNTIME_TOOL_NAMES)
     expect(PIPPIT_TOOL_DEFINITIONS_BY_NAME.pippit_generate_video.inputSchema.required).not.toContain("idempotency_key")
+    expect(PIPPIT_TOOL_DEFINITIONS_BY_NAME.pippit_generate_video.inputSchema).toMatchObject({
+      properties: { model: { default: "pippit/seedance-2.0-mini" } },
+    })
+    expect(PIPPIT_TOOL_DEFINITIONS_BY_NAME.pippit_generate_image.inputSchema).toMatchObject({
+      properties: { model: { default: "pippit/seedream-5.0" } },
+    })
+    expect(PIPPIT_TOOL_DEFINITIONS_BY_NAME.pippit_edit_video_segment.inputSchema).toMatchObject({
+      properties: { model: { default: "pippit/seedance-2.0-mini" } },
+    })
     expect(PIPPIT_TOOL_DEFINITIONS_BY_NAME.pippit_edit_video_segment.inputSchema.required).not.toContain("idempotency_key")
     expect(getPippitToolDefinition("pippit_add_access_key").inputSchema).toMatchObject({
       additionalProperties: false,
       properties: { account_name: expect.any(Object) },
       required: ["account_name"],
     })
+  })
+
+  it("applies governed image and video defaults when model is omitted", async () => {
+    const generateImage = vi.fn(async () => ({
+      created: 1,
+      data: [{ b64_json: "aW1hZ2U=" }],
+      model: "pippit/seedream-5.0",
+      usage: { cost: null, is_byok: true },
+    }))
+    const editVideo = vi.fn(async () => ({ id: "edit-1", polling_url: "/poll", status: "pending" as const }))
+    const generateVideo = vi.fn(async () => ({ id: "job-1", polling_url: "/poll", status: "pending" as const }))
+    const runtime = createPippitToolRuntime({
+      client: backend({ editVideo, generateImage, generateVideo }),
+      outputRoot: "/tmp/pippit-test",
+    })
+
+    await runtime.callTool("pippit_generate_image", { prompt: "Default image" })
+    await runtime.callTool("pippit_generate_video", { prompt: "Default video" })
+    await runtime.callTool("pippit_edit_video_segment", {
+      annotations: [],
+      prompt: "Default edit",
+      segment: { end_ms: 1_000, start_ms: 0 },
+      source_job_id: "source-job",
+    })
+
+    expect(generateImage).toHaveBeenCalledWith(expect.objectContaining({ model: "pippit/seedream-5.0" }))
+    expect(generateVideo).toHaveBeenCalledWith(expect.objectContaining({ model: "pippit/seedance-2.0-mini" }))
+    expect(editVideo).toHaveBeenCalledWith(expect.objectContaining({ model: "pippit/seedance-2.0-mini" }))
   })
 
   it("deduplicates exact submissions and rejects key reuse with another payload", async () => {

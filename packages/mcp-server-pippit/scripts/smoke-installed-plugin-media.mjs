@@ -43,7 +43,7 @@ const facade = createServer((request, response) => {
   if (request.method === "GET" && url.pathname === "/api/v1/videos/job_installed_media") {
     json(response, 200, {
       id: "job_installed_media",
-      model: "pippit/seedance-2.0-fast",
+      model: "pippit/seedance-2.0-mini",
       polling_url: "/api/v1/videos/job_installed_media",
       status: "completed",
       unsigned_urls: ["/api/v1/videos/job_installed_media/content?index=0"],

@@ -1,5 +1,6 @@
 import {
   UnknownVideoModelError,
+  PIPPIT_DEFAULT_VIDEO_MODEL,
   resolveVideoModel,
   type PublicHttpFetcher,
   type ReferenceKind,
@@ -84,7 +85,7 @@ interface PreparedReferences {
   readonly videos: readonly PippitMediaReference[]
 }
 
-export const PIPPIT_DEFAULT_VIDEO_MODEL = "pippit/seedance-2.0"
+export { PIPPIT_DEFAULT_VIDEO_MODEL }
 export const PIPPIT_DEFAULT_VIDEO_DURATION = 5
 export const PIPPIT_MAX_WAIT_SECONDS = PIPPIT_DEFAULT_TIMEOUT_MS / 1_000
 const DEFAULT_MAX_WAIT_SECONDS = PIPPIT_MAX_WAIT_SECONDS
