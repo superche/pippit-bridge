@@ -7,7 +7,7 @@ import { isAbsolute, join, resolve } from "node:path"
 import { createInterface } from "node:readline"
 import { once } from "node:events"
 
-const EXPECTED_PLUGIN_VERSION = "0.2.16"
+const EXPECTED_PLUGIN_VERSION = "0.2.17"
 
 const [entryArgument, mediaArgument] = process.argv.slice(2)
 if (entryArgument === undefined || mediaArgument === undefined) {
@@ -246,8 +246,8 @@ try {
     protocolVersion: "2025-11-25",
   })
   if (initialized?.serverInfo?.version !== EXPECTED_PLUGIN_VERSION) throw new Error("Unexpected installed plugin version.")
-  const resource = await rpc("resources/read", { uri: "ui://widget/pippit-video-job-v14.html" })
-  if (!resource?.contents?.[0]?.text?.includes("pippit-video-editor")) throw new Error("Missing v14 widget resource.")
+  const resource = await rpc("resources/read", { uri: "ui://widget/pippit-video-job-v15.html" })
+  if (!resource?.contents?.[0]?.text?.includes("pippit-video-editor")) throw new Error("Missing v15 widget resource.")
   const result = await rpc("tools/call", {
     arguments: { job_id: "job_installed_media" },
     name: "pippit_get_video",

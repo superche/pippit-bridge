@@ -1,7 +1,6 @@
 import {
   createPublicHttpFetcher,
   createReferenceLoader,
-  type IdempotencyBeginResult,
   type IdempotencyStore,
   VIDEO_MODELS,
 } from "@pippit-bridge/core"
@@ -17,16 +16,11 @@ import {
   type PluginInput,
   type PluginOptions,
 } from "@opencode-ai/plugin"
-import { join } from "node:path"
 import {
-  FilePippitAccountStore,
-  LazyPippitAccountStore,
   PippitAccountManager,
   normalizeAccountName,
-  type PippitAccountSelector,
-  type PippitAccountSummary,
 } from "./account-store.js"
-import { PippitCredentialSource, type PippitRuntimeCredential } from "./auth.js"
+import { PippitCredentialSource } from "./auth.js"
 import {
   PIPPIT_DEFAULT_VIDEO_DURATION,
   PIPPIT_DEFAULT_VIDEO_MODEL,
@@ -39,125 +33,26 @@ import {
   PIPPIT_ACCESS_KEY_PAGE,
   parsePluginOptions,
 } from "./options.js"
-import { LazyOpenCodeIdempotencyStore } from "./idempotency.js"
+import {
+  accountOutput,
+  accountSelector,
+  ambiguousSubmissionError,
+  assertNoAccountSelector,
+  createDefaultAccountManager,
+  createDefaultIdempotencyStore,
+  environmentOverride,
+  hasControlCharacter,
+  idempotencyError,
+  normalizeToolError,
+  resultOutput,
+} from "./plugin-support.js"
+import { createGetVideoTool } from "./get-video-tool.js"
 
 export interface PippitPluginDependencies {
   readonly accounts?: PippitAccountManager
   readonly enrollment?: PippitAccessKeyEnrollmentBackend
   readonly idempotency?: IdempotencyStore
   readonly videos?: Pick<PippitVideoService, "generate" | "get">
-}
-
-function accountOutput(account: PippitAccountSummary): Record<string, unknown> {
-  return {
-    account_id: account.id,
-    account_name: account.name,
-    masked_ak: account.maskedAccessKey,
-    active: account.active,
-    created_at: account.createdAt,
-    updated_at: account.updatedAt,
-  }
-}
-
-function resultOutput(
-  result: PippitToolResult,
-  credential: PippitRuntimeCredential,
-  binding?: { readonly persisted: boolean; readonly warning?: string },
-): string {
-  return JSON.stringify(
-    {
-      status: result.status,
-      run_id: result.runId,
-      thread_id: result.threadId,
-      ...(credential.accountId === undefined ? {} : { account_id: credential.accountId }),
-      ...(credential.accountName === undefined ? {} : { account_name: credential.accountName }),
-      ...(result.model === undefined ? {} : { model: result.model }),
-      ...(result.files === undefined ? {} : { files: result.files }),
-      ...(result.videoUrls === undefined ? {} : { video_urls: result.videoUrls }),
-      ...(result.failure === undefined ? {} : { failure: result.failure }),
-      ...(result.webThreadLink === undefined ? {} : { web_thread_link: result.webThreadLink }),
-      ...(binding === undefined ? {} : { account_binding_persisted: binding.persisted }),
-      ...(binding?.warning === undefined ? {} : { warning: binding.warning }),
-    },
-    null,
-    2,
-  )
-}
-
-function normalizeToolError(error: unknown): Error {
-  if (error instanceof PippitApiError && (error.status === 401 || error.status === 403)) {
-    return new Error(
-      "The active Pippit Access Key was rejected. Use pippit_manage_access_keys to switch or configure an account and try again.",
-    )
-  }
-  if (error instanceof Error) return error
-  return new Error("Pippit could not complete the video operation.")
-}
-
-function createDefaultAccountManager(input: PluginInput): PippitAccountManager {
-  const store = new LazyPippitAccountStore(async () => {
-    const response = await input.client.path.get()
-    const statePath = response.data?.state
-    if (typeof statePath !== "string" || statePath.trim() === "") {
-      throw new Error("OpenCode did not provide a global state path for the Pippit account store.")
-    }
-    return new FilePippitAccountStore(join(statePath, "pippit", "access-keys.json"))
-  })
-  return new PippitAccountManager(store)
-}
-
-function createDefaultIdempotencyStore(input: PluginInput): IdempotencyStore {
-  return new LazyOpenCodeIdempotencyStore(async () => {
-    const response = await input.client.path.get()
-    const statePath = response.data?.state
-    if (typeof statePath !== "string" || statePath.trim() === "") {
-      throw new Error("OpenCode did not provide a global state path for the Pippit idempotency store.")
-    }
-    return statePath
-  })
-}
-
-function idempotencyError(result: Exclude<IdempotencyBeginResult, { readonly kind: "replay" | "started" }>): Error {
-  if (result.kind === "conflict") return new Error("idempotency_key was already used for a different Pippit request.")
-  if (result.kind === "in_progress") return new Error(`The Pippit request for this idempotency_key is still ${result.phase}.`)
-  if (result.kind === "indeterminate") {
-    return new Error("The previous Pippit submission may have been accepted. Do not retry automatically; inspect the original task and use a new key only after reconciliation.")
-  }
-  return new Error(`The previous Pippit request for this idempotency_key failed (${result.errorCode}).`)
-}
-
-function ambiguousSubmissionError(error: unknown): boolean {
-  return !(error instanceof PippitApiError) || ["ABORTED", "INVALID_RESPONSE", "NETWORK_ERROR", "TIMEOUT"].includes(error.code)
-}
-
-function hasControlCharacter(value: string): boolean {
-  return [...value].some((character) => {
-    const codePoint = character.codePointAt(0)
-    return codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)
-  })
-}
-
-function accountSelector(input: {
-  readonly account_id?: string | undefined
-  readonly account_name?: string | undefined
-}): PippitAccountSelector {
-  return {
-    ...(input.account_id === undefined ? {} : { accountId: input.account_id }),
-    ...(input.account_name === undefined ? {} : { accountName: input.account_name }),
-  }
-}
-
-function assertNoAccountSelector(input: {
-  readonly account_id?: string | undefined
-  readonly account_name?: string | undefined
-}): void {
-  if (input.account_id !== undefined || input.account_name !== undefined) {
-    throw new Error("This access-key operation does not accept an account selector.")
-  }
-}
-
-function environmentOverride(credentials: PippitCredentialSource): string | null {
-  return credentials.hasEnvironmentOverride() ? PIPPIT_ACCESS_KEY_ENV : null
 }
 
 async function initializePippitPlugin(
@@ -565,79 +460,7 @@ async function initializePippitPlugin(
           }
         },
       }),
-      pippit_get_video: tool({
-        description:
-          "Check a Pippit video run, optionally wait for completion, and download completed videos into the current worktree.",
-        args: {
-          account_id: schema
-            .string()
-            .uuid()
-            .optional()
-            .describe(
-              "Explicit managed account for an unbound run. A saved run binding always wins and must match this value.",
-            ),
-          download: schema.boolean().default(true),
-          max_wait_seconds: schema
-            .number()
-            .int()
-            .min(1)
-            .max(PIPPIT_MAX_WAIT_SECONDS)
-            .default(PIPPIT_MAX_WAIT_SECONDS),
-          output_directory: schema.string().min(1).optional(),
-          run_id: schema.string().min(1),
-          thread_id: schema.string().min(1),
-          wait_for_completion: schema.boolean().default(false),
-        },
-        async execute(args, context) {
-          const download = args.download ?? true
-          const maxWaitSeconds = args.max_wait_seconds ?? PIPPIT_MAX_WAIT_SECONDS
-          const outputDirectory = args.output_directory ?? options.outputDirectory
-          const waitForCompletion = args.wait_for_completion ?? false
-          if (download) {
-            await context.ask({
-              always: [],
-              metadata: {
-                ...(args.account_id === undefined ? {} : { account_id: args.account_id }),
-                output_directory: outputDirectory,
-                run_id: args.run_id,
-                target_origin: options.baseURL,
-              },
-              patterns: [options.baseURL, outputDirectory, args.run_id],
-              permission: "pippit_download_video",
-            })
-          }
-          context.metadata({ title: "Checking Pippit video", metadata: { run_id: args.run_id } })
-          try {
-            const credential = await credentials.readForRun(
-              args.run_id,
-              args.thread_id,
-              args.account_id,
-            )
-            const result = await videos.get({
-              accessKey: credential.accessKey,
-              download,
-              maxWaitSeconds,
-              outputDirectory,
-              rootDirectory: context.worktree,
-              runId: args.run_id,
-              signal: context.abort,
-              threadId: args.thread_id,
-              waitForCompletion,
-            })
-            return {
-              metadata: {
-                run_id: result.runId,
-                status: result.status,
-                ...(credential.accountId === undefined ? {} : { account_id: credential.accountId }),
-              },
-              output: resultOutput(result, credential),
-              title: `Pippit video · ${result.status}`,
-            }
-          } catch (error) {
-            throw normalizeToolError(error)
-          }
-        },
-      }),
+      pippit_get_video: createGetVideoTool(options, credentials, videos),
     },
   }
 }

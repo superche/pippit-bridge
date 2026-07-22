@@ -438,7 +438,7 @@ export const PIPPIT_IMAGE_WIDGET_HTML = String.raw`<!doctype html>
       window.setTimeout(useOpenAiResult, 600);
       request("ui/initialize", {
         appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
-        appInfo: { name: "pippit-image-result", title: "Pippit image result", version: "0.2.16" },
+        appInfo: { name: "pippit-image-result", title: "Pippit image result", version: "0.2.17" },
         protocolVersion: protocolVersion
       }).then(function (result) {
         protocolReady = true;

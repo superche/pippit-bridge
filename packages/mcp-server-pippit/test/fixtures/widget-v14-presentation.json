@@ -1,0 +1,15 @@
+{
+  "source": {
+    "baselineCommit": "e022f1117da8a7bef2b80a796fcd9c1a0a556fa9",
+    "widgetBlob": "2edbb29ba6b9d46b63862d78409eb0c95ddf48e5"
+  },
+  "scenarios": [
+    { "awaitingPreview": false, "clearPoll": false, "clearPreviewRenewal": true, "hasPreview": false, "schedulePoll": true, "status": "pending", "view": "loading" },
+    { "awaitingPreview": false, "clearPoll": false, "clearPreviewRenewal": true, "hasPreview": false, "schedulePoll": true, "status": "in_progress", "view": "loading" },
+    { "awaitingPreview": true, "clearPoll": false, "clearPreviewRenewal": true, "hasPreview": false, "schedulePoll": true, "status": "completed", "view": "loading" },
+    { "awaitingPreview": false, "clearPoll": true, "clearPreviewRenewal": false, "hasPreview": true, "schedulePoll": false, "status": "completed", "view": "editor" },
+    { "awaitingPreview": false, "clearPoll": true, "clearPreviewRenewal": true, "hasPreview": false, "schedulePoll": false, "status": "failed", "view": "terminal" },
+    { "awaitingPreview": false, "clearPoll": true, "clearPreviewRenewal": true, "hasPreview": false, "schedulePoll": false, "status": "cancelled", "view": "terminal" },
+    { "awaitingPreview": false, "clearPoll": true, "clearPreviewRenewal": true, "hasPreview": false, "schedulePoll": false, "status": "expired", "view": "terminal" }
+  ]
+}

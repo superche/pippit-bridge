@@ -8,16 +8,24 @@
   "engines": {
     "node": ">=22.0.0"
   },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -b tsconfig.build.json --force",
+    "generate:openapi-golden": "npm run build && node scripts/generate-openapi-golden.mjs",
     "pretest": "npm run build -w @pippit-bridge/core && npm run build -w @pippit-bridge/sdk",
     "pretypecheck": "npm run build -w @pippit-bridge/core && npm run build -w @pippit-bridge/sdk",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --configLoader native"
   },
   "dependencies": {
-    "@pippit-bridge/core": "0.1.0",
-    "@pippit-bridge/sdk": "0.1.0",
+    "@pippit-bridge/contracts": "0.1.0",
+    "@pippit-bridge/core": "0.1.1",
+    "@pippit-bridge/sdk": "0.1.1",
     "fastify": "^5.6.2",
     "zod": "^4.1.12"
   }

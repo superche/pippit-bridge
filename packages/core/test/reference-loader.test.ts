@@ -142,6 +142,24 @@ describe('createReferenceLoader', () => {
     );
   });
 
+  it('pins a validated public IPv6 DNS answer into the production transport seam', async () => {
+    const transport = vi.fn<ReferenceTransport>(async () =>
+      new Response(PNG_BYTES, { headers: { 'content-type': 'image/png' } }));
+    const lookup: ReferenceLookup = async () => [{
+      address: '2606:2800:220:1:248:1893:25c8:1946',
+      family: 6,
+    }];
+    const loader = createReferenceLoader({ lookup, transport });
+
+    await loader.load('https://media.example/reference.png', 'image');
+
+    expect(transport).toHaveBeenCalledWith(
+      new URL('https://media.example/reference.png'),
+      { address: '2606:2800:220:1:248:1893:25c8:1946', family: 6 },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
   it('blocks private literal addresses and private DNS answers by default', async () => {
     const fetchImpl = vi.fn<ReferenceFetch>();
     const literalLoader = createReferenceLoader({ fetchImpl });
@@ -151,6 +169,23 @@ describe('createReferenceLoader', () => {
     });
 
     await expect(literalLoader.load('http://127.0.0.1/video.mp4', 'video')).rejects.toMatchObject({
+      code: 'PRIVATE_ADDRESS',
+    });
+    await expect(dnsLoader.load('https://media.example/video.mp4', 'video')).rejects.toMatchObject({
+      code: 'PRIVATE_ADDRESS',
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('blocks IPv4-mapped IPv6 literals and DNS answers', async () => {
+    const fetchImpl = vi.fn<ReferenceFetch>();
+    const literalLoader = createReferenceLoader({ fetchImpl });
+    const dnsLoader = createReferenceLoader({
+      fetchImpl,
+      lookup: async () => [{ address: '::ffff:127.0.0.1', family: 6 }],
+    });
+
+    await expect(literalLoader.load('http://[::ffff:127.0.0.1]/video.mp4', 'video')).rejects.toMatchObject({
       code: 'PRIVATE_ADDRESS',
     });
     await expect(dnsLoader.load('https://media.example/video.mp4', 'video')).rejects.toMatchObject({

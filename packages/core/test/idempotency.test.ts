@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, link, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { afterEach, describe, expect, it } from "vitest"
@@ -87,5 +87,36 @@ describe("FileIdempotencyStore", () => {
     const store = new FileIdempotencyStore({ filePath, hmacKey, lockRetryCount: 0 })
 
     await expect(store.begin(input)).resolves.toMatchObject({ kind: "started" })
+  })
+
+  it("fails closed for linked, non-private, or hard-linked state and lock paths", async () => {
+    const symlinkPath = await storePath()
+    const symlinkStore = new FileIdempotencyStore({ filePath: symlinkPath, hmacKey })
+    await symlinkStore.begin(input)
+    const symlinkTarget = `${symlinkPath}.target`
+    await rename(symlinkPath, symlinkTarget)
+    await symlink(symlinkTarget, symlinkPath)
+    await expect(symlinkStore.begin(input)).rejects.toMatchObject({ code: "INVALID_STATE" })
+
+    const publicPath = await storePath()
+    const publicStore = new FileIdempotencyStore({ filePath: publicPath, hmacKey })
+    await publicStore.begin(input)
+    await chmod(publicPath, 0o644)
+    await expect(publicStore.begin(input)).rejects.toMatchObject({ code: "INVALID_STATE" })
+
+    const hardlinkPath = await storePath()
+    const hardlinkStore = new FileIdempotencyStore({ filePath: hardlinkPath, hmacKey })
+    await hardlinkStore.begin(input)
+    const hardlinkTarget = `${hardlinkPath}.target`
+    await rename(hardlinkPath, hardlinkTarget)
+    await link(hardlinkTarget, hardlinkPath)
+    await expect(hardlinkStore.begin(input)).rejects.toMatchObject({ code: "INVALID_STATE" })
+
+    const lockedPath = await storePath()
+    const lockTarget = `${lockedPath}.lock-target`
+    await writeFile(lockTarget, JSON.stringify({ created_at: Date.now(), pid: 2_000_000_000 }), { mode: 0o600 })
+    await link(lockTarget, `${lockedPath}.lock`)
+    const lockedStore = new FileIdempotencyStore({ filePath: lockedPath, hmacKey, lockRetryCount: 0 })
+    await expect(lockedStore.begin(input)).rejects.toMatchObject({ code: "INVALID_STATE" })
   })
 })

@@ -11,13 +11,14 @@ import {
   writeFile,
 } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { dirname, join, resolve } from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 import { afterEach, describe, expect, it } from "vitest"
 
 import {
   PIPPIT_LOCAL_RUNTIME_VERSION,
+  resolveLocalFacadeDaemonEntry,
   resolvePippitLocalRuntimePaths,
   signLocalRuntimeReadyPayload,
 } from "../src/local-runtime.js"
@@ -49,6 +50,16 @@ const cleanupRoots = new Set<string>()
 const cleanupPids = new Set<number>()
 
 describe("Pippit local runtime paths", () => {
+  it("resolves the daemon beside bundled and compiled entries and from a source checkout", () => {
+    const packageRoot = resolve(tmpdir(), "pippit-mcp-layout")
+    expect(resolveLocalFacadeDaemonEntry(pathToFileURL(resolve(packageRoot, "dist/plugin-stdio.mjs")).href))
+      .toBe(resolve(packageRoot, "dist/local-facade-daemon.mjs"))
+    expect(resolveLocalFacadeDaemonEntry(pathToFileURL(resolve(packageRoot, "dist/local-runtime/runtime.js")).href))
+      .toBe(resolve(packageRoot, "dist/local-facade-daemon.mjs"))
+    expect(resolveLocalFacadeDaemonEntry(pathToFileURL(resolve(packageRoot, "src/local-runtime/runtime.ts")).href))
+      .toBe(resolve(packageRoot, "dist/local-facade-daemon.mjs"))
+  })
+
   it("keeps advanced bridge-home overrides self-contained", () => {
     const dataRoot = join(tmpdir(), "pippit-explicit-data-root")
     const paths = resolvePippitLocalRuntimePaths({ PIPPIT_BRIDGE_HOME: dataRoot }, tmpdir())
@@ -389,9 +400,11 @@ describe("Pippit local runtime bootstrap", () => {
         Array.from({ length: 6 }, () => runPlugin(dataRoot, listAccessKeysRequests())),
       )
 
-      for (const recovered of recoveredRuns) {
-        expect(toolCallResult(recovered)?.isError).not.toBe(true)
-      }
+      expect(recoveredRuns.map(recovered => ({
+        code: recovered.code,
+        result: toolCallResult(recovered),
+        stderr: recovered.stderr,
+      }))).not.toContainEqual(expect.objectContaining({ result: expect.objectContaining({ isError: true }) }))
       await expect(lstat(lockPath)).rejects.toMatchObject({ code: "ENOENT" })
       await expect(lstat(candidatePath)).rejects.toMatchObject({ code: "ENOENT" })
     },

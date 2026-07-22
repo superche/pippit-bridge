@@ -20,9 +20,10 @@ for await (const line of createInterface({ input: process.stdin })) {
   } else if (request.method === "resources/list") {
     process.stdout.write(`${JSON.stringify({ id: request.id, jsonrpc: "2.0", result: { resources: [{ mimeType: "text/plain", name: "Fixture", uri: "fixture://status" }] } })}\n`)
   } else if (request.method === "resources/templates/list") {
-    process.stdout.write(`${JSON.stringify({ id: request.id, jsonrpc: "2.0", result: { resourceTemplates: [] } })}\n`)
+    process.stdout.write(`${JSON.stringify({ id: request.id, jsonrpc: "2.0", result: { resourceTemplates: [{ mimeType: "text/plain", name: "Artifact", uriTemplate: "fixture://artifact/{id}" }] } })}\n`)
   } else if (request.method === "resources/read") {
-    process.stdout.write(`${JSON.stringify({ id: request.id, jsonrpc: "2.0", result: { contents: [{ mimeType: "text/plain", text: label, uri: "fixture://status" }] } })}\n`)
+    const uri = request.params.uri
+    process.stdout.write(`${JSON.stringify({ id: request.id, jsonrpc: "2.0", result: { contents: [{ mimeType: "text/plain", text: uri === "fixture://status" ? "static" : label, uri }] } })}\n`)
   } else if (request.method === "tools/call") {
     if (request.params.arguments?.crash) process.exit(91)
     const delay = request.params.arguments?.delay_ms ?? 0

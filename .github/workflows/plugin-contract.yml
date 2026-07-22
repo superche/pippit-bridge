@@ -46,6 +46,7 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
+      - run: npm run check:architecture
       - name: Record launcher boundary
         shell: pwsh
         run: Write-Output "Native Windows Codex launch is unsupported while .mcp.json requires /bin/sh."

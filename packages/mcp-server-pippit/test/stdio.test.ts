@@ -64,6 +64,12 @@ describe("Pippit stdio entrypoint", () => {
           },
         },
         { id: 2, jsonrpc: "2.0", method: "tools/list", params: {} },
+        {
+          id: 3,
+          jsonrpc: "2.0",
+          method: "resources/read",
+          params: { uri: PIPPIT_WIDGET_URI },
+        },
       ]
 
       const result = await new Promise<{ code: number | null; stderr: string; stdout: string }>((resolve, reject) => {
@@ -90,12 +96,21 @@ describe("Pippit stdio entrypoint", () => {
       const responses = result.stdout
         .split("\n")
         .filter(Boolean)
-        .map((line) => JSON.parse(line) as { id: number; result?: { serverInfo?: { name?: string }; tools?: { name?: string }[] } })
+        .map((line) => JSON.parse(line) as {
+          id: number
+          result?: {
+            contents?: Array<{ text?: string }>
+            serverInfo?: { name?: string }
+            tools?: { name?: string }[]
+          }
+        })
       expect(responses.find((response) => response.id === 1)?.result?.serverInfo?.name).toBe("pippit-video")
       expect(responses.find((response) => response.id === 2)?.result?.tools)
         .toContainEqual(expect.objectContaining({ name: "pippit_generate_image" }))
       expect(responses.find((response) => response.id === 2)?.result?.tools)
         .toContainEqual(expect.objectContaining({ name: "pippit_list_video_models" }))
+      expect(responses.find((response) => response.id === 3)?.result?.contents?.[0]?.text)
+        .toBe(await readFile(join(packageRoot, "assets/generated/pippit-video-job-v15.html"), "utf8"))
     } finally {
       await rm(installedRoot, { force: true, recursive: true })
     }

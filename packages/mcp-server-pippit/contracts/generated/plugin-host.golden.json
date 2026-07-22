@@ -52,6 +52,6 @@
     "name": "pippit-video",
     "repository": "https://github.com/superche/pippit-bridge",
     "skills": "./skills/",
-    "version": "0.2.16"
+    "version": "0.2.17"
   }
 }

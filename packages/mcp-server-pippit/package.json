@@ -1,7 +1,7 @@
 {
   "name": "@pippit-bridge/mcp-server",
-  "version": "0.2.16",
-  "description": "Dependency-free MCP server and Codex plugin for Pippit account management plus image and video generation",
+  "version": "0.2.17",
+  "description": "MCP server and self-contained Codex plugin for Pippit account management plus image and video generation",
   "type": "module",
   "license": "MIT",
   "sideEffects": false,
@@ -35,8 +35,20 @@
   "bin": {
     "pippit-mcp": "./dist/stdio.js"
   },
+  "dependencies": {
+    "@pippit-bridge/contracts": "0.1.0",
+    "@pippit-bridge/core": "0.1.1"
+  },
+  "devDependencies": {
+    "@pippit-bridge/openrouter-facade": "0.1.0"
+  },
   "scripts": {
-    "build": "tsc -b tsconfig.build.json --force && esbuild src/stdio.ts --bundle --platform=node --format=esm --target=node22 --legal-comments=none --outfile=dist/plugin-stdio.mjs && esbuild src/dev-stdio.ts --bundle --platform=node --format=esm --target=node22 --legal-comments=none --outfile=dist/dev-gateway-stdio.mjs && esbuild scripts/local-facade-daemon-entry.mjs --bundle --platform=node --format=esm --target=node22 --legal-comments=none --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/local-facade-daemon.mjs",
+    "build": "tsc -b tsconfig.build.json --force && npm run build:widget && npm run build:plugin-release",
+    "build:dev-host": "node scripts/build-artifact.mjs dev-host",
+    "build:facade-daemon": "node scripts/build-artifact.mjs facade-daemon",
+    "build:plugin-release": "node scripts/build-artifact.mjs all",
+    "build:widget": "node scripts/build-widget.mjs",
+    "build:worker-generation": "node scripts/build-artifact.mjs worker-generation",
     "prepack": "npm run build",
     "pretest": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",

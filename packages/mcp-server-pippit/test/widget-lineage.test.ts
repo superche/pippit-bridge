@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises"
+import { chmod, link, mkdtemp, readFile, readdir, rm, stat, symlink, unlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -70,5 +70,28 @@ describe("Pippit widget job lineage", () => {
     await first.record("A", "B")
     await expect(first.resolve("A")).resolves.toBe("B")
     await expect(second.resolve("A")).resolves.toBe("A")
+  })
+
+  it.skipIf(process.platform === "win32")("fails closed for unsafe lineage record metadata", async () => {
+    for (const attack of ["mode", "hardlink", "symlink"] as const) {
+      const stateRoot = await root()
+      const store = createPersistentPippitWidgetLineageStore({ root: stateRoot, scope: `scope-${attack}` })
+      await store.record("A", "B")
+      const [scopeDirectory] = await readdir(stateRoot)
+      const [sourceDirectory] = await readdir(join(stateRoot, scopeDirectory!))
+      const directory = join(stateRoot, scopeDirectory!, sourceDirectory!)
+      const [recordName] = await readdir(directory)
+      const recordPath = join(directory, recordName!)
+      if (attack === "mode") await chmod(recordPath, 0o644)
+      if (attack === "hardlink") await link(recordPath, join(directory, "unexpected-link"))
+      if (attack === "symlink") {
+        const target = join(stateRoot, "decoy.json")
+        await writeFile(target, await readFile(recordPath), { mode: 0o600 })
+        await unlink(recordPath)
+        await symlink(target, recordPath)
+      }
+      const reopened = createPersistentPippitWidgetLineageStore({ root: stateRoot, scope: `scope-${attack}` })
+      await expect(reopened.resolve("A")).rejects.toThrow()
+    }
   })
 })

@@ -6,6 +6,8 @@ export const DEV_WORKER_IPC_VERSION = 1
 export type DevStableErrorCode =
   | "DEV_CANDIDATE_SUPERSEDED"
   | "DEV_CONTRACT_MISMATCH"
+  | "DEV_DAEMON_RESTART_REQUIRED"
+  | "DEV_HOST_REBOOTSTRAP_REQUIRED"
   | "DEV_POST_ACTIVATION_UNSAFE_ROLLBACK"
   | "DEV_SEMANTIC_REVIEW_REQUIRED"
   | "DEV_SUPERVISOR_UNAVAILABLE"
@@ -39,6 +41,7 @@ interface GenerationState<TRequest, TResult> {
 export interface DevCandidateReview {
   readonly behaviorTestsPassed: boolean
   readonly contractHash: string
+  readonly subjectHash?: string
   readonly semanticClassification: "cold" | "hot-compatible" | "unreviewed"
 }
 

@@ -14,8 +14,15 @@ export type DevWorkerResult = PippitMcpCallToolResult | Readonly<Record<string, 
 export interface FrozenDevContract {
   readonly resources: Readonly<Record<string, unknown>>
   readonly resourceTemplates: Readonly<Record<string, unknown>>
+  readonly staticResourceReads: Readonly<Record<string, Readonly<Record<string, unknown>>>>
   readonly tools: readonly PippitToolDefinition[]
 }
+
+export interface DevOverlayContract {
+  readonly enableErrorPreview?: boolean
+}
+
+export type EffectiveDevHostContract = FrozenDevContract
 
 function stableToolFailure(error: unknown): PippitMcpCallToolResult {
   const code = error instanceof DevGatewayError ? error.code : "DEV_SUPERVISOR_UNAVAILABLE"
@@ -62,6 +69,18 @@ function devErrorPreviewTool(contract: FrozenDevContract): PippitToolDefinition 
   }
 }
 
+export function createEffectiveDevHostContract(
+  production: FrozenDevContract,
+  options: DevOverlayContract = {},
+): EffectiveDevHostContract {
+  if (options.enableErrorPreview !== true) return production
+  return {
+    ...production,
+    staticResourceReads: production.staticResourceReads,
+    tools: [...production.tools, devErrorPreviewTool(production)],
+  }
+}
+
 function devErrorPreviewResult(): PippitMcpCallToolResult {
   return {
     content: [{ text: "Opened the development-only Pippit error widget preview.", type: "text" }],
@@ -71,15 +90,10 @@ function devErrorPreviewResult(): PippitMcpCallToolResult {
 
 export function createDevMcpGateway(input: {
   readonly contract: FrozenDevContract
-  readonly enableErrorPreview?: boolean
   readonly pool: DevWorkerPool<DevWorkerRequest, DevWorkerResult>
 }): { readonly handle: (message: unknown) => Promise<JsonRpcResponse | undefined> } {
-  const errorPreviewTool = input.enableErrorPreview === true
-    ? devErrorPreviewTool(input.contract)
-    : undefined
-  const tools = errorPreviewTool === undefined
-    ? input.contract.tools
-    : [...input.contract.tools, errorPreviewTool]
+  const errorPreviewTool = input.contract.tools.find(tool => String(tool.name) === PIPPIT_DEV_ERROR_PREVIEW_TOOL_NAME)
+  const tools = input.contract.tools
   const readOnlyTools = new Set(tools
     .filter(tool => tool.annotations.readOnlyHint)
     .map(tool => tool.name))
@@ -111,6 +125,8 @@ export function createDevMcpGateway(input: {
       return input.contract.resourceTemplates
     },
     async readResource(uri) {
+      const frozen = input.contract.staticResourceReads[uri]
+      if (frozen !== undefined) return frozen
       const result = await input.pool.invoke({ method: "resources/read", uri })
       if (result === undefined || "content" in result) return undefined
       return result

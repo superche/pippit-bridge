@@ -64,7 +64,21 @@ export class ChildMcpWorkerGeneration implements DevWorkerGeneration<DevWorkerRe
       const resources = await worker.#request("resources/list", {}) as FrozenDevContract["resources"]
       const resourceTemplates = await worker.#request("resources/templates/list", {}) as FrozenDevContract["resourceTemplates"]
       if (!Array.isArray(tools?.tools)) throw new DevGatewayError("DEV_WORKER_NOT_READY", "Candidate did not provide valid frozen tool discovery.")
-      return { contract: { resourceTemplates, resources, tools: tools.tools }, worker }
+      const listedResources = "resources" in resources && Array.isArray(resources.resources)
+        ? resources.resources
+        : []
+      const staticResourceReads: Record<string, Readonly<Record<string, unknown>>> = {}
+      for (const resource of listedResources) {
+        if (typeof resource !== "object" || resource === null || !("uri" in resource) || typeof resource.uri !== "string") {
+          throw new DevGatewayError("DEV_WORKER_NOT_READY", "Candidate provided invalid static resource discovery.")
+        }
+        const result = await worker.#request("resources/read", { uri: resource.uri })
+        if (result === undefined || "content" in result) {
+          throw new DevGatewayError("DEV_WORKER_NOT_READY", "Candidate static resource could not be frozen.")
+        }
+        staticResourceReads[resource.uri] = result
+      }
+      return { contract: { resourceTemplates, resources, staticResourceReads, tools: tools.tools }, worker }
     } catch (error) {
       await worker.close()
       throw error

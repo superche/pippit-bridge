@@ -1,18 +1,32 @@
 #!/usr/bin/env node
 
-import { stat, readFile, realpath } from "node:fs/promises"
+import { stat, readFile, realpath, rename, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, relative, resolve, sep } from "node:path"
 import { createInterface } from "node:readline"
 import { pathToFileURL } from "node:url"
+import { acquirePrivateFileLock } from "@pippit-bridge/core"
 import { createDevMcpGateway, type DevWorkerRequest, type DevWorkerResult, type FrozenDevContract } from "./dev-gateway.ts"
+import {
+  activatedGenerationStatus,
+  assertRecoverableActiveGeneration,
+  assertDesiredGeneration,
+  candidateSubjectHash,
+  devStatusLockPath,
+  reviewDecisionHash,
+  verifyStagedArtifact,
+  type CandidateManifest,
+} from "./dev-manifest.ts"
 import { DevGatewayError, DevWorkerPool } from "./dev-supervisor.ts"
 import { ChildMcpWorkerGeneration } from "./dev-worker-process.ts"
 
 interface DevPointer {
   readonly capability: string
   readonly contractHash: string
+  readonly daemonArtifactHash: string
   readonly frozenContractPath: string
+  readonly hostArtifactHash: string
+  readonly productionContractPath: string
   readonly repoRoot: string
   readonly runtimeRoot: string
   readonly statusPath: string
@@ -21,11 +35,23 @@ interface DevPointer {
 
 interface DevStatus {
   readonly activeGeneration?: string
-  readonly generationRoot?: string
+  readonly activeImplementationHash?: string
+  readonly baseImplementationHash?: string
+  readonly candidateManifest?: CandidateManifest
+  readonly desiredGeneration?: string
+  readonly desiredGenerationRoot?: string
   readonly migrationEpoch?: number
+  readonly observedGeneration?: string
   readonly phase?: string
-  readonly sourceHash?: string
+  readonly review?: {
+    readonly classification: "cold" | "hot-compatible"
+    readonly migrationEpoch: number
+    readonly storageBackwardCompatible: boolean
+    readonly subjectHash: string
+  }
+  readonly reviewDecisionHash?: string
   readonly storageBackwardCompatible?: boolean
+  readonly subjectHash?: string
 }
 
 function contained(root: string, path: string): boolean {
@@ -42,6 +68,25 @@ async function readSecureJson<T>(path: string, containingRoot?: string): Promise
   return JSON.parse(await readFile(actual, "utf8")) as T
 }
 
+async function atomicStatus(path: string, value: unknown): Promise<void> {
+  const temporary = `${path}.${process.pid}.tmp`
+  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
+  await rename(temporary, path)
+}
+
+async function withStatusLock<T>(path: string, operation: () => Promise<T>): Promise<T> {
+  const lock = await acquirePrivateFileLock(devStatusLockPath(path), {
+    instanceId: `codex-dev-gateway-${process.pid}`,
+    retryAttempts: 200,
+    retryDelayMs: 10,
+  })
+  try {
+    return await operation()
+  } finally {
+    await lock.release()
+  }
+}
+
 async function run(): Promise<void> {
   const pointerPath = resolve(process.env.PIPPIT_DEV_POINTER ?? resolve(homedir(), ".pippit-bridge/dev-v1/pointer.json"))
   const dataRoot = await realpath(dirname(pointerPath))
@@ -55,8 +100,9 @@ async function run(): Promise<void> {
   if (typeof process.getuid === "function" && runtimeMetadata.uid !== process.getuid()) throw new Error("DEV_RUNTIME_OWNER_REJECTED")
   if ((runtimeMetadata.mode & 0o022) !== 0) throw new Error("DEV_RUNTIME_MODE_REJECTED")
   const frozen = await readSecureJson<FrozenDevContract>(pointer.frozenContractPath, dataRoot)
+  const productionContract = await readSecureJson<FrozenDevContract>(pointer.productionContractPath, dataRoot)
   const pool = new DevWorkerPool<DevWorkerRequest, DevWorkerResult>(pointer.contractHash)
-  const gateway = createDevMcpGateway({ contract: frozen, enableErrorPreview: true, pool })
+  const gateway = createDevMcpGateway({ contract: frozen, pool })
   let observedGeneration: string | undefined
   let activating = false
 
@@ -65,12 +111,60 @@ async function run(): Promise<void> {
     activating = true
     try {
       const status = await readSecureJson<DevStatus>(pointer.statusPath, dataRoot)
-      if (status.phase !== "active" || !status.activeGeneration || !status.generationRoot || status.activeGeneration === observedGeneration) return
-      const entryPath = await realpath(resolve(status.generationRoot, "dist/plugin-stdio.mjs"))
+      if (
+        (status.phase !== "desired" && status.phase !== "active")
+        || !status.desiredGeneration
+        || !status.desiredGenerationRoot
+        || status.desiredGeneration === observedGeneration
+        || !status.candidateManifest
+        || !status.review
+        || !status.reviewDecisionHash
+        || !status.subjectHash
+        || !status.baseImplementationHash
+      ) return
+      const baseImplementationHash = status.baseImplementationHash
+      const candidateManifest = status.candidateManifest
+      const desiredGeneration = status.desiredGeneration
+      const recoveringActiveGeneration = status.phase === "active"
+      const subjectHash = status.subjectHash
+      const expectedSubjectHash = candidateSubjectHash({
+        activationClass: status.review.classification,
+        baseImplementationHash,
+        candidateManifest,
+      })
+      if (
+        status.review.classification !== "hot-compatible"
+        || status.review.subjectHash !== expectedSubjectHash
+        || subjectHash !== expectedSubjectHash
+        || reviewDecisionHash(status.review) !== status.reviewDecisionHash
+      ) {
+        throw new DevGatewayError("DEV_SEMANTIC_REVIEW_REQUIRED", "Candidate review is not bound to the staged artifact.")
+      }
+      if (recoveringActiveGeneration) {
+        try {
+          assertRecoverableActiveGeneration(status, {
+            generationId: desiredGeneration,
+            implementationHash: candidateManifest.workerArtifactHash,
+            subjectHash,
+          })
+        } catch {
+          throw new DevGatewayError("DEV_CANDIDATE_SUPERSEDED", "The recorded active generation cannot be recovered safely.")
+        }
+      }
+      const entryPath = await realpath(resolve(status.desiredGenerationRoot, "dist/plugin-stdio.mjs"))
       if (!contained(dataRoot, entryPath)) throw new Error("DEV_GENERATION_PATH_REJECTED")
-      const entryMetadata = await stat(entryPath)
-      if (typeof process.getuid === "function" && entryMetadata.uid !== process.getuid()) throw new Error("DEV_GENERATION_OWNER_REJECTED")
-      if ((entryMetadata.mode & 0o022) !== 0) throw new Error("DEV_GENERATION_MODE_REJECTED")
+      try {
+        await verifyStagedArtifact(entryPath, candidateManifest.workerArtifactHash)
+      } catch {
+        throw new DevGatewayError("DEV_CANDIDATE_SUPERSEDED", "Staged worker artifact changed after review.")
+      }
+      const daemonPath = await realpath(resolve(status.desiredGenerationRoot, "dist/local-facade-daemon.mjs"))
+      if (!contained(dataRoot, daemonPath)) throw new Error("DEV_GENERATION_PATH_REJECTED")
+      try {
+        await verifyStagedArtifact(daemonPath, candidateManifest.daemonArtifactHash)
+      } catch {
+        throw new DevGatewayError("DEV_CANDIDATE_SUPERSEDED", "Staged Facade daemon artifact changed after review.")
+      }
       const started = await ChildMcpWorkerGeneration.start({
         contractHash: pointer.contractHash,
         entryPath,
@@ -79,26 +173,69 @@ async function run(): Promise<void> {
           PIPPIT_BRIDGE_HOME: runtimeRoot,
           PIPPIT_DEV_CAPABILITY: pointer.capability,
         },
-        generationId: status.activeGeneration,
-        implementationHash: status.sourceHash ?? status.activeGeneration,
+        generationId: desiredGeneration,
+        implementationHash: candidateManifest.workerArtifactHash,
         migrationEpoch: status.migrationEpoch ?? 1,
         storageBackwardCompatible: status.storageBackwardCompatible === true,
       })
-      if (JSON.stringify(started.contract) !== JSON.stringify(frozen)) {
+      if (JSON.stringify(started.contract) !== JSON.stringify(productionContract)) {
         await started.worker.close()
         throw new DevGatewayError("DEV_CONTRACT_MISMATCH", "Candidate discovery differs from the frozen gateway contract.")
       }
+      let activated = false
       try {
-        await pool.activate(started.worker, {
-          behaviorTestsPassed: true,
-          contractHash: pointer.contractHash,
-          semanticClassification: "hot-compatible",
+        await withStatusLock(pointer.statusPath, async () => {
+          const beforeActivation = await readSecureJson<DevStatus>(pointer.statusPath, dataRoot)
+          const expectedGeneration = {
+            baseImplementationHash,
+            generationId: desiredGeneration,
+            subjectHash,
+          }
+          try {
+            if (recoveringActiveGeneration) {
+              assertRecoverableActiveGeneration(beforeActivation, {
+                generationId: desiredGeneration,
+                implementationHash: candidateManifest.workerArtifactHash,
+                subjectHash,
+              })
+            } else {
+              assertDesiredGeneration(beforeActivation, expectedGeneration)
+            }
+          } catch {
+            throw new DevGatewayError(
+              "DEV_CANDIDATE_SUPERSEDED",
+              recoveringActiveGeneration
+                ? "The recorded active generation changed before recovery."
+                : "A newer desired generation replaced the candidate before activation.",
+            )
+          }
+          try {
+            await verifyStagedArtifact(entryPath, candidateManifest.workerArtifactHash)
+            await verifyStagedArtifact(daemonPath, candidateManifest.daemonArtifactHash)
+          } catch {
+            throw new DevGatewayError("DEV_CANDIDATE_SUPERSEDED", "Staged artifacts changed during candidate startup.")
+          }
+          await pool.activate(started.worker, {
+            behaviorTestsPassed: true,
+            contractHash: pointer.contractHash,
+            subjectHash,
+            semanticClassification: "hot-compatible",
+          })
+          activated = true
+          if (!recoveringActiveGeneration) {
+            await atomicStatus(pointer.statusPath, activatedGenerationStatus(
+              beforeActivation,
+              expectedGeneration,
+              candidateManifest.workerArtifactHash,
+              new Date().toISOString(),
+            ))
+          }
         })
       } catch (error) {
-        await started.worker.close()
+        if (!activated) await started.worker.close()
         throw error
       }
-      observedGeneration = status.activeGeneration
+      observedGeneration = desiredGeneration
     } catch (error) {
       process.stderr.write(`${error instanceof DevGatewayError ? error.code : "DEV_SUPERVISOR_UNAVAILABLE"}: ${error instanceof Error ? error.message : String(error)}\n`)
     } finally {
