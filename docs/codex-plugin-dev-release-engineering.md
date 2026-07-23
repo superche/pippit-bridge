@@ -56,19 +56,29 @@ npm run codex:dev:full-gate
 ```
 
 首次接入先执行一次 `codex:dev:profile:setup`，再在独立终端启动 `codex:dev` watcher。
-profile setup 在稳定 Dev root 完成 bootstrap，并把本地 marketplace 与
+profile setup 在稳定 Dev root 完成 bootstrap，并对 Dev plugin 执行一次冷刷新：卸载
+`pippit-video@pippit-bridge-dev`、清空该 identity 在 Dev profile 下的全部版本化 cache、
+移除并重加本地 marketplace，最后重新安装 plugin。脚本会比较新 cache 与 gateway bundle
+（忽略安装期 `node_modules` 和 `*.tsbuildinfo`）的 SHA-256；不一致时拒绝继续。setup 要求
+Dev App 已停止，避免已连接的 host 继续持有旧 manifest、Skill 或 Widget。
+完成冷刷新后，本地 marketplace 与
 `pippit-video@pippit-bridge-dev` 安装到持久化的独立 Codex profile。默认 `CODEX_HOME` 为
 `~/.codex-profiles/dev`；macOS Desktop 的独立浏览器数据目录为
 `~/Library/Application Support/Codex Dev`。脚本拒绝复用生产 `~/.codex`、生产 ChatGPT
 浏览器数据目录或已安装 `pippit-video@pippit-bridge` 的 profile。路径可分别通过
 `PIPPIT_CODEX_DEV_PROFILE_HOME` 和 `PIPPIT_CODEX_DEV_BROWSER_DATA_DIR` 覆盖。
 
-macOS 使用 `npm run codex:dev:app` 启动独立 Dev App。启动参数只包含 Dev `CODEX_HOME` 与
-`--user-data-dir`，不附加 worktree 路径，避免 Electron 把目录错误解析为应用入口。重复执行时，
-若相同 Dev 浏览器目录的 ChatGPT 主进程已存在，命令只报告 PID 而不再启动第二个实例。
+macOS 使用 `npm run codex:dev:app` 执行默认冷启动：先准备新 gateway，停止且只停止使用
+Dev browser-data 的 ChatGPT 主进程，执行上述冷刷新，再启动独立 Dev App。这样每次端到端
+调试都从当前 cache snapshot 和新 Codex session 开始。只需在已经完成冷刷新的 profile 上
+补启动 App 时，可使用 `npm run codex:dev:app:launch`；它不会修改 cache。
+启动参数只包含 Dev `CODEX_HOME`、Dev browser-data 和受支持的 Node 路径，不附加 worktree
+路径，避免 Electron 把目录错误解析为应用入口。脚本会把当前且符合仓库 `engines` 的 Node 作为
+`PIPPIT_NODE_PATH` 传入 Dev App；不支持的 Node（例如 `22.19.0`）会在 bootstrap 前直接失败，
+避免冷刷后的 plugin 又落到 GUI App 的旧 Node 环境。
 登录和主题由该 profile 自身持久化：首次在 Dev App 内登录并选择主题即可；脚本不读取、复制或提交
 `auth.json`、Cookie、浏览器数据等凭据。`codex:dev:profile:status` 只报告登录状态、Dev plugin
-identity/version、隔离路径与正在运行的 Dev PID。
+identity/version、cache/gateway 哈希、隔离路径与正在运行的 Dev PID。
 
 每次 candidate 必须有 `.pippit-dev/semantic-review.json`：
 

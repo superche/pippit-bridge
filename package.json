@@ -66,7 +66,8 @@
     "codex:dev:bootstrap": "node scripts/codex-dev.mjs bootstrap",
     "codex:dev:profile:setup": "node scripts/codex-dev-profile.mjs setup",
     "codex:dev:profile:status": "node scripts/codex-dev-profile.mjs status",
-    "codex:dev:app": "node scripts/codex-dev-profile.mjs launch"
+    "codex:dev:app": "node scripts/codex-dev-profile.mjs restart",
+    "codex:dev:app:launch": "node scripts/codex-dev-profile.mjs launch"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
