@@ -17,6 +17,12 @@ Plugin 分成两个物理平面：
 
 禁止依赖 `list_changed`、`forceReloadSkills`、`config/mcpServer/reload`、直接修改 cache 或 symlink 穿透。
 
+运行时诊断必须再明确区分三层生命周期：
+
+1. **Dev App**：ChatGPT/Codex Desktop 主进程与 Dev browser-data；冷启动只按完整 browser-data 参数定位和停止。
+2. **gateway/worker**：Codex cache 中的稳定 stdio gateway 与可替换 generation；gateway 冻结 discovery，worker 按请求 pin/drain。
+3. **local Facade**：Dev runtime root 下独立 detached loopback daemon；它不会随 App 或 worker 退出，必须单独验证 artifact、健康和归属。
+
 ## 当前实现
 
 - `scripts/plugin-version.mjs`：以 MCP package version 为机械真源，校验 package、manifest、server/widget marker、consumer dependency 和 lockfile。
@@ -24,6 +30,7 @@ Plugin 分成两个物理平面：
 - `src/dev-supervisor.ts`：按 contract hash 分 pool；每次 call/read pin generation；N drain 后关闭；cold/未审语义 candidate 拒绝；迁移 epoch 或 storage backward compatibility 不满足时 post-write rollback 返回 `DEV_POST_ACTIVATION_UNSAFE_ROLLBACK`。
 - `src/dev-stdio.ts`、`src/dev-gateway.ts`、`src/dev-worker-process.ts`：稳定 Codex-facing stdio 只 initialize 一次并冻结 discovery；长期 child MCP worker 承载 generation 实现。`tools/call` 与动态 `resources/read` pin active generation，candidate 激活不关闭 gateway，不产生 EOF/reinitialize/shutdown。
 - `scripts/codex-dev.mjs`：在独立数据根准备可由 Codex `marketplace add` 的 `pippit-bridge-dev` catalog、dev-only gateway bundle、0600 pointer/frozen contract/status，以及强制传给所有 dev worker 的独立 `PIPPIT_BRIDGE_HOME` runtime root；校验 owner/realpath，watch 后串行 staging build/test/contract，要求与 source hash 绑定的人工 `hot-compatible` review，再原子写 active generation。它不修改全局 Codex cache，也不读取 release 账号、job 或 artifact state。
+- `src/local-runtime/*` 与 `scripts/local-facade-daemon-entry.mjs`：对 daemon 精确字节计算 SHA-256，并把绝对 entry、artifact hash、PID、instance、port、版本和启动时间写入 HMAC 签名的私有 ready descriptor；challenge proof 绑定同一 identity。只有 entry、artifact hash 与 runtime version 全部匹配当前已验证 bundle 才复用；任何非 exact daemon 必须先通过当前 runtime root 的 secret 认证，再走私有 shutdown endpoint（旧版兼容 daemon 才使用已认证 PID 的 `SIGTERM`），等待退出并以 compare-and-remove 清理旧 ready 后启动当前 bundle。人工版本号不具有凌驾于 artifact identity 的升降级权威。bootstrap lock 串行化并发收敛；dead PID 的 stale ready 可安全回收，proof/PID 不匹配则 fail closed 且不发送停止信号。
 - `src/dev-widget.ts`：固定 dev shell URI/MIME、loopback asset/SSE HMR primitives、capability/Host/Origin 校验，以及旧/新 tool payload 和 confirmation fixture 等价检查。primitives 已本地验证，但尚未接入已安装 plugin 的 `outputTemplate`/gateway 生命周期；当前不能把它表述为已挂载 Codex iframe HMR。
 - `release-epoch.ts`：MCP client 自动发送内部 release epoch；Facade 在 route handler 和任何副作用前 fence 显式 stale epoch 为 `PLUGIN_TASK_STALE`。首个无 epoch 历史版本保持兼容一个迁移周期。
 - `plugin-contract.yml`：Node 22/24、macOS/Linux gate；contract 预构建显式按 `core -> sdk -> mcp-server -> discovery` 执行（local Facade daemon bundle 对 SDK 有传递依赖），matrix 禁用 fail-fast，避免 clean checkout 被本地 workspace `dist` 掩盖或首个失败取消其余平台证据；Windows 只跑 version/contract/lint/typecheck/build 并明确 `/bin/sh` launcher 不支持 native Windows，不把全量 Windows runtime suite 混入该边界门禁。
@@ -69,7 +76,10 @@ Dev App 已停止，避免已连接的 host 继续持有旧 manifest、Skill 或
 `PIPPIT_CODEX_DEV_PROFILE_HOME` 和 `PIPPIT_CODEX_DEV_BROWSER_DATA_DIR` 覆盖。
 
 macOS 使用 `npm run codex:dev:app` 执行默认冷启动：先准备新 gateway，停止且只停止使用
-Dev browser-data 的 ChatGPT 主进程，执行上述冷刷新，再启动独立 Dev App。这样每次端到端
+Dev browser-data 的 ChatGPT 主进程，执行上述 cache 冷刷新；随后在 Dev runtime root 内认证
+现有 Facade 的 ready/proof。entry 与 gateway 记录的 daemon artifact 完全匹配时复用；任何已认证但
+非 exact 的 artifact 都先安全停止旧 PID、等待退出，再启动当前 generation 的 daemon，最后才启动
+独立 Dev App。这样每次端到端
 调试都从当前 cache snapshot 和新 Codex session 开始。只需在已经完成冷刷新的 profile 上
 补启动 App 时，可使用 `npm run codex:dev:app:launch`；它不会修改 cache。
 启动参数只包含 Dev `CODEX_HOME`、Dev browser-data 和受支持的 Node 路径，不附加 worktree
@@ -77,8 +87,13 @@ Dev browser-data 的 ChatGPT 主进程，执行上述冷刷新，再启动独立
 `PIPPIT_NODE_PATH` 传入 Dev App；不支持的 Node（例如 `22.19.0`）会在 bootstrap 前直接失败，
 避免冷刷后的 plugin 又落到 GUI App 的旧 Node 环境。
 登录和主题由该 profile 自身持久化：首次在 Dev App 内登录并选择主题即可；脚本不读取、复制或提交
-`auth.json`、Cookie、浏览器数据等凭据。`codex:dev:profile:status` 只报告登录状态、Dev plugin
-identity/version、cache/gateway 哈希、隔离路径与正在运行的 Dev PID。
+`auth.json`、Cookie、浏览器数据等凭据。冷刷新也不删除 runtime root 中的
+`runtime-secrets.json`、BYOK credentials、jobs、artifacts、idempotency secret/store 或 output。
+它只替换 App 进程、plugin cache 和必要时的 Facade 进程。`codex:dev:profile:status` 分层报告
+登录状态与 App PID、Dev plugin identity/version、cache/gateway 哈希，以及 Facade runtime root、
+entry、artifact hash、gateway 期望 hash、health、match、当前 PID 和启动时间。冷启动结果另外报告
+`action`（`reused`/`started`/`replaced`）、旧 PID、旧 PID 是否已停止与新 PID，不能只凭
+`launched=true` 宣告成功。
 
 每次 candidate 必须有 `.pippit-dev/semantic-review.json`：
 
@@ -99,6 +114,9 @@ identity/version、cache/gateway 哈希、隔离路径与正在运行的 Dev PID
 
 硬验收：
 
+- 冷刷新后 Facade `healthy=true` 且 `matchesGateway=true`；同版本不同 daemon artifact 必须换 PID，完全匹配不得抖动进程。
+- ready 指向 dead PID 时可在 bootstrap lock 内回收；proof、PID、instance 或 runtime-root secret 不匹配时不得杀进程或启动第二个 daemon；停止超时必须 fail closed。
+- Facade 替换前后 runtime secrets、BYOK、jobs、artifacts、idempotency 和 output 均保持原字节/路径，只有 ready 与进程身份变化。
 - 慢调用固定在 N；激活后新调用走 N+1；不得 replay。
 - build/test/contract/health 失败保留 pre-activation LKG。
 - worker crash 不退出稳定 gateway；返回明确可重试性，幂等 ledger 决定是否允许重试。

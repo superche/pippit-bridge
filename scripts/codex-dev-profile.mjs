@@ -3,6 +3,7 @@ import { execFile } from "node:child_process"
 import { chmod, lstat, mkdir, readFile, readdir, rm } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, relative, resolve, sep } from "node:path"
+import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
 
 const execFileAsync = promisify(execFile)
@@ -99,7 +100,7 @@ export function buildMacLaunchArgs({
   ]
 }
 
-function resolveDevDataRoot(env = process.env, home = homedir()) {
+export function resolveDevDataRoot(env = process.env, home = homedir()) {
   return resolve(env.PIPPIT_BRIDGE_DEV_HOME ?? resolve(home, ".pippit-bridge/dev-v1"))
 }
 
@@ -238,6 +239,90 @@ async function inspectDevPluginCache(paths, devPlugin) {
   }
 }
 
+async function readDevRuntimeBinding(dataRoot = resolveDevDataRoot()) {
+  const [pointer, status] = await Promise.all([
+    readFile(resolve(dataRoot, "pointer.json"), "utf8").then(JSON.parse),
+    readFile(resolve(dataRoot, "status.json"), "utf8").then(JSON.parse),
+  ])
+  const runtimeRoot = resolve(pointer.runtimeRoot)
+  const generationRoot = resolve(status.desiredGenerationRoot)
+  const relativeRuntimeRoot = relative(dataRoot, runtimeRoot)
+  const relativeGenerationRoot = relative(dataRoot, generationRoot)
+  if (
+    relativeRuntimeRoot.startsWith("..")
+    || relativeRuntimeRoot.includes(`..${sep}`)
+    || relativeGenerationRoot.startsWith("..")
+    || relativeGenerationRoot.includes(`..${sep}`)
+  ) {
+    throw new Error("DEV_FACADE_BINDING_ESCAPES_DEV_ROOT")
+  }
+  if (
+    typeof pointer.daemonArtifactHash !== "string"
+    || !/^[a-f0-9]{64}$/u.test(pointer.daemonArtifactHash)
+  ) {
+    throw new Error("DEV_FACADE_ARTIFACT_IDENTITY_INVALID")
+  }
+  return {
+    daemonArtifactHash: pointer.daemonArtifactHash,
+    daemonModuleUrl: pathToFileURL(resolve(generationRoot, "dist/plugin-stdio.mjs")).href,
+    runtimeRoot,
+  }
+}
+
+async function loadLocalRuntimeController() {
+  return import(pathToFileURL(
+    resolve(root, "packages/mcp-server-pippit/dist/local-runtime.js"),
+  ).href)
+}
+
+export function bindFacadeStatus(status, binding) {
+  return {
+    ...status,
+    gatewayArtifactHash: binding.daemonArtifactHash,
+    matchesGateway: (
+      status.healthy === true
+      && status.matchesExpectedArtifact === true
+      && status.artifactHash === binding.daemonArtifactHash
+    ),
+    runtimeRoot: binding.runtimeRoot,
+  }
+}
+
+async function inspectDevFacade(dataRoot = resolveDevDataRoot()) {
+  try {
+    const binding = await readDevRuntimeBinding(dataRoot)
+    const runtime = await loadLocalRuntimeController()
+    const status = await runtime.inspectPippitLocalRuntime({
+      daemonModuleUrl: binding.daemonModuleUrl,
+      env: { ...process.env, PIPPIT_BRIDGE_HOME: binding.runtimeRoot },
+    })
+    return bindFacadeStatus(status, binding)
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return {
+        healthy: false,
+        matchesGateway: false,
+        reason: "dev-gateway-not-prepared",
+        runtimeRoot: resolve(dataRoot, "runtime"),
+      }
+    }
+    throw error
+  }
+}
+
+async function ensureDevFacade(dataRoot = resolveDevDataRoot()) {
+  const binding = await readDevRuntimeBinding(dataRoot)
+  const runtime = await loadLocalRuntimeController()
+  const resolved = await runtime.ensurePippitLocalRuntime({
+    daemonModuleUrl: binding.daemonModuleUrl,
+    env: { ...process.env, PIPPIT_BRIDGE_HOME: binding.runtimeRoot },
+  })
+  if (!resolved.local?.daemon) throw new Error("DEV_FACADE_STATUS_MISSING")
+  const status = bindFacadeStatus(resolved.local.daemon, binding)
+  if (!status.matchesGateway) throw new Error("DEV_FACADE_GATEWAY_ARTIFACT_MISMATCH")
+  return status
+}
+
 async function readPluginList(profileHome) {
   const result = await run("codex", ["plugin", "list", "--json"], {
     env: { ...process.env, CODEX_HOME: profileHome },
@@ -272,12 +357,13 @@ async function stopDevApp(paths) {
 
 async function profileStatus(paths) {
   const profileEnv = { ...process.env, CODEX_HOME: paths.profileHome }
-  const [login, plugins, processes] = await Promise.all([
+  const [login, plugins, processes, facade] = await Promise.all([
     run("codex", ["login", "status"], { env: profileEnv, reject: false }),
     readPluginList(paths.profileHome),
     process.platform === "darwin"
       ? run("ps", ["-axo", "pid=,command="])
       : Promise.resolve({ stdout: "" }),
+    inspectDevFacade(),
   ])
   const devPlugin = validatePluginIsolation(plugins)
   const cache = await inspectDevPluginCache(paths, devPlugin)
@@ -290,6 +376,7 @@ async function profileStatus(paths) {
       pluginId: devPlugin.pluginId,
       version: devPlugin.version,
     },
+    facade,
     loggedIn: login.code === 0,
     loginStatus: (login.stdout || login.stderr).trim(),
     profileHome: paths.profileHome,
@@ -351,8 +438,16 @@ async function setup(paths) {
   if (runningPids.length > 0) throw new Error(`CODEX_DEV_APP_RUNNING_REQUIRES_RESTART:${runningPids.join(",")}`)
   const existing = await assertNoReleasePlugin(paths)
   const dataRoot = await prepareGateway(paths)
-  const status = await installFreshDevPlugin(paths, dataRoot, existing)
-  process.stdout.write(`${JSON.stringify(status, null, 2)}\n`)
+  const installed = await installFreshDevPlugin(paths, dataRoot, existing)
+  const facade = await ensureDevFacade(dataRoot)
+  const current = await profileStatus(paths)
+  process.stdout.write(`${JSON.stringify({
+    ...current,
+    coldRefresh: {
+      ...installed.coldRefresh,
+      facade,
+    },
+  }, null, 2)}\n`)
 }
 
 async function status(paths) {
@@ -383,9 +478,15 @@ async function restart(paths) {
   const stoppedPids = await readDevProcessIds(paths)
   await stopDevApp(paths)
   const current = await installFreshDevPlugin(paths, dataRoot, existing)
+  const facade = await ensureDevFacade(dataRoot)
+  const refreshed = await profileStatus(paths)
   await run("open", buildMacLaunchArgs(paths))
   process.stdout.write(`${JSON.stringify({
-    ...current,
+    ...refreshed,
+    coldRefresh: {
+      ...current.coldRefresh,
+      facade,
+    },
     launched: true,
     restartedPids: stoppedPids,
   }, null, 2)}\n`)
