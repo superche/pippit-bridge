@@ -65,7 +65,7 @@ export const WIDGET_MARKUP = String.raw`<body>
               <button id="segment-start" class="trim-handle" type="button" role="slider" aria-label="Annotation range start" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00.0"></button>
               <button id="segment-end" class="trim-handle" type="button" role="slider" aria-label="Annotation range end" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="00:00.0"></button>
             </div>
-            <p class="range-note"><span>Drag to choose the time range, up to 30 seconds</span><strong id="range-duration">0.0 sec</strong></p>
+            <p class="range-note"><span>Drag to choose a partial-regeneration range within the source video</span><strong id="range-duration">0.0 sec</strong></p>
           </div>
           <div class="intent-editor">
             <div class="intent-label"><label for="instruction">Change instruction</label><span id="area-status" class="area-status">Full frame</span></div>
@@ -74,7 +74,7 @@ export const WIDGET_MARKUP = String.raw`<body>
         </div>
         <footer class="annotation-footer">
           <div class="submit-copy">
-            <p class="hint">This annotation becomes the edit prompt. The current video remains the reference.</p>
+            <p class="hint">The time range is edited natively. The selected frame area is soft prompt guidance, not a hard mask.</p>
             <p id="edit-error" class="error" role="alert" hidden></p>
           </div>
           <button id="submit-edit" class="primary" type="button" disabled>Regenerate video</button>

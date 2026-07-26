@@ -534,14 +534,14 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "annotations": {
+                  "guidance_annotations": {
                     "default": [],
                     "maxItems": 20,
                     "type": "array",
                     "items": {
                       "type": "object",
                       "properties": {
-                        "at_ms": {
+                        "at_time_us": {
                           "type": "integer",
                           "minimum": 0,
                           "maximum": 9007199254740991
@@ -585,7 +585,7 @@
                         }
                       },
                       "required": [
-                        "at_ms",
+                        "at_time_us",
                         "instruction",
                         "region"
                       ],
@@ -593,9 +593,10 @@
                     }
                   },
                   "model": {
-                    "default": "pippit/seedance-2.0-mini",
+                    "default": "pippit/seedance-2.0",
                     "type": "string",
                     "enum": [
+                      "pippit/seedance-2.5",
                       "pippit/seedance-2.0-mini",
                       "pippit/seedance-2.0",
                       "pippit/seedance-2.0-mini-lite",
@@ -636,26 +637,6 @@
                     "minimum": -1,
                     "maximum": 4294967295
                   },
-                  "segment": {
-                    "type": "object",
-                    "properties": {
-                      "end_ms": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      "start_ms": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      }
-                    },
-                    "required": [
-                      "end_ms",
-                      "start_ms"
-                    ],
-                    "additionalProperties": false
-                  },
                   "source_index": {
                     "default": 0,
                     "type": "integer",
@@ -666,14 +647,34 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 16384
+                  },
+                  "time_range": {
+                    "type": "object",
+                    "properties": {
+                      "end_time_us": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "start_time_us": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "end_time_us",
+                      "start_time_us"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
-                  "annotations",
+                  "guidance_annotations",
                   "model",
-                  "segment",
                   "source_index",
-                  "source_job_id"
+                  "source_job_id",
+                  "time_range"
                 ],
                 "additionalProperties": false
               }
@@ -1026,6 +1027,7 @@
                     "default": "pippit/seedance-2.0-mini",
                     "type": "string",
                     "enum": [
+                      "pippit/seedance-2.5",
                       "pippit/seedance-2.0-mini",
                       "pippit/seedance-2.0",
                       "pippit/seedance-2.0-mini-lite",
@@ -2292,11 +2294,11 @@
         ],
         "type": "object"
       },
-      "VideoEditAnnotation": {
+      "VideoEditGuidanceAnnotation": {
         "additionalProperties": false,
-        "description": "A normalized region instruction whose timestamp must fall inside the requested segment.",
+        "description": "Soft prompt guidance for one normalized intrinsic-frame region. This is not a provider-side hard mask.",
         "properties": {
-          "at_ms": {
+          "at_time_us": {
             "minimum": 0,
             "type": "integer"
           },
@@ -2310,7 +2312,7 @@
           }
         },
         "required": [
-          "at_ms",
+          "at_time_us",
           "region",
           "instruction"
         ],
@@ -2359,27 +2361,30 @@
           },
           {
             "properties": {
-              "annotations": {
+              "guidance_annotations": {
                 "minItems": 1
               }
             },
             "required": [
-              "annotations"
+              "guidance_annotations"
             ]
           }
         ],
         "properties": {
-          "annotations": {
+          "guidance_annotations": {
             "default": [],
+            "description": "Optional soft spatial guidance compiled into the prompt; not a hard mask.",
             "items": {
-              "$ref": "#/components/schemas/VideoEditAnnotation"
+              "$ref": "#/components/schemas/VideoEditGuidanceAnnotation"
             },
             "maxItems": 20,
             "type": "array"
           },
           "model": {
-            "default": "pippit/seedance-2.0-mini",
+            "default": "pippit/seedance-2.0",
+            "description": "Native partial regeneration model. Seedance 2.0-family models support 4–15 second ranges; Seedance 2.5 supports 4–30.2 second ranges.",
             "enum": [
+              "pippit/seedance-2.5",
               "pippit/seedance-2.0-mini",
               "pippit/seedance-2.0",
               "pippit/seedance-2.0-mini-lite",
@@ -2388,7 +2393,7 @@
             "type": "string"
           },
           "prompt": {
-            "description": "Overall regeneration instruction. The compiled prompt, including annotations, may not exceed 20000 characters.",
+            "description": "Overall partial-regeneration instruction. The compiled prompt, including guidance annotations, may not exceed 20000 characters.",
             "maxLength": 20000,
             "minLength": 1,
             "type": "string"
@@ -2433,9 +2438,6 @@
             "minimum": -1,
             "type": "integer"
           },
-          "segment": {
-            "$ref": "#/components/schemas/VideoEditSegment"
-          },
           "source_index": {
             "default": 0,
             "maximum": 1000,
@@ -2447,30 +2449,33 @@
             "maxLength": 16384,
             "minLength": 1,
             "type": "string"
+          },
+          "time_range": {
+            "$ref": "#/components/schemas/VideoEditTimeRange"
           }
         },
         "required": [
-          "segment",
-          "source_job_id"
+          "source_job_id",
+          "time_range"
         ],
         "type": "object"
       },
-      "VideoEditSegment": {
+      "VideoEditTimeRange": {
         "additionalProperties": false,
-        "description": "Instruction segment in the source timeline. end_ms must be greater than start_ms and their difference may not exceed 30000 ms.",
+        "description": "Authoritative provider partial-edit range in microseconds. The range must be at least 4 seconds and no longer than the selected model allows.",
         "properties": {
-          "end_ms": {
+          "end_time_us": {
             "minimum": 1,
             "type": "integer"
           },
-          "start_ms": {
+          "start_time_us": {
             "minimum": 0,
             "type": "integer"
           }
         },
         "required": [
-          "start_ms",
-          "end_ms"
+          "start_time_us",
+          "end_time_us"
         ],
         "type": "object"
       },
@@ -2585,6 +2590,7 @@
           "model": {
             "default": "pippit/seedance-2.0-mini",
             "enum": [
+              "pippit/seedance-2.5",
               "pippit/seedance-2.0-mini",
               "pippit/seedance-2.0",
               "pippit/seedance-2.0-mini-lite",

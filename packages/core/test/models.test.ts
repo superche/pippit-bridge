@@ -3,6 +3,8 @@ import {
   IMAGE_MODELS,
   PIPPIT_DEFAULT_IMAGE_MODEL,
   PIPPIT_DEFAULT_VIDEO_MODEL,
+  PIPPIT_PARTIAL_EDIT_VIDEO_MODEL,
+  PIPPIT_PARTIAL_EDIT_VIDEO_MODELS,
   UnknownImageModelError,
   UnknownVideoModelError,
   VIDEO_MODELS,
@@ -15,12 +17,15 @@ import {
 describe("Pippit video model catalog", () => {
   it("publishes only the governed catalog with Mini as the default", () => {
     expect(PIPPIT_DEFAULT_VIDEO_MODEL).toBe("pippit/seedance-2.0-mini")
+    expect(PIPPIT_PARTIAL_EDIT_VIDEO_MODEL).toBe("pippit/seedance-2.0")
     expect(VIDEO_MODELS.map((model) => [model.id, model.upstreamModel])).toEqual([
+      ["pippit/seedance-2.5", "Seedance_2.5"],
       ["pippit/seedance-2.0-mini", "Seedance_2.0_mini"],
       ["pippit/seedance-2.0", "seedance2.0_direct"],
       ["pippit/seedance-2.0-mini-lite", "Seedance_2.0_mini_lite"],
       ["pippit/seedance-2.0-vision", "seedance2.0_vision"],
     ])
+    expect(PIPPIT_PARTIAL_EDIT_VIDEO_MODELS).toEqual(VIDEO_MODELS.map((model) => model.id))
     for (const model of VIDEO_MODELS) {
       expect(resolveVideoModel(model.id)).toBe(model)
       expect(() => resolveVideoModel(model.upstreamModel)).toThrow(UnknownVideoModelError)

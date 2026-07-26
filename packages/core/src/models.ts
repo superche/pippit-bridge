@@ -122,8 +122,26 @@ const common = {
 }
 
 export const PIPPIT_DEFAULT_VIDEO_MODEL = "pippit/seedance-2.0-mini"
+export const PIPPIT_PARTIAL_EDIT_VIDEO_MODEL = "pippit/seedance-2.0"
+export const PIPPIT_PARTIAL_EDIT_VIDEO_MODELS = [
+  "pippit/seedance-2.5",
+  "pippit/seedance-2.0-mini",
+  "pippit/seedance-2.0",
+  "pippit/seedance-2.0-mini-lite",
+  "pippit/seedance-2.0-vision",
+] as const
 
 export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
+  {
+    ...common,
+    canonical_slug: "pippit/seedance-2.5",
+    description:
+      "Pippit Seedance 2.5 immersive-video model. Supports native partial video regeneration up to 30.2 seconds.",
+    id: "pippit/seedance-2.5",
+    name: "Pippit: Seedance 2.5",
+    supported_resolutions: ["480p", "720p"],
+    upstreamModel: "Seedance_2.5",
+  },
   {
     ...common,
     canonical_slug: "pippit/seedance-2.0-mini",

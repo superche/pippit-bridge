@@ -1,6 +1,6 @@
 # Pippit MCP server and Codex plugin
 
-`@pippit-bridge/mcp-server` is the shared Pippit image/video capability layer for generic stdio MCP clients and the `pippit-video` Codex plugin. It provides Seedream image generation, asynchronous video generation, reference-guided regeneration, polling, confined video downloads, and facade-backed account add/list/switch/delete.
+`@pippit-bridge/mcp-server` is the shared Pippit image/video capability layer for generic stdio MCP clients and the `pippit-video` Codex plugin. It provides Seedream image generation, asynchronous video generation, native multi-model Seedance partial regeneration, polling, confined video downloads, and facade-backed account add/list/switch/delete.
 
 `pippit_generate_image` starts a local image task so the dedicated MCP App result card can render progress immediately; `pippit_get_image` polls that task until completion. In Codex/stdio, every completed image is atomically persisted under the configured output root first. The card reads its stable opaque `pippit-image://artifact/...` resource through the local MCP bridge and can reveal the saved file in Finder or the system file manager; it never depends on an expiring upstream URL or requires another paid generation.
 

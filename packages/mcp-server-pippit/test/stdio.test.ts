@@ -343,12 +343,12 @@ describe("Pippit stdio entrypoint", () => {
         method: "tools/call",
         params: {
           arguments: {
-            annotations: [],
+            guidance_annotations: [],
             idempotency_key: "edit-one",
-            model: "pippit/test",
+            model: "pippit/seedance-2.5",
             prompt: "Make it blue",
-            segment: { end_ms: 5_000, start_ms: 0 },
             source_job_id: "job_original",
+            time_range: { end_time_us: 5_000_000, start_time_us: 0 },
           },
           name: "pippit_edit_video_segment",
         },

@@ -330,7 +330,7 @@ curl -X POST http://localhost:3000/api/v1/images \
 
 ### 4. 提交视频
 
-视频只暴露下表四个模型，省略 `model` 时默认使用 VIP 通道的 Seedance 2.0 Mini。
+视频暴露 Seedance 2.5 与既有四个 Seedance 2.0 模型；普通生成省略 `model` 时仍默认使用 VIP 通道的 Seedance 2.0 Mini。原生片段重拍固定使用 Seedance 2.5。
 
 ```bash
 curl -X POST http://localhost:3000/api/v1/videos \
@@ -397,7 +397,7 @@ curl "http://localhost:3000/api/v1/videos/$JOB_ID/content?index=0" \
 
 运行时只考虑满足以下条件的 credential：未禁用、`provider`/workspace 匹配、允许当前 model，并且 `allowed_api_key_hashes` 允许当前 Facade API Key。主 credential 按 `sort_order` 优先，`is_fallback: true` 的 credential 排在其后。
 
-服务只在 Pippit 明确返回 HTTP `401`、`403` 或 `429` 时尝试下一条 credential。网络错误、超时或 `submit_run` 结果不确定时不会 fallback，避免同一请求在上游产生重复任务。每次切换 credential，参考图片、视频和音频都会使用该 credential 重新上传并取得新的 `data.pippit_asset_id`，随后才调用 `submit_run`。
+服务只在 Pippit 明确返回 HTTP `401`、`403` 或 `429` 时尝试下一条 credential。网络错误、超时或 `submit_run` 结果不确定时不会 fallback，避免同一请求在上游产生重复任务。每次切换 credential，参考图片、视频和音频都会使用该 credential 重新上传并保留返回的 `data.pippit_asset_id` 与可用的 `data.asset_id`，随后才调用 `submit_run`。
 
 ## 首尾帧
 

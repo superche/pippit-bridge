@@ -235,7 +235,7 @@ export const WIDGET_SCRIPT_VIEW = String.raw`        if (!retryLocalPreview()) {
           type: "draft-changed"
         });
         var hasCompleteAnnotation = instructionElement.value.trim() !== "";
-        submitEditElement.disabled = submitting || previewLoading || !sourceJobId || !activeModel || !hasCompleteAnnotation || segmentEndMs <= segmentStartMs;
+        submitEditElement.disabled = submitting || previewLoading || !sourceJobId || !activeModel || !hasCompleteAnnotation || segmentEndMs - segmentStartMs < MIN_SEGMENT_MS;
       }
 
       function updateTimeline() {
@@ -271,16 +271,16 @@ export const WIDGET_SCRIPT_VIEW = String.raw`        if (!retryLocalPreview()) {
 
       function changeSegment(changed, nextValue, seekToBoundary) {
         if (durationMs <= 0) return;
-        var minimumGap = Math.min(100, durationMs);
+        var minimumGap = Math.min(MIN_SEGMENT_MS, durationMs);
         var start = segmentStartMs;
         var end = segmentEndMs;
         if (changed === "start") start = clamp(nextValue, 0, Math.max(0, durationMs - minimumGap));
         else end = clamp(nextValue, minimumGap, durationMs);
         if (changed === "start") {
-          if (end <= start) end = Math.min(durationMs, start + minimumGap);
+          if (end - start < minimumGap) end = Math.min(durationMs, start + minimumGap);
           if (end - start > MAX_SEGMENT_MS) end = Math.min(durationMs, start + MAX_SEGMENT_MS);
         } else {
-          if (end <= start) start = Math.max(0, end - minimumGap);
+          if (end - start < minimumGap) start = Math.max(0, end - minimumGap);
           if (end - start > MAX_SEGMENT_MS) start = Math.max(0, end - MAX_SEGMENT_MS);
         }
         var roundedStart = Math.round(start);

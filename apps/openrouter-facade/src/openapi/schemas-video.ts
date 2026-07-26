@@ -41,15 +41,16 @@ export const OPENAPI_VIDEO_SCHEMAS = {
     required: ["type", "video_url"],
     type: "object",
   },
-  VideoEditAnnotation: {
+  VideoEditGuidanceAnnotation: {
     additionalProperties: false,
-    description: "A normalized region instruction whose timestamp must fall inside the requested segment.",
+    description:
+      "Soft prompt guidance for one normalized intrinsic-frame region. This is not a provider-side hard mask.",
     properties: {
-      at_ms: { minimum: 0, type: "integer" },
+      at_time_us: { minimum: 0, type: "integer" },
       instruction: { maxLength: 2000, minLength: 1, type: "string" },
       region: { $ref: "#/components/schemas/VideoEditRegion" },
     },
-    required: ["at_ms", "region", "instruction"],
+    required: ["at_time_us", "region", "instruction"],
     type: "object",
   },
   VideoEditRegion: {
@@ -70,20 +71,24 @@ export const OPENAPI_VIDEO_SCHEMAS = {
     anyOf: [
       { required: ["prompt"] },
       {
-        properties: { annotations: { minItems: 1 } },
-        required: ["annotations"],
+        properties: { guidance_annotations: { minItems: 1 } },
+        required: ["guidance_annotations"],
       },
     ],
     properties: {
-      annotations: {
+      guidance_annotations: {
         default: [],
-        items: { $ref: "#/components/schemas/VideoEditAnnotation" },
+        description: "Optional soft spatial guidance compiled into the prompt; not a hard mask.",
+        items: { $ref: "#/components/schemas/VideoEditGuidanceAnnotation" },
         maxItems: 20,
         type: "array",
       },
       model: {
-        default: "pippit/seedance-2.0-mini",
+        default: "pippit/seedance-2.0",
+        description:
+          "Native partial regeneration model. Seedance 2.0-family models support 4–15 second ranges; Seedance 2.5 supports 4–30.2 second ranges.",
         enum: [
+          "pippit/seedance-2.5",
           "pippit/seedance-2.0-mini",
           "pippit/seedance-2.0",
           "pippit/seedance-2.0-mini-lite",
@@ -92,7 +97,8 @@ export const OPENAPI_VIDEO_SCHEMAS = {
         type: "string",
       },
       prompt: {
-        description: "Overall regeneration instruction. The compiled prompt, including annotations, may not exceed 20000 characters.",
+        description:
+          "Overall partial-regeneration instruction. The compiled prompt, including guidance annotations, may not exceed 20000 characters.",
         maxLength: 20000,
         minLength: 1,
         type: "string",
@@ -120,7 +126,6 @@ export const OPENAPI_VIDEO_SCHEMAS = {
       },
       resolution: { maxLength: 64, minLength: 1, type: "string" },
       seed: { maximum: 4294967295, minimum: -1, type: "integer" },
-      segment: { $ref: "#/components/schemas/VideoEditSegment" },
       source_index: { default: 0, maximum: 1000, minimum: 0, type: "integer" },
       source_job_id: {
         description: "Completed job id issued to the same facade API key as this edit request.",
@@ -128,19 +133,20 @@ export const OPENAPI_VIDEO_SCHEMAS = {
         minLength: 1,
         type: "string",
       },
+      time_range: { $ref: "#/components/schemas/VideoEditTimeRange" },
     },
-    required: ["segment", "source_job_id"],
+    required: ["source_job_id", "time_range"],
     type: "object",
   },
-  VideoEditSegment: {
+  VideoEditTimeRange: {
     additionalProperties: false,
     description:
-      "Instruction segment in the source timeline. end_ms must be greater than start_ms and their difference may not exceed 30000 ms.",
+      "Authoritative provider partial-edit range in microseconds. The range must be at least 4 seconds and no longer than the selected model allows.",
     properties: {
-      end_ms: { minimum: 1, type: "integer" },
-      start_ms: { minimum: 0, type: "integer" },
+      end_time_us: { minimum: 1, type: "integer" },
+      start_time_us: { minimum: 0, type: "integer" },
     },
-    required: ["start_ms", "end_ms"],
+    required: ["start_time_us", "end_time_us"],
     type: "object",
   },
   VideoGenerationJob: {
@@ -194,6 +200,7 @@ export const OPENAPI_VIDEO_SCHEMAS = {
       model: {
         default: "pippit/seedance-2.0-mini",
         enum: [
+          "pippit/seedance-2.5",
           "pippit/seedance-2.0-mini",
           "pippit/seedance-2.0",
           "pippit/seedance-2.0-mini-lite",

@@ -140,7 +140,7 @@ export async function prepareImageReferences(input: {
       if (input.maxTotalBytes !== undefined && totalBytes > input.maxTotalBytes) {
         throw new ReferenceLoadError("TOTAL_TOO_LARGE")
       }
-      return (await input.pippit.uploadFile({ accessKey: input.accessKey, file, signal })).assetId
+      return (await input.pippit.uploadFile({ accessKey: input.accessKey, file, signal })).pippit_asset_id
     }
     return input.gate ? input.gate.run(upload, signal) : upload()
   }, () => failureController.abort())
@@ -247,9 +247,10 @@ export async function prepareReferences(input: {
 }): Promise<PreparedReferences> {
   const selected = selectedReferences(input.request)
   const uploadCache = new Map<string, Promise<{
-    assetId: string
+    assetId?: string
     inferredAspectRatio?: string
     inferredResolution?: string
+    pippitAssetId: string
   }>>()
   const failureController = new AbortController()
   const signal = input.signal
@@ -263,9 +264,10 @@ export async function prepareReferences(input: {
     let uploadedReference = uploadCache.get(cacheKey)
     if (!uploadedReference) {
       const upload = async (): Promise<{
-        assetId: string
+        assetId?: string
         inferredAspectRatio?: string
         inferredResolution?: string
+        pippitAssetId: string
       }> => {
         const file = await input.loader.load(reference.url, reference.kind, signal)
         totalBytes += file.bytes.byteLength
@@ -284,13 +286,14 @@ export async function prepareReferences(input: {
           signal,
         })
         return {
-          assetId: uploadedFile.assetId,
+          ...(uploadedFile.asset_id === undefined ? {} : { assetId: uploadedFile.asset_id }),
           ...(inferredGeometry === undefined
             ? {}
             : {
                 inferredAspectRatio: inferredGeometry.aspectRatio,
                 inferredResolution: inferredGeometry.resolution,
               }),
+          pippitAssetId: uploadedFile.pippit_asset_id,
         }
       }
       uploadedReference = input.gate ? input.gate.run(upload, signal) : upload()
@@ -305,7 +308,8 @@ export async function prepareReferences(input: {
 
   for (const reference of uploaded) {
     const item: PippitMediaReference = {
-      pippit_asset_id: reference.assetId,
+      ...(reference.assetId === undefined ? {} : { asset_id: reference.assetId }),
+      pippit_asset_id: reference.pippitAssetId,
       ...(reference.kind === "video"
         ? { security_check_scene: [SEEDANCE_VIDEO_SECURITY_CHECK_SCENE] }
         : {}),

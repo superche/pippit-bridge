@@ -1,5 +1,6 @@
 export const PIPPIT_VIDEO_AGENT_NAME = "pippit_video_part_agent" as const
 export const PIPPIT_IMAGE_AGENT_NAME = "pippit_nest_agent" as const
+export const PIPPIT_PARTIAL_EDIT_USE_SOURCE_SEGMENT_DURATION_SEC = -1 as const
 
 export const PIPPIT_RUN_STATES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
@@ -22,6 +23,16 @@ export interface PippitMediaReference {
   security_check_scene?: string[];
 }
 
+export interface PippitVideoTimeRange {
+  end_time_us: number;
+  start_time_us: number;
+}
+
+export interface PippitPartialEditVideoReference extends PippitMediaReference {
+  asset_id: string;
+  time_range: PippitVideoTimeRange;
+}
+
 export interface PippitVideoPartToolParam {
   model: string;
   duration_sec: number;
@@ -33,6 +44,7 @@ export interface PippitVideoPartToolParam {
   images?: PippitMediaReference[];
   videos?: PippitMediaReference[];
   audios?: PippitMediaReference[];
+  partial_edit_videos?: PippitPartialEditVideoReference[];
 }
 
 /** The documented request body, excluding the fixed agent_name field. */
@@ -68,7 +80,12 @@ export interface PippitRun {
 }
 
 export interface PippitUploadResult {
+  /** @deprecated Use pippit_asset_id. Retained for SDK compatibility. */
   assetId: string;
+  /** EverPhoto/cloud asset identity consumed by native partial editing. */
+  asset_id?: string;
+  /** Pippit asset-library identity used for ownership and asset hydration. */
+  pippit_asset_id: string;
 }
 
 export interface PippitSubmitRunResult {

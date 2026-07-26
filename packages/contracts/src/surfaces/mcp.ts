@@ -1,5 +1,12 @@
 import { z } from "zod"
 import { runtimeContract } from "../contract.js"
+import {
+  PIPPIT_DEFAULT_PARTIAL_EDIT_VIDEO_MODEL_ID,
+  PIPPIT_DEFAULT_VIDEO_MODEL_ID,
+  partialEditDurationError,
+  partialEditVideoModelIdSchema,
+  videoModelIdSchema,
+} from "./generation.js"
 
 const printableString = (maximum: number) => z.string().trim().min(1).max(maximum).refine(
   value => [...value].every(character => {
@@ -37,12 +44,7 @@ export const generateVideoToolInputSchema = z.object({
   frame_images: z.array(frameImageSchema).max(2).optional(),
   idempotency_key: idempotencyKeySchema.optional(),
   input_references: z.array(inputReferenceSchema).max(15).optional(),
-  model: z.enum([
-    "pippit/seedance-2.0-mini",
-    "pippit/seedance-2.0",
-    "pippit/seedance-2.0-mini-lite",
-    "pippit/seedance-2.0-vision",
-  ]).default("pippit/seedance-2.0-mini"),
+  model: videoModelIdSchema.default(PIPPIT_DEFAULT_VIDEO_MODEL_ID),
   prompt: printableString(20_000),
   resolution: printableString(64).optional(),
   seed: z.number().int().min(-1).max(4_294_967_295).optional(),
@@ -89,43 +91,57 @@ const normalizedRegionSchema = z.object({
     context.addIssue({ code: "custom", message: "Region must stay within the normalized frame" })
   }
 })
-const editSegmentSchema = z.object({
-  end_ms: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-  start_ms: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-}).strict().superRefine((segment, context) => {
-  if (segment.end_ms <= segment.start_ms || segment.end_ms - segment.start_ms > 30_000) {
-    context.addIssue({ code: "custom", message: "Segment must be positive and at most 30000 milliseconds" })
+const editTimeRangeSchema = z.object({
+  end_time_us: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  start_time_us: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+}).strict().superRefine((timeRange, context) => {
+  if (timeRange.end_time_us <= timeRange.start_time_us) {
+    context.addIssue({ code: "custom", message: "end_time_us must be greater than start_time_us" })
   }
 })
 export const editVideoToolInputSchema = z.object({
-  annotations: z.array(z.object({
-    at_ms: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  guidance_annotations: z.array(z.object({
+    at_time_us: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
     instruction: printableString(2_000),
     region: normalizedRegionSchema,
   }).strict()).max(20),
   byok_id: byokIdSchema.optional(),
   idempotency_key: idempotencyKeySchema.optional(),
-  model: z.enum([
-    "pippit/seedance-2.0-mini",
-    "pippit/seedance-2.0",
-    "pippit/seedance-2.0-mini-lite",
-    "pippit/seedance-2.0-vision",
-  ]).default("pippit/seedance-2.0-mini"),
+  model: partialEditVideoModelIdSchema.default(PIPPIT_DEFAULT_PARTIAL_EDIT_VIDEO_MODEL_ID),
   prompt: printableString(20_000).optional(),
   resolution: printableString(64).optional(),
   seed: z.number().int().min(-1).max(4_294_967_295).optional(),
-  segment: editSegmentSchema,
   source_index: z.number().int().min(0).max(1_000).default(0),
   source_job_id: printableString(8_192),
   thread_id: threadIdSchema.optional(),
+  time_range: editTimeRangeSchema,
 }).strict().superRefine((input, context) => {
-  if (input.prompt === undefined && input.annotations.length === 0) {
-    context.addIssue({ code: "custom", message: "Provide prompt or at least one annotation", path: ["annotations"] })
+  if (input.prompt === undefined && input.guidance_annotations.length === 0) {
+    context.addIssue({
+      code: "custom",
+      message: "Provide prompt or at least one guidance annotation",
+      path: ["guidance_annotations"],
+    })
   }
-  for (const [index, annotation] of input.annotations.entries()) {
-    if (annotation.at_ms < input.segment.start_ms || annotation.at_ms > input.segment.end_ms) {
-      context.addIssue({ code: "custom", message: "Annotation must fall within segment", path: ["annotations", index, "at_ms"] })
+  for (const [index, annotation] of input.guidance_annotations.entries()) {
+    if (
+      annotation.at_time_us < input.time_range.start_time_us
+      || annotation.at_time_us > input.time_range.end_time_us
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Guidance annotation must fall within time_range",
+        path: ["guidance_annotations", index, "at_time_us"],
+      })
     }
+  }
+  const durationError = partialEditDurationError(input.model, input.time_range)
+  if (durationError !== undefined) {
+    context.addIssue({
+      code: "custom",
+      message: durationError,
+      path: ["time_range"],
+    })
   }
 })
 

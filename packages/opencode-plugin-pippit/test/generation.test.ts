@@ -13,7 +13,14 @@ function createHarness() {
     })),
   }
   const pippit: PippitApi = {
-    uploadFile: vi.fn<PippitApi["uploadFile"]>(async () => ({ assetId: `asset-${++nextAsset}` })),
+    uploadFile: vi.fn<PippitApi["uploadFile"]>(async () => {
+      nextAsset += 1
+      return {
+        assetId: `pippit-asset-${nextAsset}`,
+        asset_id: `everphoto-asset-${nextAsset}`,
+        pippit_asset_id: `pippit-asset-${nextAsset}`,
+      }
+    }),
     submitRun: vi.fn<PippitApi["submitRun"]>(async () => ({
       run: { runId: "run-1", state: 1, threadId: "thread-1" },
       webThreadLink: "https://xyq.jianying.com/thread/thread-1",
@@ -71,18 +78,18 @@ describe("PippitVideoService", () => {
     expect(pippit.submitRun).toHaveBeenCalledWith({
       accessKey: "ak-secret",
       request: {
-        asset_ids: ["asset-1", "asset-2", "asset-3"],
+        asset_ids: ["pippit-asset-1", "pippit-asset-2", "pippit-asset-3"],
         message: "A product reveal",
         video_part_tool_param: {
-          audios: [{ pippit_asset_id: "asset-3" }],
+          audios: [{ asset_id: "everphoto-asset-3", pippit_asset_id: "pippit-asset-3" }],
           duration_sec: 10,
-          images: [{ pippit_asset_id: "asset-1" }],
+          images: [{ asset_id: "everphoto-asset-1", pippit_asset_id: "pippit-asset-1" }],
           model: "seedance2.0_direct",
           prompt: "A product reveal",
           ratio: "9:16",
           resolution: "720p",
           seed: 42,
-          videos: [{ pippit_asset_id: "asset-2" }],
+          videos: [{ asset_id: "everphoto-asset-2", pippit_asset_id: "pippit-asset-2" }],
         },
       },
     })
@@ -109,7 +116,10 @@ describe("PippitVideoService", () => {
         request: expect.objectContaining({
           video_part_tool_param: expect.objectContaining({
             generate_type: 1,
-            images: [{ pippit_asset_id: "asset-1" }, { pippit_asset_id: "asset-2" }],
+            images: [
+              { asset_id: "everphoto-asset-1", pippit_asset_id: "pippit-asset-1" },
+              { asset_id: "everphoto-asset-2", pippit_asset_id: "pippit-asset-2" },
+            ],
           }),
         }),
       }),

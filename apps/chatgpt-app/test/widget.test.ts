@@ -102,7 +102,7 @@ describe("Pippit MCP App widget state", () => {
       currentTimeMs: 4_000,
       instruction: draft.instruction,
       segmentEndMs: 5_000,
-      segmentStartMs: 2_000,
+      segmentStartMs: 1_000,
     })
     expect(shorterDuration.annotations).toEqual([{ ...draft.annotations[0], at_ms: 5_000 }])
   })

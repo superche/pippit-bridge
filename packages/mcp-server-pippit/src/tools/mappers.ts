@@ -60,7 +60,7 @@ export function facadeImageRequest(input: PippitGenerateImageToolInput): PippitI
 
 export function facadeEditRequest(input: PippitEditVideoSegmentToolInput): PippitVideoEditRequest {
   return {
-    annotations: input.annotations,
+    guidance_annotations: input.guidance_annotations,
     model: input.model,
     ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
     ...(input.byok_id === undefined && input.thread_id === undefined
@@ -77,9 +77,9 @@ export function facadeEditRequest(input: PippitEditVideoSegmentToolInput): Pippi
         }),
     ...(input.resolution === undefined ? {} : { resolution: input.resolution }),
     ...(input.seed === undefined ? {} : { seed: input.seed }),
-    segment: input.segment,
     source_index: input.source_index,
     source_job_id: input.source_job_id,
+    time_range: input.time_range,
   }
 }
 

@@ -200,8 +200,15 @@ async function prepareReferences(
   remoteLoader: ReferenceLoader,
 ): Promise<PreparedReferences> {
   const selected = selectedReferences(input)
-  const cache = new Map<string, Promise<string>>()
-  const uploaded: Array<{ readonly assetId: string; readonly kind: ReferenceKind }> = []
+  const cache = new Map<string, Promise<{
+    readonly assetId?: string
+    readonly pippitAssetId: string
+  }>>()
+  const uploaded: Array<{
+    readonly assetId?: string
+    readonly kind: ReferenceKind
+    readonly pippitAssetId: string
+  }> = []
   let totalBytes = 0
   let audioBytes = 0
 
@@ -227,24 +234,30 @@ async function prepareReferences(
           file,
           ...(input.signal === undefined ? {} : { signal: input.signal }),
         })
-        return result.assetId
+        return {
+          ...(result.asset_id === undefined ? {} : { assetId: result.asset_id }),
+          pippitAssetId: result.pippit_asset_id,
+        }
       })()
       cache.set(cacheKey, upload)
     }
-    uploaded.push({ assetId: await upload, kind: reference.kind })
+    uploaded.push({ ...(await upload), kind: reference.kind })
   }
 
   const images: PippitMediaReference[] = []
   const videos: PippitMediaReference[] = []
   const audios: PippitMediaReference[] = []
   for (const reference of uploaded) {
-    const media = { pippit_asset_id: reference.assetId }
+    const media = {
+      ...(reference.assetId === undefined ? {} : { asset_id: reference.assetId }),
+      pippit_asset_id: reference.pippitAssetId,
+    }
     if (reference.kind === "image") images.push(media)
     if (reference.kind === "video") videos.push(media)
     if (reference.kind === "audio") audios.push(media)
   }
   return {
-    assetIds: uploaded.map((reference) => reference.assetId),
+    assetIds: uploaded.map((reference) => reference.pippitAssetId),
     audios,
     ...(selected.generateType === undefined ? {} : { generateType: selected.generateType }),
     images,

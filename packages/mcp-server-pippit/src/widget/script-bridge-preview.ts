@@ -21,7 +21,9 @@ import {
   classifyPreviewUpdate,
   mergeWidgetDraftForMediaRefresh,
   normalizeWidgetPoint,
+  partialEditMaxSegmentMs,
   reconcileWidgetDraftForDuration,
+  resolvePartialEditModel,
   resolveWidgetModel,
   resolveWidgetTheme,
   shouldAcceptWidgetJobResult,
@@ -35,6 +37,8 @@ export const WIDGET_SCRIPT_BRIDGE_PREVIEW = String.raw`  <script>
       var classifyPreviewUpdate = ${classifyPreviewUpdate.toString()};
       var shouldAcceptWidgetJobResult = ${shouldAcceptWidgetJobResult.toString()};
       var resolveWidgetModel = ${resolveWidgetModel.toString()};
+      var resolvePartialEditModel = ${resolvePartialEditModel.toString()};
+      var partialEditMaxSegmentMs = ${partialEditMaxSegmentMs.toString()};
       var reconcileWidgetDraftForDuration = ${reconcileWidgetDraftForDuration.toString()};
       var mergeWidgetDraftForMediaRefresh = ${mergeWidgetDraftForMediaRefresh.toString()};
       var normalizeWidgetPoint = ${normalizeWidgetPoint.toString()};
@@ -66,7 +70,8 @@ export const WIDGET_SCRIPT_BRIDGE_PREVIEW = String.raw`  <script>
       var MAX_LOCAL_PREVIEW_BYTES = 256 * 1024 * 1024;
       var LOCAL_PREVIEW_CHUNK_BYTES = 1024 * 1024;
       var LOCAL_RESOURCE_REQUEST_TIMEOUT_MS = 5000;
-      var MAX_SEGMENT_MS = 30000;
+      var MIN_SEGMENT_MS = 4000;
+      var MAX_SEGMENT_MS = 15000;
       var DEFAULT_REQUEST_TIMEOUT_MS = 15000;
       var VIDEO_TOOL_REQUEST_TIMEOUT_MS = ${PIPPIT_WIDGET_VIDEO_TOOL_TIMEOUT_MS};
       var VIDEO_TOOL_NAMES = new Set([
@@ -148,6 +153,7 @@ export const WIDGET_SCRIPT_BRIDGE_PREVIEW = String.raw`  <script>
         widgetMachineState = transition.state;
         activeJobId = widgetMachineState.activeJobId;
         activeModel = widgetMachineState.activeModel;
+        MAX_SEGMENT_MS = partialEditMaxSegmentMs(activeModel);
         activeStatus = widgetMachineState.status;
         awaitingPreview = widgetMachineState.awaitingPreview;
         destroyed = widgetMachineState.destroyed;

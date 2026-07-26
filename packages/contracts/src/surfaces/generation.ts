@@ -4,6 +4,38 @@ import { frameImageSchema, inputReferenceSchema } from "../media/references.js"
 
 export const providerOptionsSchema = z.record(z.string(), z.record(z.string(), z.unknown()))
 
+export const PIPPIT_VIDEO_MODEL_IDS = [
+  "pippit/seedance-2.5",
+  "pippit/seedance-2.0-mini",
+  "pippit/seedance-2.0",
+  "pippit/seedance-2.0-mini-lite",
+  "pippit/seedance-2.0-vision",
+] as const
+export const PIPPIT_DEFAULT_VIDEO_MODEL_ID = "pippit/seedance-2.0-mini"
+export const PIPPIT_PARTIAL_EDIT_VIDEO_MODEL_IDS = PIPPIT_VIDEO_MODEL_IDS
+export const PIPPIT_DEFAULT_PARTIAL_EDIT_VIDEO_MODEL_ID = "pippit/seedance-2.0"
+export const PIPPIT_PARTIAL_EDIT_MIN_DURATION_US = 4_000_000
+export const PIPPIT_PARTIAL_EDIT_2_0_MAX_DURATION_US = 15_000_000
+export const PIPPIT_PARTIAL_EDIT_2_5_MAX_DURATION_US = 30_200_000
+
+export const videoModelIdSchema = z.enum(PIPPIT_VIDEO_MODEL_IDS)
+export const partialEditVideoModelIdSchema = z.enum(PIPPIT_PARTIAL_EDIT_VIDEO_MODEL_IDS)
+
+export function partialEditDurationError(
+  model: (typeof PIPPIT_PARTIAL_EDIT_VIDEO_MODEL_IDS)[number],
+  timeRange: { readonly end_time_us: number; readonly start_time_us: number },
+): string | undefined {
+  const durationUs = timeRange.end_time_us - timeRange.start_time_us
+  const maximumUs = model === "pippit/seedance-2.5"
+    ? PIPPIT_PARTIAL_EDIT_2_5_MAX_DURATION_US
+    : PIPPIT_PARTIAL_EDIT_2_0_MAX_DURATION_US
+  if (durationUs < PIPPIT_PARTIAL_EDIT_MIN_DURATION_US || durationUs > maximumUs) {
+    const maximumSeconds = maximumUs / 1_000_000
+    return `Partial edit duration must be between 4 and ${maximumSeconds} seconds for ${model}`
+  }
+  return undefined
+}
+
 const imageReferenceUrl = z.string().refine(value => {
   if (/^data:image\/(?:avif|bmp|gif|jpeg|png|webp);base64,/iu.test(value)) return true
   try { return /^https?:$/u.test(new URL(value).protocol) } catch { return false }
@@ -38,50 +70,61 @@ export const videoEditRegionSchema = z.object({
     context.addIssue({ code: "custom", message: "y + height must be at most 1", path: ["height"] })
   }
 })
-export const videoEditAnnotationSchema = z.object({
-  at_ms: z.number().int().nonnegative(),
+export const videoEditGuidanceAnnotationSchema = z.object({
+  at_time_us: z.number().int().nonnegative(),
   instruction: z.string().trim().min(1).max(2_000),
   region: videoEditRegionSchema,
 }).strict()
-export const videoEditSegmentSchema = z.object({
-  end_ms: z.number().int().positive(),
-  start_ms: z.number().int().nonnegative(),
-}).strict().superRefine((segment, context) => {
-  if (segment.end_ms <= segment.start_ms) {
-    context.addIssue({ code: "custom", message: "end_ms must be greater than start_ms", path: ["end_ms"] })
-  }
-  if (segment.end_ms - segment.start_ms > 30_000) {
-    context.addIssue({ code: "custom", message: "The editable segment may be at most 30000 ms", path: ["end_ms"] })
+export const videoEditTimeRangeSchema = z.object({
+  end_time_us: z.number().int().positive(),
+  start_time_us: z.number().int().nonnegative(),
+}).strict().superRefine((timeRange, context) => {
+  if (timeRange.end_time_us <= timeRange.start_time_us) {
+    context.addIssue({
+      code: "custom",
+      message: "end_time_us must be greater than start_time_us",
+      path: ["end_time_us"],
+    })
   }
 })
 
 export const videoEditRequestSchema = z.object({
-  annotations: z.array(videoEditAnnotationSchema).max(20).default([]),
-  model: z.enum([
-    "pippit/seedance-2.0-mini",
-    "pippit/seedance-2.0",
-    "pippit/seedance-2.0-mini-lite",
-    "pippit/seedance-2.0-vision",
-  ]).default("pippit/seedance-2.0-mini"),
+  guidance_annotations: z.array(videoEditGuidanceAnnotationSchema).max(20).default([]),
+  model: partialEditVideoModelIdSchema.default(PIPPIT_DEFAULT_PARTIAL_EDIT_VIDEO_MODEL_ID),
   prompt: z.string().trim().min(1).max(20_000).optional(),
   provider: z.object({ options: providerOptionsSchema.optional() }).strict().optional(),
   resolution: z.string().trim().min(1).max(64).optional(),
   seed: z.number().int().min(-1).max(4_294_967_295).optional(),
-  segment: videoEditSegmentSchema,
   source_index: z.number().int().min(0).max(1_000).default(0),
   source_job_id: z.string().trim().min(1).max(16_384),
+  time_range: videoEditTimeRangeSchema,
 }).strict().superRefine((request, context) => {
-  if (request.prompt === undefined && request.annotations.length === 0) {
-    context.addIssue({ code: "custom", message: "Provide prompt or at least one annotation", path: ["annotations"] })
+  if (request.prompt === undefined && request.guidance_annotations.length === 0) {
+    context.addIssue({
+      code: "custom",
+      message: "Provide prompt or at least one guidance annotation",
+      path: ["guidance_annotations"],
+    })
   }
-  for (const [index, annotation] of request.annotations.entries()) {
-    if (annotation.at_ms < request.segment.start_ms || annotation.at_ms > request.segment.end_ms) {
+  for (const [index, annotation] of request.guidance_annotations.entries()) {
+    if (
+      annotation.at_time_us < request.time_range.start_time_us
+      || annotation.at_time_us > request.time_range.end_time_us
+    ) {
       context.addIssue({
         code: "custom",
-        message: "Annotation at_ms must fall inside segment",
-        path: ["annotations", index, "at_ms"],
+        message: "Guidance annotation at_time_us must fall inside time_range",
+        path: ["guidance_annotations", index, "at_time_us"],
       })
     }
+  }
+  const durationError = partialEditDurationError(request.model, request.time_range)
+  if (durationError !== undefined) {
+    context.addIssue({
+      code: "custom",
+      message: durationError,
+      path: ["time_range"],
+    })
   }
 })
 
@@ -92,12 +135,7 @@ export const videoGenerationRequestSchema = z.object({
   frame_images: z.array(frameImageSchema).max(2).optional(),
   generate_audio: z.boolean().optional(),
   input_references: z.array(inputReferenceSchema).max(15).optional(),
-  model: z.enum([
-    "pippit/seedance-2.0-mini",
-    "pippit/seedance-2.0",
-    "pippit/seedance-2.0-mini-lite",
-    "pippit/seedance-2.0-vision",
-  ]).default("pippit/seedance-2.0-mini"),
+  model: videoModelIdSchema.default(PIPPIT_DEFAULT_VIDEO_MODEL_ID),
   prompt: z.string().trim().min(1).max(20_000),
   provider: z.object({ options: providerOptionsSchema.optional() }).strict().optional(),
   resolution: z.string().trim().min(1).optional(),

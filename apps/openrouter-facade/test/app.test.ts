@@ -70,7 +70,12 @@ function createHarness(overrides: {
     }),
     uploadFile: vi.fn<PippitApi["uploadFile"]>(async ({ file }) => {
       events.push(`upload:${file.filename}`)
-      return { assetId: `asset-${++nextAsset}` }
+      nextAsset += 1
+      return {
+        assetId: `pippit-asset-${nextAsset}`,
+        asset_id: `everphoto-asset-${nextAsset}`,
+        pippit_asset_id: `pippit-asset-${nextAsset}`,
+      }
     }),
   } satisfies PippitApi
   const loader = {
@@ -210,7 +215,7 @@ describe("OpenRouter image generation", () => {
       throw new Error("Expected an image submission")
     }
     expect(submitted).toEqual({
-      asset_ids: ["asset-1"],
+      asset_ids: ["pippit-asset-1"],
       general_agent_settings: {
         generate_image_count: 2,
         image_model: "seedream_5.0_pro",
@@ -621,11 +626,11 @@ describe("OpenRouter video facade", () => {
     expect(response.json().paths["/api/v1/videos/edits"]).toHaveProperty("post")
     expect(response.json().components.parameters).not.toHaveProperty("IdempotencyKey")
     expect(response.json().components.schemas.VideoEditRequest.required).toEqual([
-      "segment",
       "source_job_id",
+      "time_range",
     ])
     expect(response.json().components.schemas.VideoEditRequest.properties.model.default)
-      .toBe("pippit/seedance-2.0-mini")
+      .toBe("pippit/seedance-2.0")
     expect(response.json().components.schemas.ImageGenerationRequest).toMatchObject({
       properties: { model: { default: "pippit/seedream-5.0" } },
       required: ["prompt"],
@@ -667,6 +672,7 @@ describe("OpenRouter video facade", () => {
 
     expect(response.statusCode).toBe(200)
     expect(response.json().data.map((model: { id: string }) => model.id)).toEqual([
+      "pippit/seedance-2.5",
       "pippit/seedance-2.0-mini",
       "pippit/seedance-2.0",
       "pippit/seedance-2.0-mini-lite",
@@ -754,16 +760,17 @@ describe("OpenRouter video facade", () => {
         message: "make a video",
         thread_id: "existing-thread",
         video_part_tool_param: {
-          audios: [{ pippit_asset_id: "asset-3" }],
+          audios: [{ asset_id: "everphoto-asset-3", pippit_asset_id: "pippit-asset-3" }],
           duration_sec: 10,
-          images: [{ pippit_asset_id: "asset-1" }],
+          images: [{ asset_id: "everphoto-asset-1", pippit_asset_id: "pippit-asset-1" }],
           model: "seedance2.0_direct",
           prompt: "make a video",
           ratio: "9:16",
           resolution: "720p",
           seed: 42,
           videos: [{
-            pippit_asset_id: "asset-2",
+            asset_id: "everphoto-asset-2",
+            pippit_asset_id: "pippit-asset-2",
             security_check_scene: ["pippit_seedance2_0_user_input_video"],
           }],
         },
@@ -778,24 +785,24 @@ describe("OpenRouter video facade", () => {
     expect(response.json().id).toMatch(/^pippit_job_v2\./u)
   })
 
-  it("regenerates from the complete source video with compiled guidance and nearest whole-second duration", async () => {
+  it("submits native partial regeneration with exact microsecond range and soft spatial guidance", async () => {
     const harness = createHarness()
     const source = await createVideo(harness.app)
     const response = await harness.app.inject({
       headers: bearer(FACADE_KEY),
       method: "POST",
       payload: {
-        annotations: [
+        guidance_annotations: [
           {
-            at_ms: 2_000,
+            at_time_us: 2_000_000,
             instruction: "Replace the sign with a blue logo",
             region: { height: 0.4, width: 0.3, x: 0.1, y: 0.2 },
           },
         ],
         prompt: "Keep the original camera motion",
         resolution: "720p",
-        segment: { end_ms: 5_100, start_ms: 0 },
         source_job_id: source.json().id,
+        time_range: { end_time_us: 5_600_000, start_time_us: 1_200_000 },
       },
       url: "/api/v1/videos/edits",
     })
@@ -811,33 +818,37 @@ describe("OpenRouter video facade", () => {
     if (submitted === undefined || !("video_part_tool_param" in submitted)) {
       throw new Error("Expected a video submission")
     }
-    expect(submitted.video_part_tool_param.duration_sec).toBe(5)
-    expect(submitted.video_part_tool_param.model).toBe("Seedance_2.0_mini")
+    expect(submitted.video_part_tool_param.duration_sec).toBe(-1)
+    expect(submitted.video_part_tool_param.model).toBe("seedance2.0_direct")
     expect(submitted.video_part_tool_param.ratio).toBe("16:9")
-    expect(submitted.video_part_tool_param.videos).toEqual([{
-      pippit_asset_id: "asset-1",
+    expect(submitted.video_part_tool_param.videos).toBeUndefined()
+    expect(submitted.video_part_tool_param.partial_edit_videos).toEqual([{
+      asset_id: "everphoto-asset-1",
+      pippit_asset_id: "pippit-asset-1",
       security_check_scene: ["pippit_seedance2_0_user_input_video"],
+      time_range: {
+        end_time_us: 5_600_000,
+        start_time_us: 1_200_000,
+      },
     }])
     expect(submitted.asset_ids).toEqual([])
     expect(submitted.message).toBe(submitted.video_part_tool_param.prompt)
-    expect(submitted.message).toContain("Pippit reference-guided video regeneration instruction v2.")
-    expect(submitted.message).toContain("The complete source video is attached as the only video reference.")
-    expect(submitted.message).toContain("Apply the requested change decisively during 0-5100 ms")
+    expect(submitted.message).toContain("对【@视频1】进行局部修改, 修改区间:\n1.2s - 5.6s, 修改内容：")
+    expect(submitted.message).toContain("Keep the original camera motion")
     expect(submitted.message).toContain(
-      "Annotation 1 at 2000 ms targets the normalized intrinsic-frame rectangle x=0.1, y=0.2, width=0.3, height=0.4.",
+      "Guidance annotation 1 at 2000000 us targets the normalized intrinsic-frame rectangle x=0.1, y=0.2, width=0.3, height=0.4.",
     )
     expect(submitted.message).toContain("Required visible change: Replace the sign with a blue logo")
-    expect(submitted.message).toContain("Overall guidance: Keep the original camera motion")
     expect(JSON.parse(submitted.message.split("\n").at(-1) ?? "null")).toEqual({
-      annotations: [
+      guidance_annotations: [
         {
-          at_ms: 2_000,
+          at_time_us: 2_000_000,
           instruction: "Replace the sign with a blue logo",
           region: { height: 0.4, width: 0.3, x: 0.1, y: 0.2 },
         },
       ],
       instruction: "Keep the original camera motion",
-      segment: { end_ms: 5_100, start_ms: 0 },
+      time_range: { end_time_us: 5_600_000, start_time_us: 1_200_000 },
     })
   })
 
@@ -854,14 +865,14 @@ describe("OpenRouter video facade", () => {
       headers: bearer(FACADE_KEY),
       method: "POST",
       payload: {
-        annotations: [{
-          at_ms: 0,
+        guidance_annotations: [{
+          at_time_us: 0,
           instruction: "Restyle the full frame",
           region: { height: 1, width: 1, x: 0, y: 0 },
         }],
-        model: "pippit/seedance-2.0",
-        segment: { end_ms: 5_125, start_ms: 0 },
+        model: "pippit/seedance-2.5",
         source_job_id: source.json().id,
+        time_range: { end_time_us: 5_125_000, start_time_us: 0 },
       },
       url: "/api/v1/videos/edits",
     })
@@ -875,25 +886,58 @@ describe("OpenRouter video facade", () => {
       ratio: "9:16",
       resolution: "720p",
     })
-    expect(submitted.message).toContain("Annotation 1 at 0 ms targets the full intrinsic video frame.")
+    expect(submitted.message).toContain("Guidance annotation 1 at 0 us targets the full intrinsic video frame.")
     expect(submitted.message).toContain("Required visible change: Restyle the full frame")
+  })
+
+  it("rejects partial editing when upload hydration lacks the cloud asset id", async () => {
+    const harness = createHarness()
+    const source = await createVideo(harness.app)
+    harness.pippit.uploadFile.mockResolvedValueOnce({
+      assetId: "pippit-only",
+      pippit_asset_id: "pippit-only",
+    })
+
+    const response = await harness.app.inject({
+      headers: bearer(FACADE_KEY),
+      method: "POST",
+      payload: {
+        model: "pippit/seedance-2.0",
+        prompt: "edit",
+        source_job_id: source.json().id,
+        time_range: { end_time_us: 4_000_000, start_time_us: 0 },
+      },
+      url: "/api/v1/videos/edits",
+    })
+
+    expect(response.statusCode).toBe(502)
+    expect(response.json().error.metadata.internal_code).toBe("source_video_asset_identity_unavailable")
+    expect(harness.pippit.submitRun).toHaveBeenCalledTimes(1)
   })
 
   it("rejects invalid edit metadata before querying or uploading the source", async () => {
     const harness = createHarness()
     const common = {
-      model: "pippit/seedance-2.0",
+      guidance_annotations: [],
+      model: "pippit/seedance-2.5",
       prompt: "edit",
-      segment: { end_ms: 1_000, start_ms: 0 },
       source_job_id: "opaque-source-job",
+      time_range: { end_time_us: 4_000_000, start_time_us: 0 },
     }
     const invalidPayloads = [
-      { ...common, segment: { end_ms: 30_001, start_ms: 0 } },
+      { ...common, time_range: { end_time_us: 0, start_time_us: 0 } },
       {
         ...common,
-        annotations: [
+        model: "pippit/seedance-2.0",
+        time_range: { end_time_us: 15_000_001, start_time_us: 0 },
+      },
+      { ...common, time_range: { end_time_us: 30_200_001, start_time_us: 0 } },
+      { ...common, time_range: { end_time_us: 3_999_999, start_time_us: 0 } },
+      {
+        ...common,
+        guidance_annotations: [
           {
-            at_ms: 500,
+            at_time_us: 500_000,
             instruction: "edit",
             region: { height: 0.5, width: 0.2, x: 0.9, y: 0 },
           },
@@ -901,9 +945,9 @@ describe("OpenRouter video facade", () => {
       },
       {
         ...common,
-        annotations: [
+        guidance_annotations: [
           {
-            at_ms: 1_001,
+            at_time_us: 4_000_001,
             instruction: "edit",
             region: { height: 0.5, width: 0.5, x: 0, y: 0 },
           },
@@ -911,8 +955,8 @@ describe("OpenRouter video facade", () => {
       },
       {
         model: common.model,
-        segment: common.segment,
         source_job_id: common.source_job_id,
+        time_range: common.time_range,
       },
     ]
 
@@ -938,14 +982,14 @@ describe("OpenRouter video facade", () => {
       headers: bearer(FACADE_KEY),
       method: "POST",
       payload: {
-        annotations: Array.from({ length: 20 }, () => ({
-          at_ms: 1_000,
+        guidance_annotations: Array.from({ length: 20 }, () => ({
+          at_time_us: 1_000_000,
           instruction: "x".repeat(1_000),
           region: { height: 0.5, width: 0.5, x: 0, y: 0 },
         })),
-        model: "pippit/seedance-2.0",
-        segment: { end_ms: 12_400, start_ms: 0 },
+        model: "pippit/seedance-2.5",
         source_job_id: source.json().id,
+        time_range: { end_time_us: 12_400_000, start_time_us: 0 },
       },
       url: "/api/v1/videos/edits",
     })
@@ -964,10 +1008,10 @@ describe("OpenRouter video facade", () => {
       headers: bearer(SECOND_FACADE_KEY),
       method: "POST",
       payload: {
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.5",
         prompt: "edit",
-        segment: { end_ms: 1_000, start_ms: 0 },
         source_job_id: source.json().id,
+        time_range: { end_time_us: 4_000_000, start_time_us: 0 },
       },
       url: "/api/v1/videos/edits",
     })
@@ -984,10 +1028,10 @@ describe("OpenRouter video facade", () => {
       headers: bearer(FACADE_KEY),
       method: "POST",
       payload: {
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.5",
         prompt: "edit",
-        segment: { end_ms: 1_000, start_ms: 0 },
         source_job_id: pendingSource.json().id,
+        time_range: { end_time_us: 4_000_000, start_time_us: 0 },
       },
       url: "/api/v1/videos/edits",
     })
@@ -1001,11 +1045,11 @@ describe("OpenRouter video facade", () => {
       headers: bearer(FACADE_KEY),
       method: "POST",
       payload: {
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.5",
         prompt: "edit",
-        segment: { end_ms: 1_000, start_ms: 0 },
         source_index: 1,
         source_job_id: completedSource.json().id,
+        time_range: { end_time_us: 4_000_000, start_time_us: 0 },
       },
       url: "/api/v1/videos/edits",
     })

@@ -3,7 +3,7 @@ import { isAbsolute, join, resolve } from "node:path"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 
-const EXPECTED_PLUGIN_VERSION = "0.2.17"
+const EXPECTED_PLUGIN_VERSION = "0.3.0"
 const launcherArgument = process.argv[2]
 if (launcherArgument === undefined || !isAbsolute(launcherArgument)) {
   throw new Error("Usage: node smoke-installed-bin.mjs /absolute/path/to/pippit-mcp")

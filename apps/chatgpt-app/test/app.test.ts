@@ -56,12 +56,28 @@ describe("Pippit ChatGPT MCP App", () => {
       model: "pippit/seedance-2.0-mini",
     })
     expect(chatGptEditInputSchema.parse({
-      annotations: [],
+      guidance_annotations: [],
       idempotency_key: "edit",
       prompt: "change",
-      segment: { end_ms: 1_000, start_ms: 0 },
       source_job_id: "job",
-    })).toMatchObject({ model: "pippit/seedance-2.0-mini" })
+      time_range: { end_time_us: 4_000_000, start_time_us: 0 },
+    })).toMatchObject({ model: "pippit/seedance-2.0" })
+    expect(chatGptEditInputSchema.safeParse({
+      guidance_annotations: [],
+      idempotency_key: "edit-25",
+      model: "pippit/seedance-2.5",
+      prompt: "change",
+      source_job_id: "job",
+      time_range: { end_time_us: 30_200_000, start_time_us: 0 },
+    }).success).toBe(true)
+    expect(chatGptEditInputSchema.safeParse({
+      guidance_annotations: [],
+      idempotency_key: "edit-20-too-long",
+      model: "pippit/seedance-2.0-mini",
+      prompt: "change",
+      source_job_id: "job",
+      time_range: { end_time_us: 15_000_001, start_time_us: 0 },
+    }).success).toBe(false)
     expect(chatGptGenerateInputSchema.safeParse({
       idempotency_key: "job",
       model: "pippit/seedance-2.0-fast",
@@ -338,45 +354,45 @@ describe("Pippit ChatGPT MCP App", () => {
 
     const edited = await client.callTool({
       arguments: {
-        annotations: [
+        guidance_annotations: [
           {
-            at_ms: 51_000,
+            at_time_us: 51_000_000,
             instruction: "Turn the product matte black",
             region: { height: 0.4, width: 0.3, x: 0.2, y: 0.1 },
           },
         ],
         byok_id: "credential_1",
         idempotency_key: "edit_retry_1",
-        model: "pippit/seedance-2.0-vision",
+        model: "pippit/seedance-2.5",
         prompt: "Preserve the camera movement",
         resolution: "1080p",
         seed: 7,
-        segment: { end_ms: 60_000, start_ms: 45_000 },
         source_index: 0,
         source_job_id: "job_123",
         thread_id: "thread_1",
+        time_range: { end_time_us: 60_000_000, start_time_us: 45_000_000 },
       },
       name: CHATGPT_TOOL_NAMES.edit,
     })
     expect(calls.at(-1)).toEqual({
       args: {
-        annotations: [
+        guidance_annotations: [
           {
-            at_ms: 51_000,
+            at_time_us: 51_000_000,
             instruction: "Turn the product matte black",
             region: { height: 0.4, width: 0.3, x: 0.2, y: 0.1 },
           },
         ],
         byok_id: "credential_1",
         idempotency_key: "edit_retry_1",
-        model: "pippit/seedance-2.0-vision",
+        model: "pippit/seedance-2.5",
         prompt: "Preserve the camera movement",
         resolution: "1080p",
         seed: 7,
-        segment: { end_ms: 60_000, start_ms: 45_000 },
         source_index: 0,
         source_job_id: "job_123",
         thread_id: "thread_1",
+        time_range: { end_time_us: 60_000_000, start_time_us: 45_000_000 },
       },
       name: "pippit_edit_video_segment",
     })
@@ -396,28 +412,28 @@ describe("Pippit ChatGPT MCP App", () => {
     expect((latest._meta?.["pippit/media"] as unknown[] | undefined)).toHaveLength(1)
   })
 
-  it("validates edit duration, region bounds, and instruction presence", () => {
+  it("validates a positive edit range, region bounds, and instruction presence", () => {
     const base = {
-      annotations: [],
+      guidance_annotations: [],
       idempotency_key: "edit_1",
-      model: "pippit/seedance-2.0-vision",
+      model: "pippit/seedance-2.5",
       prompt: "Keep the subject centered",
-      segment: { end_ms: 60_000, start_ms: 45_000 },
       source_job_id: "job_123",
+      time_range: { end_time_us: 60_000_000, start_time_us: 45_000_000 },
     }
     expect(chatGptEditInputSchema.parse(base)).toMatchObject({ source_index: 0 })
     expect(
       chatGptEditInputSchema.safeParse({
         ...base,
-        segment: { end_ms: 75_001, start_ms: 45_000 },
+        time_range: { end_time_us: 45_000_000, start_time_us: 45_000_000 },
       }).success,
     ).toBe(false)
     expect(
       chatGptEditInputSchema.safeParse({
         ...base,
-        annotations: [
+        guidance_annotations: [
           {
-            at_ms: 50_000,
+            at_time_us: 50_000_000,
             instruction: "Change this area",
             region: { height: 0.5, width: 0.3, x: 0.8, y: 0.1 },
           },
@@ -427,9 +443,9 @@ describe("Pippit ChatGPT MCP App", () => {
     expect(
       chatGptEditInputSchema.safeParse({
         ...base,
-        annotations: [
+        guidance_annotations: [
           {
-            at_ms: 50_000,
+            at_time_us: 50_000_000,
             instruction: "x".repeat(2_001),
             region: { height: 0.5, width: 0.3, x: 0.2, y: 0.1 },
           },
@@ -439,7 +455,7 @@ describe("Pippit ChatGPT MCP App", () => {
     expect(
       chatGptEditInputSchema.safeParse({
         ...base,
-        annotations: [],
+        guidance_annotations: [],
         prompt: undefined,
       }).success,
     ).toBe(false)
