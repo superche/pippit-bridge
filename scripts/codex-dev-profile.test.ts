@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest"
 
 import {
   assertSupportedDevNode,
+  bindFacadeStatus,
   buildMacLaunchArgs,
   clearDevPluginCache,
   findDevProcessIds,
@@ -125,5 +126,31 @@ describe("Codex Dev profile", () => {
       "--args",
       "--user-data-dir=/Users/dev/Library/Application Support/Codex Dev",
     ])
+  })
+
+  it("requires health, exact artifact identity, and the gateway hash for a Facade match", () => {
+    const binding = {
+      daemonArtifactHash: "a".repeat(64),
+      runtimeRoot: "/Users/dev/.pippit-bridge/dev-v1/runtime",
+    }
+    expect(bindFacadeStatus({
+      artifactHash: "a".repeat(64),
+      healthy: true,
+      matchesExpectedArtifact: true,
+      pid: 101,
+    }, binding)).toMatchObject({
+      gatewayArtifactHash: "a".repeat(64),
+      matchesGateway: true,
+      pid: 101,
+    })
+    expect(bindFacadeStatus({
+      artifactHash: "b".repeat(64),
+      healthy: true,
+      matchesExpectedArtifact: true,
+      pid: 202,
+    }, binding)).toMatchObject({
+      matchesGateway: false,
+      pid: 202,
+    })
   })
 })

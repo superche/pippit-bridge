@@ -5,6 +5,7 @@ const instanceId = process.env.PIPPIT_TEST_INSTANCE_ID
 const proofKeyHex = process.env.PIPPIT_TEST_PROOF_KEY_HEX
 const runtimeVersion = process.env.PIPPIT_TEST_RUNTIME_VERSION
 const responsePidValue = process.env.PIPPIT_TEST_RESPONSE_PID
+const ignoreSigterm = process.env.PIPPIT_TEST_IGNORE_SIGTERM === "1"
 
 if (!instanceId || !proofKeyHex || !runtimeVersion) {
   throw new Error("Legacy proof daemon test configuration is incomplete.")
@@ -37,7 +38,9 @@ async function shutdown() {
 }
 
 process.once("SIGINT", () => void shutdown())
-process.once("SIGTERM", () => void shutdown())
+process.once("SIGTERM", () => {
+  if (!ignoreSigterm) void shutdown()
+})
 
 server.listen(0, "127.0.0.1", () => {
   const address = server.address()

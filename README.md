@@ -61,6 +61,14 @@ point and refuses a profile containing the production Pippit plugin. Override th
 choose the theme once inside the Dev app; credentials and browser data remain local and are never
 copied into the repository.
 
+The Dev App, stable gateway/worker generations, and detached loopback Facade are three separate
+lifecycle layers. `codex:dev:app` converges all three: it refreshes only the isolated plugin cache,
+authenticates the Facade inside the Dev runtime root, reuses an exact entry/SHA-256 match, and safely
+replaces any authenticated non-exact daemon before launching the App.
+`codex:dev:profile:status` reports App PIDs, cache/gateway hashes, and Facade entry/hash/PID/health
+independently. Cold refresh preserves login/browser data as well as BYOK credentials, runtime
+secrets, jobs, artifacts, outputs, and idempotency state.
+
 正式发布使用受保护的两阶段 workflow：本地/CI gate、npm publish、官方 registry 重下载验证完成后，才允许创建 exact-version marketplace activation PR。Agent 操作约束、hot/cold contract 边界和 rollback 规则见 [AGENTS.md](./AGENTS.md)，完整设计与 runbook 见 [Codex Plugin 开发热更新与正式发布工程](./docs/codex-plugin-dev-release-engineering.md)。当前 backend worker HMR 已接通；已挂载 Widget iframe 的原地 HMR 尚未接入，不得对外声明支持。
 
 Pippit Bridge 是小云雀（Pippit）的 API gateway 与 adapter monorepo。当前同时提供：

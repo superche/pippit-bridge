@@ -31,6 +31,8 @@ npm run codex:dev:full-gate
 
 `npm run codex:dev` prepares an isolated local marketplace and a stable Codex-facing stdio gateway. The gateway keeps its connection and frozen discovery contract while replaceable child worker generations carry implementation changes. Calls and resource reads pin one generation; old calls drain without replay and new calls use the activated generation.
 
+Treat the Dev App, gateway/worker, and local Facade as three separate lifecycle layers. `npm run codex:dev:app` is the cold convergence command: it stops only the App using the exact Dev browser-data directory, refreshes the isolated plugin cache, and authenticates the daemon recorded under the Dev runtime root. The Facade ready descriptor and challenge proof bind its absolute entry path and SHA-256 artifact identity. An exact current-bundle artifact is reused; any authenticated non-exact daemon is asked to shut down and must exit before the current bundle starts. Never kill a daemon by process name, version alone, or an unverified PID, and never clear runtime secrets, BYOK credentials, jobs, artifacts, or idempotency state during a cold refresh. `npm run codex:dev:profile:status` must show the App PIDs, cache/gateway hash, and Facade entry/hash/PID/health/match independently.
+
 Candidate changes run related tests plus the gateway/supervisor/Widget core suite. Activation additionally requires `.pippit-dev/semantic-review.json`, which is local and ignored by Git:
 
 ```json

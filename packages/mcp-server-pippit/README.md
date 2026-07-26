@@ -10,7 +10,9 @@ This package is designed for one local user on a trusted host. Its shared loopba
 
 Run `pippit-mcp` without `PIPPIT_FACADE_*` variables. MCP initialization and `tools/list` are side-effect free. The first actual tool call creates or reconnects to a user-level, loopback-only Facade runtime with private generated internal keys and an encrypted BYOK store. Multiple MCP/Codex processes share one runtime; state lives outside plugin caches and project directories and is preserved by a normal plugin uninstall.
 
-After a package/plugin upgrade, the next actual tool call authenticates the shared daemon's proof and runtime version. An older authenticated daemon is stopped and replaced automatically while the persisted keys and BYOK accounts remain unchanged.
+After a package/plugin upgrade, the next actual tool call authenticates the shared daemon's runtime-root proof and compares its absolute entry plus SHA-256 artifact identity, not only a manually bumped version. Only an exact current-bundle identity is reused. Any authenticated non-exact daemon is stopped through its private shutdown contract and must exit before the current bundle starts; an unverified PID or a daemon owned by another runtime root is never killed. Persisted runtime secrets, BYOK accounts, jobs, artifacts, outputs, and idempotency state remain unchanged because only the ready record and process are replaced.
+
+In Codex development, the App process, stable gateway/worker generations, and this detached Facade are separate lifecycle layers. `npm run codex:dev:app` converges all three, while `npm run codex:dev:profile:status` reports the Facade entry/hash/PID/health and whether it matches the gateway. A successful App launch without that match is not a successful cold refresh.
 
 The raw Pippit AK is never an environment variable or ordinary MCP argument. `pippit_add_access_key` returns a short-lived, one-time `http://127.0.0.1:...` setup page. Enter the AK only in that page's password field.
 

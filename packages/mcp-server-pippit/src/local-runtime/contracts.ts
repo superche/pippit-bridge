@@ -14,6 +14,8 @@ export interface LocalRuntimeSecrets {
 }
 
 export interface LocalRuntimeReadyPayload {
+  readonly daemon_artifact_sha256?: string
+  readonly daemon_entry?: string
   readonly instance_id: string
   readonly pid: number
   readonly port: number
@@ -54,8 +56,21 @@ export interface PippitLocalRuntimePaths {
 
 export interface PippitResolvedRuntimeEnvironment {
   readonly environment: NodeJS.ProcessEnv
-  readonly local?: { readonly dataRoot: string; readonly mediaSigningKeyHex: string }
+  readonly local?: {
+    readonly daemon?: LocalFacadeRuntimeStatus
+    readonly dataRoot: string
+    readonly mediaSigningKeyHex: string
+  }
   readonly mode: "external" | "local"
+}
+
+export interface PippitResolvedLocalRuntimeEnvironment extends PippitResolvedRuntimeEnvironment {
+  readonly local: {
+    readonly daemon: LocalFacadeRuntimeStatus
+    readonly dataRoot: string
+    readonly mediaSigningKeyHex: string
+  }
+  readonly mode: "local"
 }
 
 export class PippitLocalRuntimeError extends Error {
@@ -71,4 +86,24 @@ export class PippitLocalRuntimeError extends Error {
 export interface LocalRuntimeReadyConnection {
   readonly baseUrl: string
   readonly descriptor: LocalRuntimeReadyDescriptor
+}
+
+export interface LocalFacadeArtifactIdentity {
+  readonly artifactHash: string
+  readonly entryPath: string
+  readonly runtimeVersion: string
+}
+
+export interface LocalFacadeRuntimeStatus {
+  readonly action: "absent" | "replaced" | "reused" | "started"
+  readonly artifactHash: string
+  readonly dataRoot: string
+  readonly entryPath: string
+  readonly healthy: boolean
+  readonly matchesExpectedArtifact: boolean
+  readonly pid?: number
+  readonly previousPid?: number
+  readonly previousPidStopped?: boolean
+  readonly runtimeVersion: string
+  readonly startedAt?: string
 }

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import {
   link,
   lstat,
@@ -18,6 +18,8 @@ import { afterEach, describe, expect, it } from "vitest"
 
 import {
   PIPPIT_LOCAL_RUNTIME_VERSION,
+  ensurePippitLocalRuntime,
+  inspectPippitLocalRuntime,
   resolveLocalFacadeDaemonEntry,
   resolvePippitLocalRuntimePaths,
   signLocalRuntimeReadyPayload,
@@ -39,11 +41,35 @@ interface ToolCallResult {
 }
 
 interface ReadyDescriptor {
+  readonly daemon_artifact_sha256?: string
+  readonly daemon_entry?: string
   readonly instance_id: string
   readonly pid: number
   readonly port: number
   readonly runtime_version: string
   readonly signature: string
+  readonly started_at: string
+}
+
+async function createDaemonVariant(label: string): Promise<{
+  readonly artifactHash: string
+  readonly moduleUrl: string
+}> {
+  const packageRoot = fileURLToPath(new URL("..", import.meta.url))
+  const variantRoot = await mkdtemp(join(tmpdir(), `pippit-daemon-${label}-`))
+  cleanupRoots.add(variantRoot)
+  const daemonContents = await readFile(join(packageRoot, "dist/local-facade-daemon.mjs"), "utf8")
+  const daemonPath = join(variantRoot, "local-facade-daemon.mjs")
+  await writeFile(daemonPath, `${daemonContents}\n// test artifact variant: ${label}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  })
+  return {
+    artifactHash: createHash("sha256")
+      .update(await readFile(daemonPath))
+      .digest("hex"),
+    moduleUrl: pathToFileURL(join(variantRoot, "plugin-stdio.mjs")).href,
+  }
 }
 
 const cleanupRoots = new Set<string>()
@@ -189,6 +215,7 @@ async function waitForProcessExit(pid: number, timeoutMs = 5_000): Promise<void>
 }
 
 async function startLegacyProofDaemon(options: {
+  readonly ignoreSigterm?: boolean
   readonly instanceId: string
   readonly proofKeyHex: string
   readonly responsePid?: number | "self"
@@ -200,6 +227,7 @@ async function startLegacyProofDaemon(options: {
       env: {
         ...process.env,
         PIPPIT_TEST_INSTANCE_ID: options.instanceId,
+        ...(options.ignoreSigterm === true ? { PIPPIT_TEST_IGNORE_SIGTERM: "1" } : {}),
         PIPPIT_TEST_PROOF_KEY_HEX: options.proofKeyHex,
         ...(options.responsePid === undefined
           ? {}
@@ -379,6 +407,136 @@ describe("Pippit local runtime bootstrap", () => {
   }, 45_000)
 
   it.skipIf(process.platform === "win32")(
+    "reuses an exact daemon artifact and replaces the same version when its bytes differ",
+    async () => {
+      const dataRoot = await createAbsentDataRoot("pippit-artifact-identity-")
+      const firstArtifact = await createDaemonVariant("first")
+      const secondArtifact = await createDaemonVariant("second")
+      const env = { PIPPIT_BRIDGE_HOME: dataRoot }
+
+      const first = await ensurePippitLocalRuntime({
+        daemonModuleUrl: firstArtifact.moduleUrl,
+        env,
+      })
+      expect(first.local?.daemon).toMatchObject({
+        action: "started",
+        artifactHash: firstArtifact.artifactHash,
+        matchesExpectedArtifact: true,
+      })
+      const firstPid = first.local?.daemon.pid
+      expect(firstPid).toEqual(expect.any(Number))
+
+      const reused = await ensurePippitLocalRuntime({
+        daemonModuleUrl: firstArtifact.moduleUrl,
+        env,
+      })
+      expect(reused.local?.daemon).toMatchObject({
+        action: "reused",
+        artifactHash: firstArtifact.artifactHash,
+        pid: firstPid,
+      })
+
+      const preservedFiles = new Map([
+        ["runtime-secrets.json", await readFile(join(dataRoot, "runtime-secrets.json"), "utf8")],
+        ["idempotency/secret-v1.json", await readFile(join(dataRoot, "idempotency/secret-v1.json"), "utf8")],
+      ])
+      await mkdir(join(dataRoot, "jobs"), { mode: 0o700 })
+      await mkdir(join(dataRoot, "artifacts"), { mode: 0o700 })
+      await writeFile(join(dataRoot, "jobs/preserved.json"), "{\"job\":\"preserved\"}\n", { mode: 0o600 })
+      await writeFile(join(dataRoot, "artifacts/preserved.json"), "{\"artifact\":\"preserved\"}\n", { mode: 0o600 })
+
+      const replaced = await ensurePippitLocalRuntime({
+        daemonModuleUrl: secondArtifact.moduleUrl,
+        env,
+      })
+      expect(replaced.local?.daemon).toMatchObject({
+        action: "replaced",
+        artifactHash: secondArtifact.artifactHash,
+        matchesExpectedArtifact: true,
+        previousPid: firstPid,
+        previousPidStopped: true,
+      })
+      expect(replaced.local?.daemon.pid).not.toBe(firstPid)
+      await waitForProcessExit(firstPid as number)
+
+      for (const [relativePath, contents] of preservedFiles) {
+        await expect(readFile(join(dataRoot, relativePath), "utf8")).resolves.toBe(contents)
+      }
+      await expect(readFile(join(dataRoot, "jobs/preserved.json"), "utf8"))
+        .resolves.toBe("{\"job\":\"preserved\"}\n")
+      await expect(readFile(join(dataRoot, "artifacts/preserved.json"), "utf8"))
+        .resolves.toBe("{\"artifact\":\"preserved\"}\n")
+
+      await expect(inspectPippitLocalRuntime({
+        daemonModuleUrl: secondArtifact.moduleUrl,
+        env,
+      })).resolves.toMatchObject({
+        artifactHash: secondArtifact.artifactHash,
+        healthy: true,
+        matchesExpectedArtifact: true,
+        pid: replaced.local?.daemon.pid,
+      })
+    },
+    30_000,
+  )
+
+  it.skipIf(process.platform === "win32")(
+    "never kills a daemon authenticated by a different runtime root",
+    async () => {
+      const firstRoot = await createAbsentDataRoot("pippit-runtime-owner-a-")
+      const secondRoot = await createAbsentDataRoot("pippit-runtime-owner-b-")
+      const artifact = await createDaemonVariant("runtime-owner")
+      const first = await ensurePippitLocalRuntime({
+        daemonModuleUrl: artifact.moduleUrl,
+        env: { PIPPIT_BRIDGE_HOME: firstRoot },
+      })
+      const second = await ensurePippitLocalRuntime({
+        daemonModuleUrl: artifact.moduleUrl,
+        env: { PIPPIT_BRIDGE_HOME: secondRoot },
+      })
+      const firstPid = first.local?.daemon.pid as number
+      const secondPid = second.local?.daemon.pid as number
+      process.kill(secondPid, "SIGKILL")
+      await waitForProcessExit(secondPid)
+
+      const firstDescriptor = JSON.parse(
+        await readFile(join(firstRoot, "facade-ready.json"), "utf8"),
+      ) as ReadyDescriptor
+      const secondSecrets = JSON.parse(
+        await readFile(join(secondRoot, "runtime-secrets.json"), "utf8"),
+      ) as { bootstrap_proof_key_hex: string }
+      const crossRootPayload = {
+        daemon_artifact_sha256: firstDescriptor.daemon_artifact_sha256 as string,
+        daemon_entry: firstDescriptor.daemon_entry as string,
+        instance_id: firstDescriptor.instance_id,
+        pid: firstDescriptor.pid,
+        port: firstDescriptor.port,
+        runtime_version: firstDescriptor.runtime_version,
+        schema_version: 1 as const,
+        started_at: firstDescriptor.started_at,
+      }
+      await writeFile(
+        join(secondRoot, "facade-ready.json"),
+        `${JSON.stringify({
+          ...crossRootPayload,
+          signature: signLocalRuntimeReadyPayload(
+            crossRootPayload,
+            secondSecrets.bootstrap_proof_key_hex,
+          ),
+        })}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      )
+
+      await expect(ensurePippitLocalRuntime({
+        daemonModuleUrl: artifact.moduleUrl,
+        env: { PIPPIT_BRIDGE_HOME: secondRoot },
+      })).rejects.toMatchObject({ code: "live_daemon_verification_failed" })
+      expect(() => process.kill(firstPid, 0)).not.toThrow()
+    },
+    30_000,
+  )
+
+  it.skipIf(process.platform === "win32")(
     "recovers a dead bootstrap owner that crashed before unlinking its hard-link candidate",
     async () => {
       const dataRoot = await mkdtemp(join(tmpdir(), "pippit-stale-bootstrap-link-"))
@@ -495,7 +653,7 @@ describe("Pippit local runtime bootstrap", () => {
   )
 
   it.skipIf(process.platform === "win32")(
-    "does not downgrade or terminate an authenticated newer local Facade",
+    "replaces an authenticated newer-version daemon when its artifact is unidentified",
     async () => {
       const dataRoot = await createAbsentDataRoot("pippit-runtime-no-downgrade-")
       const initial = await runPlugin(dataRoot, listAccessKeysRequests())
@@ -536,9 +694,63 @@ describe("Pippit local runtime bootstrap", () => {
 
       const result = await runPlugin(dataRoot, listAccessKeysRequests())
 
-      expect(toolCallResult(result)?.isError).toBe(true)
-      expect(() => process.kill(newer.pid, 0)).not.toThrow()
-      await expect(readFile(join(dataRoot, "facade-ready.json"), "utf8")).resolves.toBe(readyDocument)
+      expect(toolCallResult(result)?.isError).not.toBe(true)
+      await waitForProcessExit(newer.pid)
+      cleanupPids.delete(newer.pid)
+      const replacement = JSON.parse(
+        await readFile(join(dataRoot, "facade-ready.json"), "utf8"),
+      ) as ReadyDescriptor
+      expect(replacement.pid).not.toBe(newer.pid)
+      expect(replacement.daemon_artifact_sha256).toMatch(/^[a-f0-9]{64}$/u)
+    },
+    30_000,
+  )
+
+  it.skipIf(process.platform === "win32")(
+    "fails closed when an authenticated incompatible daemon does not stop in time",
+    async () => {
+      const dataRoot = await createAbsentDataRoot("pippit-runtime-stop-timeout-")
+      const initial = await runPlugin(dataRoot, listAccessKeysRequests())
+      expect(toolCallResult(initial)?.isError).not.toBe(true)
+      const initialDescriptor = JSON.parse(
+        await readFile(join(dataRoot, "facade-ready.json"), "utf8"),
+      ) as ReadyDescriptor
+      process.kill(initialDescriptor.pid, "SIGKILL")
+      await waitForProcessExit(initialDescriptor.pid)
+
+      const secrets = JSON.parse(
+        await readFile(join(dataRoot, "runtime-secrets.json"), "utf8"),
+      ) as { bootstrap_proof_key_hex: string }
+      const instanceId = randomUUID()
+      const fixture = await startLegacyProofDaemon({
+        ignoreSigterm: true,
+        instanceId,
+        proofKeyHex: secrets.bootstrap_proof_key_hex,
+        runtimeVersion: "0.2.0",
+      })
+      const payload = {
+        instance_id: instanceId,
+        pid: fixture.pid,
+        port: fixture.port,
+        runtime_version: "0.2.0",
+        schema_version: 1 as const,
+        started_at: new Date().toISOString(),
+      }
+      await writeFile(
+        join(dataRoot, "facade-ready.json"),
+        `${JSON.stringify({
+          ...payload,
+          signature: signLocalRuntimeReadyPayload(payload, secrets.bootstrap_proof_key_hex),
+        })}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      )
+
+      const result = await runPlugin(dataRoot, listAccessKeysRequests())
+      expectToolCallError(result, "incompatible_daemon_stop_timeout")
+      expect(() => process.kill(fixture.pid, 0)).not.toThrow()
+      process.kill(fixture.pid, "SIGKILL")
+      await waitForProcessExit(fixture.pid)
+      cleanupPids.delete(fixture.pid)
     },
     30_000,
   )
