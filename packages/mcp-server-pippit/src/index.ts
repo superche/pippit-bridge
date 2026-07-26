@@ -4,6 +4,15 @@ export {
   PippitFacadeManagementClient,
 } from "./client.ts"
 export {
+  PIPPIT_PARTIAL_EDIT_VIDEO_MODEL,
+  PIPPIT_PARTIAL_EDIT_VIDEO_MODELS,
+} from "@pippit-bridge/core"
+export {
+  PIPPIT_PARTIAL_EDIT_2_0_MAX_DURATION_US,
+  PIPPIT_PARTIAL_EDIT_2_5_MAX_DURATION_US,
+  PIPPIT_PARTIAL_EDIT_MIN_DURATION_US,
+} from "@pippit-bridge/contracts"
+export {
   PIPPIT_VIDEO_GENERATION_STATUSES,
   type PippitAccessKeyCredential,
   type PippitAccessKeyEnrollment,
@@ -35,10 +44,10 @@ export {
   type PippitSwitchAccessKeyToolInput,
   type PippitUrlValue,
   type PippitVideoDownloadOptions,
-  type PippitVideoEditAnnotation,
   type PippitVideoEditRegion,
   type PippitVideoEditRequest,
-  type PippitVideoEditSegment,
+  type PippitVideoEditTimeRange,
+  type PippitVideoGuidanceAnnotation,
   type PippitVideoGenerateRequest,
   type PippitVideoGenerationJob,
   type PippitVideoGenerationStatus,
@@ -120,7 +129,9 @@ export {
   classifyPreviewUpdate,
   mergeWidgetDraftForMediaRefresh,
   normalizeWidgetPoint,
+  partialEditMaxSegmentMs,
   reconcileWidgetDraftForDuration,
+  resolvePartialEditModel,
   resolveWidgetModel,
   resolveWidgetTheme,
   shouldAcceptWidgetJobResult,

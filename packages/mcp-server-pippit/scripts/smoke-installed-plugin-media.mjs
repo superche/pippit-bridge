@@ -7,7 +7,7 @@ import { isAbsolute, join, resolve } from "node:path"
 import { createInterface } from "node:readline"
 import { once } from "node:events"
 
-const EXPECTED_PLUGIN_VERSION = "0.2.17"
+const EXPECTED_PLUGIN_VERSION = "0.3.0"
 
 const [entryArgument, mediaArgument] = process.argv.slice(2)
 if (entryArgument === undefined || mediaArgument === undefined) {

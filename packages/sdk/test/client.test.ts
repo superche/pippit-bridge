@@ -21,7 +21,7 @@ describe('PippitClient', () => {
     expect(PIPPIT_DEFAULT_TIMEOUT_MS).toBe(43_200_000);
   });
 
-  it('uploads bytes as multipart and returns the pippit asset id', async () => {
+  it('uploads bytes as multipart and returns the Pippit asset identity', async () => {
     const fetchImpl = vi.fn<PippitFetch>(async (_url, init) => {
       const headers = new Headers(init?.headers);
       expect(headers.get('accept')).toBe('application/json');
@@ -36,7 +36,10 @@ describe('PippitClient', () => {
       expect((file as File).name).toBe('reference.png');
       expect((file as Blob).type).toBe('image/png');
       expect(await (file as Blob).text()).toBe('image bytes');
-      return jsonResponse({ ret: '0', data: { pippit_asset_id: 'asset-1' } });
+      return jsonResponse({
+        ret: '0',
+        data: { asset_id: 'everphoto-1', pippit_asset_id: 'pippit-1' },
+      });
     });
     const client = new PippitClient({ fetchImpl });
 
@@ -49,7 +52,11 @@ describe('PippitClient', () => {
           mediaType: 'image/png',
         },
       }),
-    ).resolves.toEqual({ assetId: 'asset-1' });
+    ).resolves.toEqual({
+      assetId: 'pippit-1',
+      asset_id: 'everphoto-1',
+      pippit_asset_id: 'pippit-1',
+    });
     expect(fetchImpl).toHaveBeenCalledWith(
       'https://xyq.jianying.com/api/biz/v1/skill/upload_file',
       expect.objectContaining({ method: 'POST' }),
@@ -107,6 +114,100 @@ describe('PippitClient', () => {
       webThreadLink: 'https://xyq.jianying.com/thread/thread-1',
     });
   });
+
+  it('submits one native partial-edit video with an exact microsecond range', async () => {
+    const fetchImpl = vi.fn<PippitFetch>(async (_url, init) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        video_part_tool_param: {
+          duration_sec: -1,
+          partial_edit_videos: [{
+            asset_id: 'everphoto-1',
+            pippit_asset_id: 'pippit-1',
+            time_range: { end_time_us: 5_600_000, start_time_us: 1_200_000 },
+          }],
+        },
+      })
+      return jsonResponse({
+        ret: 0,
+        data: { run: { run_id: 'run-edit', thread_id: 'thread-edit', state: 1 } },
+      })
+    })
+    const client = new PippitClient({ fetchImpl })
+
+    await expect(client.submitRun({
+      accessKey: 'ak-edit',
+      request: {
+        asset_ids: [],
+        message: 'partial edit',
+        video_part_tool_param: {
+          duration_sec: -1,
+          model: 'Seedance_2.5',
+          partial_edit_videos: [{
+            asset_id: 'everphoto-1',
+            pippit_asset_id: 'pippit-1',
+            time_range: { end_time_us: 5_600_000, start_time_us: 1_200_000 },
+          }],
+          prompt: 'partial edit',
+        },
+      },
+    })).resolves.toMatchObject({ run: { runId: 'run-edit' } })
+  })
+
+  it('requires the source-segment duration sentinel only for native partial edits', async () => {
+    const fetchImpl = vi.fn<PippitFetch>()
+    const client = new PippitClient({ fetchImpl })
+
+    await expect(client.submitRun({
+      accessKey: 'ak-edit',
+      request: {
+        asset_ids: [],
+        message: 'partial edit',
+        video_part_tool_param: {
+          duration_sec: 4.4,
+          model: 'Seedance_2.5',
+          partial_edit_videos: [{
+            asset_id: 'everphoto-1',
+            pippit_asset_id: 'pippit-1',
+            time_range: { end_time_us: 5_600_000, start_time_us: 1_200_000 },
+          }],
+          prompt: 'partial edit',
+        },
+      },
+    })).rejects.toMatchObject({ code: 'INVALID_INPUT', operation: 'submit_run' })
+
+    await expect(client.submitRun({
+      accessKey: 'ak-generate',
+      request: {
+        asset_ids: [],
+        message: 'ordinary generation',
+        video_part_tool_param: {
+          duration_sec: -1,
+          model: 'Seedance_2.0_mini',
+          prompt: 'ordinary generation',
+        },
+      },
+    })).rejects.toMatchObject({ code: 'INVALID_INPUT', operation: 'submit_run' })
+
+    await expect(client.submitRun({
+      accessKey: 'ak-edit',
+      request: {
+        asset_ids: [],
+        message: 'partial edit without cloud identity',
+        video_part_tool_param: {
+          duration_sec: -1,
+          model: 'Seedance_2.0',
+          partial_edit_videos: [{
+            asset_id: '',
+            pippit_asset_id: 'pippit-1',
+            time_range: { end_time_us: 4_000_000, start_time_us: 0 },
+          }],
+          prompt: 'partial edit without cloud identity',
+        },
+      },
+    })).rejects.toMatchObject({ code: 'INVALID_INPUT', operation: 'submit_run' })
+
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
 
   it('submits Seedream image runs with the Nest agent and model-specific resolution rules', async () => {
     const fetchImpl = vi.fn<PippitFetch>(async (_url, init) => {

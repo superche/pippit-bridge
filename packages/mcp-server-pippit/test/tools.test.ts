@@ -66,7 +66,7 @@ describe("Pippit tool runtime", () => {
       properties: { model: { default: "pippit/seedream-5.0" } },
     })
     expect(PIPPIT_TOOL_DEFINITIONS_BY_NAME.pippit_edit_video_segment.inputSchema).toMatchObject({
-      properties: { model: { default: "pippit/seedance-2.0-mini" } },
+      properties: { model: { default: "pippit/seedance-2.0" } },
     })
     expect(PIPPIT_TOOL_DEFINITIONS_BY_NAME.pippit_edit_video_segment.inputSchema.required).not.toContain("idempotency_key")
     expect(getPippitToolDefinition("pippit_add_access_key").inputSchema).toMatchObject({
@@ -93,15 +93,15 @@ describe("Pippit tool runtime", () => {
     await runtime.callTool("pippit_generate_image", { prompt: "Default image" })
     await runtime.callTool("pippit_generate_video", { prompt: "Default video" })
     await runtime.callTool("pippit_edit_video_segment", {
-      annotations: [],
+      guidance_annotations: [],
       prompt: "Default edit",
-      segment: { end_ms: 1_000, start_ms: 0 },
       source_job_id: "source-job",
+      time_range: { end_time_us: 4_000_000, start_time_us: 0 },
     })
 
     expect(generateImage).toHaveBeenCalledWith(expect.objectContaining({ model: "pippit/seedream-5.0" }))
     expect(generateVideo).toHaveBeenCalledWith(expect.objectContaining({ model: "pippit/seedance-2.0-mini" }))
-    expect(editVideo).toHaveBeenCalledWith(expect.objectContaining({ model: "pippit/seedance-2.0-mini" }))
+    expect(editVideo).toHaveBeenCalledWith(expect.objectContaining({ model: "pippit/seedance-2.0" }))
   })
 
   it("deduplicates exact submissions and rejects key reuse with another payload", async () => {
@@ -207,15 +207,15 @@ describe("Pippit tool runtime", () => {
       outputRoot: "/tmp/pippit-test",
     }
     const request = {
-      annotations: [{
-        at_ms: 0,
+      guidance_annotations: [{
+        at_time_us: 0,
         instruction: "Change the style",
         region: { height: 1, width: 1, x: 0, y: 0 },
       }],
       idempotency_key: "failed-edit",
-      model: "pippit/seedance-2.0",
-      segment: { end_ms: 5_000, start_ms: 0 },
+      model: "pippit/seedance-2.5",
       source_job_id: "source-job",
+      time_range: { end_time_us: 5_000_000, start_time_us: 0 },
     }
 
     await createPippitToolRuntime(options).callTool("pippit_edit_video_segment", request)
@@ -244,42 +244,42 @@ describe("Pippit tool runtime", () => {
     const editVideo = vi.fn(async () => ({ id: "edit-1", polling_url: "/poll/edit-1", status: "pending" as const }))
     const runtime = createPippitToolRuntime({ client: backend({ editVideo }), outputRoot: "/tmp/pippit-test" })
     const valid = {
-      annotations: [{
-        at_ms: 14_000,
+      guidance_annotations: [{
+        at_time_us: 14_000_000,
         instruction: "Change the character to black",
         region: { height: 0.5, width: 0.4, x: 0.2, y: 0.1 },
       }],
       byok_id: "cred-1",
       idempotency_key: "edit-key",
-      model: "pippit/seedance-2.0",
+      model: "pippit/seedance-2.5",
       prompt: "Keep the motion",
       resolution: "1080p",
       seed: 7,
-      segment: { end_ms: 30_000, start_ms: 0 },
       source_index: 1,
       source_job_id: "source-job",
       thread_id: "thread-1",
+      time_range: { end_time_us: 30_000_000, start_time_us: 0 },
     }
     await runtime.callTool("pippit_edit_video_segment", valid)
     await runtime.callTool("pippit_edit_video_segment", valid)
     expect(editVideo).toHaveBeenCalledTimes(1)
     expect(editVideo).toHaveBeenCalledWith({
-      annotations: valid.annotations,
+      guidance_annotations: valid.guidance_annotations,
       model: valid.model,
       prompt: valid.prompt,
       provider: { options: { pippit: { byok_id: "cred-1", thread_id: "thread-1" } } },
       resolution: "1080p",
       seed: 7,
-      segment: valid.segment,
       source_index: 1,
       source_job_id: "source-job",
+      time_range: valid.time_range,
     })
 
     const invalidInputs = [
-      { ...valid, idempotency_key: "long", segment: { end_ms: 30_001, start_ms: 0 } },
-      { ...valid, annotations: [{ ...valid.annotations[0], at_ms: 31_000 }], idempotency_key: "time" },
-      { ...valid, annotations: [{ ...valid.annotations[0], region: { height: 0.5, width: 0.6, x: 0.5, y: 0 } }], idempotency_key: "roi" },
-      { ...valid, annotations: [], idempotency_key: "empty", prompt: undefined },
+      { ...valid, idempotency_key: "empty-range", time_range: { end_time_us: 0, start_time_us: 0 } },
+      { ...valid, guidance_annotations: [{ ...valid.guidance_annotations[0], at_time_us: 31_000_000 }], idempotency_key: "time" },
+      { ...valid, guidance_annotations: [{ ...valid.guidance_annotations[0], region: { height: 0.5, width: 0.6, x: 0.5, y: 0 } }], idempotency_key: "roi" },
+      { ...valid, guidance_annotations: [], idempotency_key: "empty", prompt: undefined },
     ]
     for (const input of invalidInputs) {
       await expect(runtime.callTool("pippit_edit_video_segment", input)).resolves.toMatchObject({ isError: true })

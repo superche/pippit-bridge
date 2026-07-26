@@ -106,9 +106,9 @@ export interface PippitVideoGenerateRequest {
   readonly size?: string
 }
 
-export interface PippitVideoEditSegment {
-  readonly end_ms: number
-  readonly start_ms: number
+export interface PippitVideoEditTimeRange {
+  readonly end_time_us: number
+  readonly start_time_us: number
 }
 
 export interface PippitVideoEditRegion {
@@ -118,14 +118,14 @@ export interface PippitVideoEditRegion {
   readonly y: number
 }
 
-export interface PippitVideoEditAnnotation {
-  readonly at_ms: number
+export interface PippitVideoGuidanceAnnotation {
+  readonly at_time_us: number
   readonly instruction: string
   readonly region: PippitVideoEditRegion
 }
 
 export interface PippitVideoEditRequest {
-  readonly annotations: readonly PippitVideoEditAnnotation[]
+  readonly guidance_annotations: readonly PippitVideoGuidanceAnnotation[]
   readonly model: string
   readonly prompt?: string
   readonly provider?: {
@@ -135,9 +135,9 @@ export interface PippitVideoEditRequest {
   }
   readonly resolution?: string
   readonly seed?: number
-  readonly segment: PippitVideoEditSegment
   readonly source_index: number
   readonly source_job_id: string
+  readonly time_range: PippitVideoEditTimeRange
 }
 
 export interface PippitVideoModel {
@@ -274,17 +274,17 @@ export interface PippitGetVideoToolInput {
 }
 
 export interface PippitEditVideoSegmentToolInput {
-  readonly annotations: readonly PippitVideoEditAnnotation[]
+  readonly guidance_annotations: readonly PippitVideoGuidanceAnnotation[]
   readonly byok_id?: string
   readonly idempotency_key?: string
   readonly model: string
   readonly prompt?: string
   readonly resolution?: string
   readonly seed?: number
-  readonly segment: PippitVideoEditSegment
   readonly source_index: number
   readonly source_job_id: string
   readonly thread_id?: string
+  readonly time_range: PippitVideoEditTimeRange
 }
 
 export interface PippitAddAccessKeyToolInput {

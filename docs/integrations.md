@@ -35,7 +35,7 @@ export PIPPIT_FACADE_API_KEY='<facade-api-key>'
 | `pippit_generate_image` | 同步生成图片，可带最多 9 张参考图；Codex/stdio 先将完成图片原子落盘，再通过本地 artifact 结果卡预览和下载 | stdio MCP、ChatGPT App、Codex plugin |
 | `pippit_list_video_models` | 读取 facade 的视频模型与能力目录 | stdio MCP、ChatGPT App、Codex plugin |
 | `pippit_generate_video` | 异步提交视频任务；可选 `idempotency_key` 仅用于异常恢复；支持 facade 的 URL 参考素材、首尾帧、`byok_id` 与 `thread_id` | stdio MCP、ChatGPT App、Codex plugin |
-| `pippit_edit_video_segment` | 将已完成结果作为唯一视频参考，把最多 30 秒的选段、时间点和归一化矩形标注编译为提示词，重新生成一个异步视频任务 | stdio MCP、ChatGPT App、Codex plugin |
+| `pippit_edit_video_segment` | 使用 Seedance 2.5 对已完成结果执行原生片段重拍；微秒 `time_range` 是权威时间参数，`guidance_annotations` 仅为提示词空间引导 | stdio MCP、ChatGPT App、Codex plugin |
 | `pippit_get_video` | 根据 facade `job_id` 轮询任务 | stdio MCP、ChatGPT App、Codex plugin |
 | `pippit_download_video` | 为已自动落盘的完成结果创建一个自定义相对路径副本；不覆盖已有文件 | stdio MCP、Codex plugin |
 | `pippit_list_access_keys` | 返回 facade BYOK 账号的 ID、名称、脱敏 AK 与 active 状态 | stdio MCP、Codex plugin |
@@ -43,7 +43,7 @@ export PIPPIT_FACADE_API_KEY='<facade-api-key>'
 | `pippit_switch_access_key` | 切换同一 Facade API Key identity 的新任务 active 账号 | stdio MCP、Codex plugin |
 | `pippit_delete_access_key` | 显式确认后删除 facade 加密 store 中的账号 | stdio MCP、Codex plugin |
 
-图片生成只覆盖 Seedream 5.0（默认）/ 5.0 Pro。视频生成只覆盖非 VIP 通道的 Seedance 2.0 / Seedance 2.0 Mini Lite，以及 VIP 通道的 Seedance 2.0 Vision / Seedance 2.0 Mini（默认）。参考图片也可用于图片或视频生成，参考视频/音频仅用于视频。本包没有宣告通用文本、语音生成或转录工具。
+图片生成只覆盖 Seedream 5.0（默认）/ 5.0 Pro。视频生成覆盖 Seedance 2.5、非 VIP 通道的 Seedance 2.0 / Seedance 2.0 Mini Lite，以及 VIP 通道的 Seedance 2.0 Vision / Seedance 2.0 Mini（普通生成默认）。片段重拍固定使用 Seedance 2.5。参考图片也可用于图片或视频生成，参考视频/音频仅用于视频。本包没有宣告通用文本、语音生成或转录工具。
 
 `idempotency_key` 是视频 MCP/OpenCode plugin 的可选异常恢复字段，不属于 Facade/OpenRouter API。图片接口同步返回，不暴露该恢复字段。视频缺省时每次调用均独立提交；显式提供时，MCP 或 OpenCode 才在自己的私有账本中合并同 key 同请求、检测冲突并跨重启恢复。详见 [持久化幂等](./idempotency.md)。
 
@@ -97,11 +97,11 @@ setup token 高熵、短时、单次消费，响应使用 `Cache-Control: no-sto
 
 MCP 的 list/delete 会把 runtime Facade API Key 的 SHA-256 只在 server-to-server management 请求中作为 caller scope；facade 在服务端过滤并原子校验删除权限。其他 Facade API Key 专属的账号不会出现在列表中，猜测其 credential ID 删除也只返回 404。未携带 caller scope 的原始 `/api/v1/byok` Management API 仍保留部署管理员的全局语义。
 
-### 参考视频重新生成
+### 原生片段重拍
 
-`pippit_edit_video_segment` 保留稳定工具名，但实际提交一次新的生成：它只接受已完成的 `source_job_id`，并复用 facade 的 job token 权限边界。完整源视频成为唯一 video reference；最多 30 秒的 `segment`、范围内的 `at_ms`、相对 intrinsic video content 的 `0..1` 矩形、局部 `instruction` 与整体 `prompt` 被编译为生成提示词。返回值是标准异步 video job，继续用 `pippit_get_video` 轮询。
+`pippit_edit_video_segment` 保留稳定工具名，但公共 MCP、ChatGPT App 与 Facade 合同均使用原生片段重拍语义：只接受已完成的 `source_job_id`，支持公共视频模型目录中的 Seedance 2.0/2.5 模型并复用 facade 的 job token 权限边界；未指定模型时默认 `pippit/seedance-2.0`。`time_range.start_time_us/end_time_us` 是权威 provider 时间范围：Seedance 2.0 系列必须为 4–15 秒，Seedance 2.5 必须为 4–30.2 秒。完整源视频上传后同时保留 EverPhoto `asset_id` 与资产库 `pippit_asset_id`，两者一起进入 `partial_edit_videos`，且不会同时进入普通 `videos`。返回值是标准异步 video job，继续用 `pippit_get_video` 轮询。
 
-当前小云雀接口没有单独暴露 hard trim 或 pixel-mask 字段。facade 会完整取得源结果，并把选段/区域编译成确定性的 provider instructions 再提交 `pippit_video_part_agent`。因此应称为“参考视频重新生成”，不能声称是原地修改、未选片段的字节没有上传，或存在像素级 mask 约束。
+`guidance_annotations[].at_time_us` 必须落在 `time_range` 内；其归一化 `region` 与 `instruction` 只编译为提示词引导，因为当前上游合同没有 pixel-mask 字段。可以称为“片段重拍”或“局部重拍”，但不能声称是原地字节修改或存在像素级 hard mask。
 
 ## 2. ChatGPT App
 
@@ -153,7 +153,7 @@ facade 返回的 content URL 仍需要 `Authorization: Bearer <PIPPIT_FACADE_API
 
 media token 只绑定 `job_id`、结果 index 和过期时间，不包含 Facade API Key。但它在过期前仍是 bearer capability，不应写入日志或发送给 widget/ChatGPT 以外的接收方。
 
-结果完成后，Widget 可在 intrinsic video content 上选择最多 30 秒的提示范围，在当前帧拖拽矩形、输入局部注释并形成时间戳 chip，再填写整体指令。点击 Regenerate video 后只调用共享的 `pippit_edit_video_segment`；当前完整视频由 facade 解析为唯一参考，Widget 参数只有 source job/index 与结构化 guidance metadata，不包含 preview URL、本地绝对路径、Facade API Key 或 Pippit AK。Widget 为相同 source 与 guidance 生成稳定的 SHA-256 幂等键。服务端在提交成功后持久记录 source job 到新 job 的私有 lineage；widget 重建时先调用 app-only `pippit_resolve_latest_video`，再通过 canonical `pippit_get_video` 加载最新后代。因此显示模式切换、旧 bootstrap 结果回放或 stdio 重启都不会把已成功的 regenerate 结果退回上一个视频。`window.openai.widgetState` 只作为兼容缓存，不是权威状态。所有生成相关调用保留 12 小时上限。不支持标准调用时才 capability-detect `window.openai.callTool`。
+结果完成后，Widget 可在源视频范围内选择正长度的片段重拍区间，在当前帧拖拽软引导矩形并输入修改指令。点击 Regenerate video 后只调用共享的 `pippit_edit_video_segment`；Widget 把内部毫秒播放状态转换为公共微秒 `time_range` 与 `guidance_annotations[].at_time_us`，不传 preview URL、本地绝对路径、Facade API Key 或 Pippit AK。Widget 为相同 source 与 guidance 生成稳定的 SHA-256 幂等键。服务端在提交成功后持久记录 source job 到新 job 的私有 lineage；widget 重建时先调用 app-only `pippit_resolve_latest_video`，再通过 canonical `pippit_get_video` 加载最新后代。因此显示模式切换、旧 bootstrap 结果回放或 stdio 重启都不会把已成功的 regenerate 结果退回上一个视频。`window.openai.widgetState` 只作为兼容缓存，不是权威状态。所有生成相关调用保留 12 小时上限。不支持标准调用时才 capability-detect `window.openai.callTool`。
 
 当前 `noauth` App 即使运行在 loopback/tunnel，也不会注册 `pippit_*_access_key` 工具。否则任何能访问 endpoint 的调用方都能借用服务端 Management API Key 修改全局凭证。未来只有在 OAuth 2.1、scope 与 per-user credential isolation 全部完成后，才应把脱敏 list/switch/delete 投影到 ChatGPT；raw AK enrollment 仍应走独立安全页面。
 

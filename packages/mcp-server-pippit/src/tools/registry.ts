@@ -171,12 +171,12 @@ export const PIPPIT_TOOL_DEFINITIONS: readonly PippitToolDefinition[] = [
     title: "Download a Pippit video",
   },
   {
-    annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: true, readOnlyHint: false, title: "Regenerate a Pippit video from a result" },
-    description: "Submit an asynchronous regeneration with one completed Pippit video output as the reference. The selected range, overall prompt, and normalized frame annotations become generation guidance. This may incur Pippit charges.",
+    annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: true, readOnlyHint: false, title: "Partially regenerate a Pippit video" },
+    description: "Submit asynchronous multi-model Seedance partial regeneration for one completed Pippit video output. Seedance 2.0-family ranges are 4–15 seconds and Seedance 2.5 ranges are 4–30.2 seconds. time_range is authoritative; guidance_annotations are soft prompt guidance, not hard masks. This may incur Pippit charges.",
     inputSchema: EDIT_VIDEO,
     name: "pippit_edit_video_segment",
     outputSchema: jobOutputSchema,
-    title: "Regenerate a Pippit video from a result",
+    title: "Partially regenerate a Pippit video",
   },
   {
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true, readOnlyHint: true, title: "List Pippit Access Keys" },

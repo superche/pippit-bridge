@@ -79,19 +79,20 @@ describe("PippitFacadeClient", () => {
       expect(url).toBe("https://bridge.example.test/api/v1/videos/edits")
       expect(new Headers(init?.headers).get("authorization")).toBe("Bearer runtime-key")
       expect(JSON.parse(String(init?.body))).toMatchObject({
-        annotations: [{ at_ms: 1500, instruction: "Make it black", region: { height: 0.4, width: 0.3, x: 0.1, y: 0.2 } }],
+        guidance_annotations: [{ at_time_us: 1_500_000, instruction: "Make it black", region: { height: 0.4, width: 0.3, x: 0.1, y: 0.2 } }],
         source_index: 0,
         source_job_id: "source-1",
+        time_range: { end_time_us: 5_000_000, start_time_us: 1_000_000 },
       })
       return new Response(JSON.stringify(job), { status: 202 })
     })
     const client = new PippitFacadeClient({ apiKey: "runtime-key", baseUrl: "https://bridge.example.test", fetchImpl })
     await expect(client.editVideo({
-      annotations: [{ at_ms: 1500, instruction: "Make it black", region: { height: 0.4, width: 0.3, x: 0.1, y: 0.2 } }],
-      model: "pippit/seedance-2.0",
-      segment: { end_ms: 3000, start_ms: 1000 },
+      guidance_annotations: [{ at_time_us: 1_500_000, instruction: "Make it black", region: { height: 0.4, width: 0.3, x: 0.1, y: 0.2 } }],
+      model: "pippit/seedance-2.5",
       source_index: 0,
       source_job_id: "source-1",
+      time_range: { end_time_us: 5_000_000, start_time_us: 1_000_000 },
     })).resolves.toMatchObject(job)
   })
 

@@ -5,7 +5,7 @@
       "surface": "all-tools",
       "errorSemantics": "Errors are explicit and never imply a side effect was replayed.",
       "idempotency": "Write tools use the facade single-writer ledger and an idempotency key.",
-      "units": "Durations use seconds in generation input and milliseconds in edit segment or annotation fields."
+      "units": "Generation duration uses seconds. Partial-regeneration time_range and guidance annotation timestamps use microseconds."
     },
     {
       "surface": "task-epoch",

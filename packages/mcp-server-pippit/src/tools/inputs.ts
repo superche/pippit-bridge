@@ -1,5 +1,9 @@
 import { isAbsolute, win32 } from "node:path"
-import { PIPPIT_DEFAULT_IMAGE_MODEL, PIPPIT_DEFAULT_VIDEO_MODEL } from "@pippit-bridge/core"
+import {
+  PIPPIT_DEFAULT_IMAGE_MODEL,
+  PIPPIT_DEFAULT_VIDEO_MODEL,
+  PIPPIT_PARTIAL_EDIT_VIDEO_MODEL,
+} from "@pippit-bridge/core"
 import {
   addAccessKeyToolInputContract,
   deleteAccessKeyToolInputContract,
@@ -210,26 +214,40 @@ function finiteNumber(value: unknown, name: string, minimum: number, maximum: nu
 export function parseEditInput(value: unknown): PippitEditVideoSegmentToolInput {
   assertRuntimeContract(editVideoToolInputContract, value)
   if (!isRecord(value)) throw new ToolInputError("Tool arguments must be an object.")
-  assertExactKeys(value, ["annotations", "byok_id", "idempotency_key", "model", "prompt", "resolution", "seed", "segment", "source_index", "source_job_id", "thread_id"], "arguments")
-  if (!isRecord(value.segment)) throw new ToolInputError("segment must be an object.")
-  assertExactKeys(value.segment, ["start_ms", "end_ms"], "segment")
-  const startMs = optionalInteger(value.segment.start_ms, "segment.start_ms", 0, Number.MAX_SAFE_INTEGER)
-  const endMs = optionalInteger(value.segment.end_ms, "segment.end_ms", 1, Number.MAX_SAFE_INTEGER)
-  if (startMs === undefined || endMs === undefined || endMs <= startMs) {
-    throw new ToolInputError("segment.end_ms must be greater than segment.start_ms.")
+  assertExactKeys(value, ["byok_id", "guidance_annotations", "idempotency_key", "model", "prompt", "resolution", "seed", "source_index", "source_job_id", "thread_id", "time_range"], "arguments")
+  if (!isRecord(value.time_range)) throw new ToolInputError("time_range must be an object.")
+  assertExactKeys(value.time_range, ["start_time_us", "end_time_us"], "time_range")
+  const startTimeUs = optionalInteger(
+    value.time_range.start_time_us,
+    "time_range.start_time_us",
+    0,
+    Number.MAX_SAFE_INTEGER,
+  )
+  const endTimeUs = optionalInteger(
+    value.time_range.end_time_us,
+    "time_range.end_time_us",
+    1,
+    Number.MAX_SAFE_INTEGER,
+  )
+  if (startTimeUs === undefined || endTimeUs === undefined || endTimeUs <= startTimeUs) {
+    throw new ToolInputError("time_range.end_time_us must be greater than time_range.start_time_us.")
   }
-  if (endMs - startMs > 30_000) throw new ToolInputError("segment must be at most 30000 milliseconds.")
-  if (!Array.isArray(value.annotations) || value.annotations.length > 20) {
-    throw new ToolInputError("annotations must contain at most 20 entries.")
+  if (!Array.isArray(value.guidance_annotations) || value.guidance_annotations.length > 20) {
+    throw new ToolInputError("guidance_annotations must contain at most 20 entries.")
   }
-  const annotations: PippitEditVideoSegmentToolInput["annotations"][number][] = []
-  for (const [index, annotationValue] of value.annotations.entries()) {
-    const name = `annotations[${index}]`
+  const guidanceAnnotations: PippitEditVideoSegmentToolInput["guidance_annotations"][number][] = []
+  for (const [index, annotationValue] of value.guidance_annotations.entries()) {
+    const name = `guidance_annotations[${index}]`
     if (!isRecord(annotationValue)) throw new ToolInputError(`${name} must be an object.`)
-    assertExactKeys(annotationValue, ["at_ms", "region", "instruction"], name)
-    const atMs = optionalInteger(annotationValue.at_ms, `${name}.at_ms`, 0, Number.MAX_SAFE_INTEGER)
-    if (atMs === undefined || atMs < startMs || atMs > endMs) {
-      throw new ToolInputError(`${name}.at_ms must fall within segment.`)
+    assertExactKeys(annotationValue, ["at_time_us", "region", "instruction"], name)
+    const atTimeUs = optionalInteger(
+      annotationValue.at_time_us,
+      `${name}.at_time_us`,
+      0,
+      Number.MAX_SAFE_INTEGER,
+    )
+    if (atTimeUs === undefined || atTimeUs < startTimeUs || atTimeUs > endTimeUs) {
+      throw new ToolInputError(`${name}.at_time_us must fall within time_range.`)
     }
     if (!isRecord(annotationValue.region)) throw new ToolInputError(`${name}.region must be an object.`)
     assertExactKeys(annotationValue.region, ["x", "y", "width", "height"], `${name}.region`)
@@ -240,26 +258,30 @@ export function parseEditInput(value: unknown): PippitEditVideoSegmentToolInput 
     if (width === 0 || height === 0 || x + width > 1 || y + height > 1) {
       throw new ToolInputError(`${name}.region must be a non-empty normalized rectangle within the video.`)
     }
-    annotations.push({
-      at_ms: atMs,
+    guidanceAnnotations.push({
+      at_time_us: atTimeUs,
       instruction: nonEmptyString(annotationValue.instruction, `${name}.instruction`, 2_000),
       region: { height, width, x, y },
     })
   }
   const prompt = value.prompt === undefined ? undefined : nonEmptyString(value.prompt, "prompt", 20_000)
-  if (prompt === undefined && annotations.length === 0) throw new ToolInputError("Provide prompt or at least one annotation.")
+  if (prompt === undefined && guidanceAnnotations.length === 0) {
+    throw new ToolInputError("Provide prompt or at least one guidance annotation.")
+  }
   return {
-    annotations,
+    guidance_annotations: guidanceAnnotations,
     ...(value.byok_id === undefined ? {} : { byok_id: nonEmptyString(value.byok_id, "byok_id", 256) }),
     ...(value.idempotency_key === undefined ? {} : { idempotency_key: nonEmptyString(value.idempotency_key, "idempotency_key", 200) }),
-    model: value.model === undefined ? PIPPIT_DEFAULT_VIDEO_MODEL : nonEmptyString(value.model, "model", 256),
+    model: value.model === undefined
+      ? PIPPIT_PARTIAL_EDIT_VIDEO_MODEL
+      : nonEmptyString(value.model, "model", 256),
     ...(prompt === undefined ? {} : { prompt }),
     ...(value.resolution === undefined ? {} : { resolution: nonEmptyString(value.resolution, "resolution", 64) }),
     ...(value.seed === undefined ? {} : { seed: optionalInteger(value.seed, "seed", -1, 4_294_967_295) as number }),
-    segment: { end_ms: endMs, start_ms: startMs },
     source_index: optionalInteger(value.source_index, "source_index", 0, 1_000) ?? 0,
     source_job_id: nonEmptyString(value.source_job_id, "source_job_id"),
     ...(value.thread_id === undefined ? {} : { thread_id: nonEmptyString(value.thread_id, "thread_id", 8_192) }),
+    time_range: { end_time_us: endTimeUs, start_time_us: startTimeUs },
   }
 }
 

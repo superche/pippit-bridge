@@ -3,7 +3,7 @@ import { lstat, mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 
-const EXPECTED_PLUGIN_VERSION = "0.2.17"
+const EXPECTED_PLUGIN_VERSION = "0.3.0"
 
 const entryArgument = process.argv[2]
 if (entryArgument === undefined) {
@@ -195,7 +195,7 @@ try {
 
   process.stdout.write(`${JSON.stringify({
     account_count: toolCall?.structuredContent?.data?.length ?? 0,
-    server_version: "0.2.17",
+    server_version: "0.3.0",
     tool_count: tools.length,
     widget_resource: true,
   })}\n`)

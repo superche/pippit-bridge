@@ -59,7 +59,7 @@ try {
     const previewTool = tools.tools.find(tool => tool.name === "pippit_dev_preview_error_widget")
     const previewResult = await request("tools/call", { arguments: {}, name: "pippit_dev_preview_error_widget" })
     if (
-      initialized.serverInfo.version !== "0.2.17"
+      initialized.serverInfo.version !== "0.3.0"
       || JSON.stringify(tools.tools) !== JSON.stringify(frozenContract.tools)
       || tools.tools.length !== frozenContract.tools.length
       || previewTool?._meta?.["openai/outputTemplate"] !== "ui://widget/pippit-video-job-v15.html"

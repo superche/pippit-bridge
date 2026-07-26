@@ -82,7 +82,12 @@ export class PippitClient implements PippitApi {
     if (!isNonEmptyString(data.pippit_asset_id)) {
       throw invalidResponse(operation);
     }
-    return { assetId: data.pippit_asset_id };
+    const assetId = readOptionalString(data, 'asset_id', operation);
+    return {
+      assetId: data.pippit_asset_id,
+      ...(assetId === undefined ? {} : { asset_id: assetId }),
+      pippit_asset_id: data.pippit_asset_id,
+    };
   }
 
   async submitRun(input: SubmitRunInput): Promise<PippitSubmitRunResult> {

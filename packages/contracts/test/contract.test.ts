@@ -47,14 +47,14 @@ describe("RuntimeContract", () => {
     expect(generateVideoToolInputContract.parse({ prompt: "go" }))
       .toMatchObject({ model: "pippit/seedance-2.0-mini" })
     expect(editVideoToolInputContract.parse({
-      annotations: [{
-        at_ms: 100,
+      guidance_annotations: [{
+        at_time_us: 1_000_000,
         instruction: "brighten",
         region: { height: 0.5, width: 0.5, x: 0, y: 0 },
       }],
-      segment: { end_ms: 1000, start_ms: 0 },
       source_job_id: "job",
-    })).toMatchObject({ model: "pippit/seedance-2.0-mini", source_index: 0 })
+      time_range: { end_time_us: 4_000_000, start_time_us: 0 },
+    })).toMatchObject({ model: "pippit/seedance-2.0", source_index: 0 })
     expect(downloadVideoToolInputContract.parse({ job_id: "job", output_path: "clips/result.mp4" }))
       .toMatchObject({ index: 0 })
   })
@@ -66,19 +66,19 @@ describe("RuntimeContract", () => {
       [getVideoToolInputContract, { job_id: "job" }, { job_id: "" }],
       [downloadVideoToolInputContract, { job_id: "job", output_path: "clip.mp4" }, { job_id: "job", output_path: "../clip.mp4" }],
       [editVideoToolInputContract, {
-        annotations: [{
-          at_ms: 10,
+        guidance_annotations: [{
+          at_time_us: 1_000_000,
           instruction: "change",
           region: { height: 0.2, width: 0.2, x: 0, y: 0 },
         }],
         model: "pippit/seedance-2.0",
-        segment: { end_ms: 100, start_ms: 0 },
         source_job_id: "job",
+        time_range: { end_time_us: 4_000_000, start_time_us: 0 },
       }, {
-        annotations: [],
-        model: "pippit/seedance-2.0",
-        segment: { end_ms: 100, start_ms: 0 },
+        guidance_annotations: [],
+        model: "pippit/seedance-2.5",
         source_job_id: "job",
+        time_range: { end_time_us: 4_000_000, start_time_us: 0 },
       }],
       [addAccessKeyToolInputContract, { account_name: "primary" }, { account_name: "" }],
       [switchAccessKeyToolInputContract, { credential_id: "credential" }, { credential_id: "" }],
@@ -97,15 +97,48 @@ describe("RuntimeContract", () => {
       prompt: "go",
     })).toThrow()
     expect(() => editVideoToolInputContract.parse({
-      annotations: [],
+      guidance_annotations: [],
       model: "pippit/seedance-2.0-fast",
       prompt: "edit",
-      segment: { end_ms: 100, start_ms: 0 },
       source_job_id: "job",
+      time_range: { end_time_us: 4_000_000, start_time_us: 0 },
     })).toThrow()
     expect(() => generateImageToolInputContract.parse({
       model: "pippit/seedream-4.5",
       prompt: "paint",
+    })).toThrow()
+  })
+
+  it("enforces native partial-edit duration limits by model family", () => {
+    const input = {
+      guidance_annotations: [],
+      prompt: "edit",
+      source_job_id: "job",
+      time_range: { end_time_us: 15_000_000, start_time_us: 0 },
+    }
+    expect(() => editVideoToolInputContract.parse({
+      ...input,
+      model: "pippit/seedance-2.0",
+    })).not.toThrow()
+    expect(() => editVideoToolInputContract.parse({
+      ...input,
+      model: "pippit/seedance-2.0-mini",
+      time_range: { end_time_us: 15_000_001, start_time_us: 0 },
+    })).toThrow()
+    expect(() => editVideoToolInputContract.parse({
+      ...input,
+      model: "pippit/seedance-2.5",
+      time_range: { end_time_us: 30_200_000, start_time_us: 0 },
+    })).not.toThrow()
+    expect(() => editVideoToolInputContract.parse({
+      ...input,
+      model: "pippit/seedance-2.5",
+      time_range: { end_time_us: 30_200_001, start_time_us: 0 },
+    })).toThrow()
+    expect(() => editVideoToolInputContract.parse({
+      ...input,
+      model: "pippit/seedance-2.0",
+      time_range: { end_time_us: 3_999_999, start_time_us: 0 },
     })).toThrow()
   })
 

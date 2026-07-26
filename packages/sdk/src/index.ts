@@ -12,6 +12,7 @@ export {
 export {
   PIPPIT_RUN_STATES,
   PIPPIT_IMAGE_AGENT_NAME,
+  PIPPIT_PARTIAL_EDIT_USE_SOURCE_SEGMENT_DURATION_SEC,
   PIPPIT_VIDEO_AGENT_NAME,
   type PippitApi,
   type PippitClientConfig,
@@ -24,6 +25,7 @@ export {
   type PippitImageSubmitRunRequest,
   type PippitFetch,
   type PippitMediaReference,
+  type PippitPartialEditVideoReference,
   type PippitRequestOptions,
   type PippitRun,
   type PippitRunState,
@@ -31,6 +33,7 @@ export {
   type PippitSubmitRunResult,
   type PippitUploadResult,
   type PippitVideoPartToolParam,
+  type PippitVideoTimeRange,
   type PippitVideoSubmitRunRequest,
   type PippitVideoResult,
   type QueryVideoResultInput,

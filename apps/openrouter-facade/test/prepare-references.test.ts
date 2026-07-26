@@ -10,7 +10,14 @@ function createDependencies() {
     mediaType: `${kind}/test`,
   }))
   let nextAsset = 0
-  const uploadFile = vi.fn<PippitApi["uploadFile"]>(async () => ({ assetId: `asset-${++nextAsset}` }))
+  const uploadFile = vi.fn<PippitApi["uploadFile"]>(async () => {
+    nextAsset += 1
+    return {
+      assetId: `pippit-asset-${nextAsset}`,
+      asset_id: `everphoto-asset-${nextAsset}`,
+      pippit_asset_id: `pippit-asset-${nextAsset}`,
+    }
+  })
   const pippit = {
     queryVideoResult: vi.fn<PippitApi["queryVideoResult"]>(),
     submitRun: vi.fn<PippitApi["submitRun"]>(),
@@ -39,10 +46,11 @@ describe("prepareReferences", () => {
     })
 
     expect(result).toEqual({
-      audios: [{ pippit_asset_id: "asset-3" }],
-      images: [{ pippit_asset_id: "asset-1" }],
+      audios: [{ asset_id: "everphoto-asset-3", pippit_asset_id: "pippit-asset-3" }],
+      images: [{ asset_id: "everphoto-asset-1", pippit_asset_id: "pippit-asset-1" }],
       videos: [{
-        pippit_asset_id: "asset-2",
+        asset_id: "everphoto-asset-2",
+        pippit_asset_id: "pippit-asset-2",
         security_check_scene: ["pippit_seedance2_0_user_input_video"],
       }],
     })
@@ -104,8 +112,8 @@ describe("prepareReferences", () => {
     expect(dependencies.load).toHaveBeenCalledTimes(1)
     expect(dependencies.uploadFile).toHaveBeenCalledTimes(1)
     expect(result.images).toEqual([
-      { pippit_asset_id: "asset-1" },
-      { pippit_asset_id: "asset-1" },
+      { asset_id: "everphoto-asset-1", pippit_asset_id: "pippit-asset-1" },
+      { asset_id: "everphoto-asset-1", pippit_asset_id: "pippit-asset-1" },
     ])
   })
 

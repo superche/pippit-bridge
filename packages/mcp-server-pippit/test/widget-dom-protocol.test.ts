@@ -402,15 +402,15 @@ describe("Widget v15 DOM protocol", () => {
         method: "tools/call",
         params: {
           arguments: expect.objectContaining({
-            annotations: [{
-              at_ms: 2_250,
+            guidance_annotations: [{
+              at_time_us: 2_250_000,
               instruction: "Turn the whole scene into a watercolor painting",
               region: { height: 1, width: 1, x: 0, y: 0 },
             }],
-            model: "pippit/seedance",
-            segment: { end_ms: 10_000, start_ms: 0 },
+            model: "pippit/seedance-2.0",
             source_index: 0,
             source_job_id: "job-source",
+            time_range: { end_time_us: 10_000_000, start_time_us: 0 },
           }),
           name: "pippit_edit_video_segment",
         },
@@ -599,15 +599,15 @@ describe("Widget v15 DOM protocol", () => {
         method: "tools/call",
         params: {
           arguments: expect.objectContaining({
-            annotations: [{
-              at_ms: 3_500,
+            guidance_annotations: [{
+              at_time_us: 3_500_000,
               instruction: "Replace the cup with a glass vase",
               region: { height: 0.5, width: 0.5, x: 0.25, y: 0.25 },
             }],
-            model: "pippit/seedance",
-            segment: { end_ms: 10_000, start_ms: 0 },
+            model: "pippit/seedance-2.0",
             source_index: 0,
             source_job_id: "job-source",
+            time_range: { end_time_us: 10_000_000, start_time_us: 0 },
           }),
           name: "pippit_edit_video_segment",
         },

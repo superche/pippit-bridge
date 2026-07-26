@@ -6,9 +6,11 @@ import {
   createInitialWidgetState,
   createWidgetEpochTicket,
   isWidgetEpochTicketCurrent,
+  partialEditMaxSegmentMs,
   planWidgetPreviewChunks,
   planWidgetPresentation,
   reduceWidgetState,
+  resolvePartialEditModel,
   resolveWidgetRenderView,
   selectWidgetToolTransport,
   validateWidgetPreviewChunk,
@@ -36,6 +38,14 @@ const frozenV14 = JSON.parse(await readFile(
 }
 
 describe("Widget v15 state machine", () => {
+  it("inherits supported source models and applies model-specific edit limits", () => {
+    expect(resolvePartialEditModel("pippit/seedance-2.0-mini")).toBe("pippit/seedance-2.0-mini")
+    expect(resolvePartialEditModel("pippit/seedance-2.5")).toBe("pippit/seedance-2.5")
+    expect(resolvePartialEditModel("unknown")).toBe("pippit/seedance-2.0")
+    expect(partialEditMaxSegmentMs("pippit/seedance-2.0")).toBe(15_000)
+    expect(partialEditMaxSegmentMs("pippit/seedance-2.5")).toBe(30_200)
+  })
+
   it.each(frozenV14.scenarios)("matches frozen v14 presentation for $status", (scenario) => {
     expect(frozenV14.source).toEqual({
       baselineCommit: "e022f1117da8a7bef2b80a796fcd9c1a0a556fa9",
@@ -252,15 +262,15 @@ describe("Widget v15 state machine", () => {
       sourceIndex: 2,
       sourceJobId: "job-source",
     })).toEqual({
-      annotations: [{
-        at_ms: 1000,
+      guidance_annotations: [{
+        at_time_us: 1_000_000,
         instruction: "replace logo",
         region: { height: 0.4, width: 0.3, x: 0.1, y: 0.2 },
       }],
       model: "pippit/seedance",
-      segment: { end_ms: 5000, start_ms: 1000 },
       source_index: 2,
       source_job_id: "job-source",
+      time_range: { end_time_us: 5_000_000, start_time_us: 1_000_000 },
     })
     expect(() => buildWidgetEditPayload({
       annotation: {

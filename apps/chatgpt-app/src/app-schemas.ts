@@ -1,4 +1,11 @@
 import { z } from "zod"
+import {
+  PIPPIT_PARTIAL_EDIT_2_0_MAX_DURATION_US,
+  PIPPIT_PARTIAL_EDIT_2_5_MAX_DURATION_US,
+  PIPPIT_PARTIAL_EDIT_MIN_DURATION_US,
+  PIPPIT_PARTIAL_EDIT_VIDEO_MODEL,
+  PIPPIT_PARTIAL_EDIT_VIDEO_MODELS,
+} from "@pippit-bridge/mcp-server"
 
 const HTTP_URL_PATTERN = /^https?:/iu
 
@@ -29,6 +36,7 @@ export const CHATGPT_GENERATE_INPUT_SHAPE = {
   last_frame: chatGptFileSchema.optional(),
   last_frame_url: httpUrl.optional(),
   model: z.enum([
+    "pippit/seedance-2.5",
     "pippit/seedance-2.0-mini",
     "pippit/seedance-2.0",
     "pippit/seedance-2.0-mini-lite",
@@ -143,64 +151,75 @@ const editRegionSchema = z
 
 const editAnnotationSchema = z
   .object({
-    at_ms: z.number().int().nonnegative(),
+    at_time_us: z.number().int().nonnegative(),
     instruction: z.string().trim().min(1).max(2_000),
     region: editRegionSchema,
   })
   .strict()
 
-const editSegmentSchema = z
+const editTimeRangeSchema = z
   .object({
-    end_ms: z.number().int().positive(),
-    start_ms: z.number().int().nonnegative(),
+    end_time_us: z.number().int().positive(),
+    start_time_us: z.number().int().nonnegative(),
   })
   .strict()
-  .superRefine((segment, context) => {
-    if (segment.end_ms <= segment.start_ms) {
-      context.addIssue({ code: "custom", message: "end_ms must be greater than start_ms.", path: ["end_ms"] })
-    } else if (segment.end_ms - segment.start_ms > 30_000) {
-      context.addIssue({ code: "custom", message: "The selected segment must be at most 30 seconds.", path: ["end_ms"] })
+  .superRefine((timeRange, context) => {
+    if (timeRange.end_time_us <= timeRange.start_time_us) {
+      context.addIssue({
+        code: "custom",
+        message: "end_time_us must be greater than start_time_us.",
+        path: ["end_time_us"],
+      })
     }
   })
 
 export const CHATGPT_EDIT_INPUT_SHAPE = {
-  annotations: z.array(editAnnotationSchema).max(20),
+  guidance_annotations: z.array(editAnnotationSchema).max(20),
   byok_id: z.string().trim().min(1).max(256).optional(),
   idempotency_key: z.string().trim().min(1).max(200),
-  model: z.enum([
-    "pippit/seedance-2.0-mini",
-    "pippit/seedance-2.0",
-    "pippit/seedance-2.0-mini-lite",
-    "pippit/seedance-2.0-vision",
-  ]).default("pippit/seedance-2.0-mini"),
+  model: z.enum(PIPPIT_PARTIAL_EDIT_VIDEO_MODELS).default(PIPPIT_PARTIAL_EDIT_VIDEO_MODEL),
   prompt: z.string().trim().min(1).max(20_000).optional(),
   resolution: z.string().trim().min(1).max(64).optional(),
   seed: z.number().int().min(-1).max(4_294_967_295).optional(),
-  segment: editSegmentSchema,
   source_index: z.number().int().min(0).max(1_000).default(0),
   source_job_id: z.string().trim().min(1).max(8_192),
   thread_id: z.string().trim().min(1).max(8_192).optional(),
+  time_range: editTimeRangeSchema,
 }
 
 export const chatGptEditInputSchema = z
   .object(CHATGPT_EDIT_INPUT_SHAPE)
   .strict()
   .superRefine((input, context) => {
-    if (input.prompt === undefined && input.annotations.length === 0) {
+    if (input.prompt === undefined && input.guidance_annotations.length === 0) {
       context.addIssue({
         code: "custom",
-        message: "Provide an overall prompt or at least one region annotation.",
+        message: "Provide an overall prompt or at least one guidance annotation.",
         path: ["prompt"],
       })
     }
-    for (const [index, annotation] of input.annotations.entries()) {
-      if (annotation.at_ms < input.segment.start_ms || annotation.at_ms > input.segment.end_ms) {
+    for (const [index, annotation] of input.guidance_annotations.entries()) {
+      if (
+        annotation.at_time_us < input.time_range.start_time_us
+        || annotation.at_time_us > input.time_range.end_time_us
+      ) {
         context.addIssue({
           code: "custom",
-          message: "Annotation time must fall inside the selected segment.",
-          path: ["annotations", index, "at_ms"],
+          message: "Guidance annotation time must fall inside the selected time range.",
+          path: ["guidance_annotations", index, "at_time_us"],
         })
       }
+    }
+    const durationUs = input.time_range.end_time_us - input.time_range.start_time_us
+    const maximumUs = input.model === "pippit/seedance-2.5"
+      ? PIPPIT_PARTIAL_EDIT_2_5_MAX_DURATION_US
+      : PIPPIT_PARTIAL_EDIT_2_0_MAX_DURATION_US
+    if (durationUs < PIPPIT_PARTIAL_EDIT_MIN_DURATION_US || durationUs > maximumUs) {
+      context.addIssue({
+        code: "custom",
+        message: `Partial edit duration must be between 4 and ${maximumUs / 1_000_000} seconds for ${input.model}.`,
+        path: ["time_range"],
+      })
     }
   })
 

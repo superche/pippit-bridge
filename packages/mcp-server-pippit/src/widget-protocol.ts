@@ -357,7 +357,7 @@ export function pippitWidgetResourceMetadata(
     },
     "openai/widgetCSP": { connect_domains: origins, resource_domains: resourceOrigins },
     "openai/widgetDescription":
-      "Shows Pippit video job status, private previews, and reference-guided regeneration controls.",
+      "Shows Pippit video job status, private previews, and native partial-regeneration controls.",
     "openai/widgetPrefersBorder": true,
   }
 }
@@ -389,7 +389,7 @@ export function pippitWidgetListResources(): Readonly<Record<string, unknown>> {
         uri: PIPPIT_IMAGE_WIDGET_URI,
       },
       {
-        description: "Inline status, private preview, and reference-guided regeneration controls for Pippit video jobs.",
+        description: "Inline status, private preview, and native partial-regeneration controls for Pippit video jobs.",
         mimeType: PIPPIT_WIDGET_MIME_TYPE,
         name: "Pippit video job widget",
         uri: PIPPIT_WIDGET_URI,

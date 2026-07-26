@@ -1,8 +1,8 @@
-import type { PippitApi } from "@pippit-bridge/sdk"
+import type { PippitApi, PippitPartialEditVideoReference, PippitVideoTimeRange } from "@pippit-bridge/sdk"
 import type { AuthenticatedApiKey } from "../../auth.js"
 import type { ByokStore } from "../../byok/index.js"
 import type { AppConfig } from "../../config.js"
-import { invalidRequest } from "../../errors.js"
+import { ApiError, invalidRequest } from "../../errors.js"
 import { createJobId } from "../../jobs/job-token.js"
 import {
   prepareReferences,
@@ -42,6 +42,44 @@ function rejectUnsupportedParameters(request: Pick<VideoGenerationRequest, "call
   }
 }
 
+export interface VideoPartialEditSubmission {
+  readonly timeRange: PippitVideoTimeRange
+}
+
+export type VideoSubmissionRequest = VideoGenerationRequest & {
+  readonly partialEdit?: VideoPartialEditSubmission
+}
+
+function partialEditVideo(
+  request: VideoPartialEditSubmission,
+  references: Awaited<ReturnType<typeof prepareReferences>>,
+): PippitPartialEditVideoReference {
+  const source = references.videos[0]
+  if (source === undefined) {
+    throw new ApiError("Pippit did not return the uploaded video required for partial video editing.", {
+      code: "invalid_upstream_response",
+      statusCode: 502,
+      type: "upstream_error",
+    })
+  }
+  if (source.asset_id === undefined) {
+    throw new ApiError(
+      "Pippit did not return the cloud asset identity required for native partial video editing.",
+      {
+        code: "source_video_asset_identity_unavailable",
+        param: "source_job_id",
+        statusCode: 502,
+        type: "upstream_error",
+      },
+    )
+  }
+  return {
+    ...source,
+    asset_id: source.asset_id,
+    time_range: request.timeRange,
+  }
+}
+
 export function createVideoGenerationService(input: {
   readonly byokStore: ByokStore
   readonly config: AppConfig
@@ -50,7 +88,7 @@ export function createVideoGenerationService(input: {
   readonly referenceLoader: ReferenceLoader
 }): (
   caller: AuthenticatedApiKey,
-  request: VideoGenerationRequest,
+  request: VideoSubmissionRequest,
   signal: AbortSignal,
 ) => Promise<VideoGenerationJob> {
   return async (caller, request, signal) => {
@@ -95,11 +133,13 @@ export function createVideoGenerationService(input: {
             model.supported_resolutions,
           ),
         }, model)
+        const partialEdit = request.partialEdit === undefined
+          ? undefined
+          : partialEditVideo(request.partialEdit, references)
         const submitted = await input.pippit.submitRun({
           accessKey: candidate.accessKey,
           request: {
-            // upload_file returns pippit_asset_id, not a workspace asset_id.
-            // Reference identity belongs in the typed media arrays below.
+            // Uploaded reference identity belongs in the typed media arrays below.
             asset_ids: [],
             message: request.prompt,
             ...(providerOptions.thread_id === undefined ? {} : { thread_id: providerOptions.thread_id }),
@@ -109,11 +149,14 @@ export function createVideoGenerationService(input: {
               ...(references.generateType === undefined ? {} : { generate_type: references.generateType }),
               ...(references.images.length === 0 ? {} : { images: [...references.images] }),
               model: model.upstreamModel,
+              ...(partialEdit === undefined ? {} : { partial_edit_videos: [partialEdit] }),
               prompt: request.prompt,
               ...(geometry.aspectRatio === undefined ? {} : { ratio: geometry.aspectRatio }),
               ...(geometry.resolution === undefined ? {} : { resolution: geometry.resolution }),
               ...(request.seed === undefined ? {} : { seed: request.seed }),
-              ...(references.videos.length === 0 ? {} : { videos: [...references.videos] }),
+              ...(partialEdit !== undefined || references.videos.length === 0
+                ? {}
+                : { videos: [...references.videos] }),
             },
           },
           signal,

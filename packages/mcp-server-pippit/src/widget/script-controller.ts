@@ -115,7 +115,7 @@ export const WIDGET_SCRIPT_CONTROLLER = String.raw`          resolveLatestBootst
         };
         var payload = buildWidgetEditPayload({
           annotation: Object.assign({}, annotation, { instruction: instruction }),
-          model: activeModel,
+          model: resolvePartialEditModel(activeModel),
           segmentEndMs: segmentEndMs,
           segmentStartMs: segmentStartMs,
           sourceIndex: sourceIndex,

@@ -18,7 +18,11 @@ const targets = [
 const textTargets = [
   ["packages/mcp-server-pippit/src/version.ts", /PIPPIT_PLUGIN_VERSION = "[^"]+"/u, version => `PIPPIT_PLUGIN_VERSION = "${version}"`],
   ["packages/mcp-server-pippit/src/image-widget.ts", /version: "\d+\.\d+\.\d+(?:-[^"]+)?"/u, version => `version: "${version}"`],
+  ["apps/chatgpt-app/src/app.ts", /new McpServer\(\{ name: "pippit-chatgpt-app", version: "[^"]+" \}\)/u, version => `new McpServer({ name: "pippit-chatgpt-app", version: "${version}" })`],
+  ["apps/chatgpt-app/test/http.test.ts", /serverInfo: \{ name: "pippit-chatgpt-app", version: "[^"]+" \}/u, version => `serverInfo: { name: "pippit-chatgpt-app", version: "${version}" }`],
+  ["scripts/smoke-dev-gateway.mjs", /initialized\.serverInfo\.version !== "[^"]+"/u, version => `initialized.serverInfo.version !== "${version}"`],
   ["packages/mcp-server-pippit/scripts/smoke-installed-plugin.mjs", /const EXPECTED_PLUGIN_VERSION = "[^"]+"/u, version => `const EXPECTED_PLUGIN_VERSION = "${version}"`],
+  ["packages/mcp-server-pippit/scripts/smoke-installed-plugin.mjs", /server_version: "[^"]+"/u, version => `server_version: "${version}"`],
   ["packages/mcp-server-pippit/scripts/smoke-installed-bin.mjs", /const EXPECTED_PLUGIN_VERSION = "[^"]+"/u, version => `const EXPECTED_PLUGIN_VERSION = "${version}"`],
   ["packages/mcp-server-pippit/scripts/smoke-installed-plugin-media.mjs", /const EXPECTED_PLUGIN_VERSION = "[^"]+"/u, version => `const EXPECTED_PLUGIN_VERSION = "${version}"`],
 ]

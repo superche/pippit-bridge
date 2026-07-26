@@ -97,10 +97,28 @@ export function resolveWidgetModel(
     : currentModel
 }
 
+export function resolvePartialEditModel(model: unknown): string {
+  switch (model) {
+    case "pippit/seedance-2.5":
+    case "pippit/seedance-2.0-mini":
+    case "pippit/seedance-2.0":
+    case "pippit/seedance-2.0-mini-lite":
+    case "pippit/seedance-2.0-vision":
+      return model
+    default:
+      return "pippit/seedance-2.0"
+  }
+}
+
+export function partialEditMaxSegmentMs(model: unknown): number {
+  return resolvePartialEditModel(model) === "pippit/seedance-2.5" ? 30_200 : 15_000
+}
+
 export function reconcileWidgetDraftForDuration(
   draft: WidgetDraftState,
   nextDurationMs: number,
   maxSegmentMs = 30_000,
+  minSegmentMs = 4_000,
 ): WidgetDraftState {
   const durationMs = Number.isFinite(nextDurationMs) ? Math.max(0, Math.floor(nextDurationMs)) : 0
   if (durationMs === 0) {
@@ -113,10 +131,13 @@ export function reconcileWidgetDraftForDuration(
     }
   }
 
-  const minimumGap = Math.min(100, durationMs)
+  const minimumGap = Math.min(minSegmentMs, durationMs)
   let segmentStartMs = Math.min(Math.max(0, draft.segmentStartMs), Math.max(0, durationMs - minimumGap))
   let segmentEndMs = Math.min(Math.max(minimumGap, draft.segmentEndMs), durationMs)
-  if (segmentEndMs <= segmentStartMs) segmentEndMs = Math.min(durationMs, segmentStartMs + minimumGap)
+  if (segmentEndMs - segmentStartMs < minimumGap) {
+    segmentEndMs = Math.min(durationMs, segmentStartMs + minimumGap)
+    segmentStartMs = Math.max(0, segmentEndMs - minimumGap)
+  }
   if (segmentEndMs - segmentStartMs > maxSegmentMs) {
     segmentEndMs = Math.min(durationMs, segmentStartMs + maxSegmentMs)
   }

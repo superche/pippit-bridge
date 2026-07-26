@@ -1,5 +1,6 @@
 import { PippitApiError, type PippitOperation } from "./errors.js"
 import {
+  PIPPIT_PARTIAL_EDIT_USE_SOURCE_SEGMENT_DURATION_SEC,
   PIPPIT_RUN_STATES,
   type PippitClientConfig,
   type PippitFailReason,
@@ -140,6 +141,23 @@ function isMediaReference(value: unknown): boolean {
     || (Array.isArray(value.security_check_scene) && value.security_check_scene.every(isNonEmptyString))
 }
 
+function isPartialEditVideoReference(value: unknown): boolean {
+  if (
+    !isMediaReference(value)
+    || !isRecord(value)
+    || !isNonEmptyString(value.asset_id)
+    || !isRecord(value.time_range)
+  ) return false
+  const startTimeUs = value.time_range.start_time_us
+  const endTimeUs = value.time_range.end_time_us
+  return typeof startTimeUs === "number"
+    && Number.isSafeInteger(startTimeUs)
+    && startTimeUs >= 0
+    && typeof endTimeUs === "number"
+    && Number.isSafeInteger(endTimeUs)
+    && endTimeUs > startTimeUs
+}
+
 export function validateSubmitRequest(value: PippitSubmitRunRequest, operation: PippitOperation): void {
   if (!isRecord(value) || !isNonEmptyString(value.message) || !isOptionalNonEmptyString(value.thread_id)) {
     throw new PippitApiError({ code: "INVALID_INPUT", operation })
@@ -173,12 +191,17 @@ export function validateSubmitRequest(value: PippitSubmitRunRequest, operation: 
   ) throw new PippitApiError({ code: "INVALID_INPUT", operation })
 
   const params = value.video_part_tool_param
+  const isPartialEdit = params.partial_edit_videos !== undefined
   if (
     !isNonEmptyString(params.model)
     || !isNonEmptyString(params.prompt)
     || typeof params.duration_sec !== "number"
     || !Number.isFinite(params.duration_sec)
-    || params.duration_sec <= 0
+    || (
+      isPartialEdit
+        ? params.duration_sec !== PIPPIT_PARTIAL_EDIT_USE_SOURCE_SEGMENT_DURATION_SEC
+        : params.duration_sec <= 0
+    )
     || !isOptionalNonEmptyString(params.ratio)
     || !isOptionalNonEmptyString(params.resolution)
     || (params.generate_type !== undefined && params.generate_type !== 0 && params.generate_type !== 1)
@@ -191,6 +214,15 @@ export function validateSubmitRequest(value: PippitSubmitRunRequest, operation: 
       throw new PippitApiError({ code: "INVALID_INPUT", operation })
     }
   }
+  if (
+    params.partial_edit_videos !== undefined
+    && (
+      !Array.isArray(params.partial_edit_videos)
+      || params.partial_edit_videos.length !== 1
+      || !params.partial_edit_videos.every(isPartialEditVideoReference)
+      || params.videos !== undefined
+    )
+  ) throw new PippitApiError({ code: "INVALID_INPUT", operation })
 }
 
 export function stringifyJson(value: unknown, operation: PippitOperation): string {
