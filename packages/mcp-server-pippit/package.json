@@ -4,6 +4,11 @@
   "description": "MCP server and self-contained Codex plugin for Pippit account management plus image and video generation",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/superche/pippit-bridge.git",
+    "directory": "packages/mcp-server-pippit"
+  },
   "sideEffects": false,
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
@@ -36,8 +41,8 @@
     "pippit-mcp": "./dist/stdio.js"
   },
   "dependencies": {
-    "@pippit-bridge/contracts": "0.1.0",
-    "@pippit-bridge/core": "0.1.1"
+    "@pippit-bridge/contracts": "0.1.1",
+    "@pippit-bridge/core": "0.1.2"
   },
   "devDependencies": {
     "@pippit-bridge/openrouter-facade": "0.1.0"

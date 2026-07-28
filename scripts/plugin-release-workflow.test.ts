@@ -56,4 +56,20 @@ describe("plugin release dependency order", () => {
     }
     expect(manifest.scripts?.prepack).toBe("npm run build")
   })
+
+  it("binds every published package to the provenance repository", async () => {
+    const packageDirectories = ["contracts", "core", "mcp-server-pippit"]
+
+    for (const directory of packageDirectories) {
+      const manifest = JSON.parse(
+        await readFile(resolve(root, `packages/${directory}/package.json`), "utf8"),
+      ) as { repository?: { directory?: string; type?: string; url?: string } }
+
+      expect(manifest.repository).toEqual({
+        directory: `packages/${directory}`,
+        type: "git",
+        url: "git+https://github.com/superche/pippit-bridge.git",
+      })
+    }
+  })
 })
