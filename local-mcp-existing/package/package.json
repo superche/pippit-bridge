@@ -1,0 +1,62 @@
+{
+  "name": "@pippit-bridge/mcp-server",
+  "version": "0.3.0",
+  "description": "MCP server and self-contained Codex plugin for Pippit account management plus image and video generation",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/superche/pippit-bridge.git",
+    "directory": "packages/mcp-server-pippit"
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    ".codex-plugin",
+    ".mcp.json",
+    "assets",
+    "dist",
+    "!dist/dev-*",
+    "plugin-entry.mjs",
+    "plugin-entry.sh",
+    "skills",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./stdio": {
+      "types": "./dist/stdio.d.ts",
+      "import": "./dist/stdio.js"
+    }
+  },
+  "bin": {
+    "pippit-mcp": "./dist/stdio.js"
+  },
+  "dependencies": {
+    "@pippit-bridge/contracts": "0.1.1",
+    "@pippit-bridge/core": "0.1.2"
+  },
+  "devDependencies": {
+    "@pippit-bridge/openrouter-facade": "0.1.0"
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json --force && npm run build:widget && npm run build:plugin-release",
+    "build:dev-host": "node scripts/build-artifact.mjs dev-host",
+    "build:facade-daemon": "node scripts/build-artifact.mjs facade-daemon",
+    "build:plugin-release": "node scripts/build-artifact.mjs all",
+    "build:widget": "node scripts/build-widget.mjs",
+    "build:worker-generation": "node scripts/build-artifact.mjs worker-generation",
+    "prepack": "npm run build",
+    "pretest": "npm run build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --configLoader native"
+  }
+}

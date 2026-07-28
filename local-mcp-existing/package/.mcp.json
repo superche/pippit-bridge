@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "pippit-video": {
+      "command": "/bin/sh",
+      "args": ["./plugin-entry.sh"],
+      "cwd": ".",
+      "tool_timeout_sec": 43200
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "@pippit-bridge/contracts",
+  "version": "0.1.1",
+  "description": "Runtime and projection contracts shared by Pippit Bridge surfaces",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/superche/pippit-bridge.git",
+    "directory": "packages/contracts"
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json --force",
+    "prepack": "npm run build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --configLoader native"
+  },
+  "dependencies": {
+    "zod": "^4.1.12"
+  }
+}

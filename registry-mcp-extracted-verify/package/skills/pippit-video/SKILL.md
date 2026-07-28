@@ -1,0 +1,54 @@
+---
+name: pippit-video
+description: Use when the user wants to manage facade-backed Pippit accounts, generate Seedream images, or list, generate, inspect, save, preview, and regenerate Pippit video through Pippit Bridge.
+---
+
+# Pippit Video
+
+Use the bundled `pippit_*` tools as the only capability layer. The Codex plugin starts this same MCP server; it does not maintain a second account, generation, or editing implementation.
+
+## Configuration boundary
+
+On a local Codex plugin, stdio MCP, or local ChatGPT App install, do not ask the user to configure internal facade credentials. Installation and MCP discovery are side-effect free. On the first actual `pippit_*` tool call, the shared MCP layer idempotently creates or reconnects to one user-level, loopback-only Pippit Facade runtime. Its internal runtime, management, encryption, job-signing, and ChatGPT media-signing keys stay in private user state outside the plugin cache and project directory. Codex/stdio previews use the host-proxied MCP resource bridge and do not expose a loopback or upstream media URL.
+
+The Codex Dev App, stable gateway/worker generations, and detached local Facade have independent lifecycles. A Dev cold refresh authenticates the Facade under that Dev runtime root and compares its exact entry plus SHA-256 artifact identity with the gateway bundle. It reuses only an exact match and replaces any authenticated non-exact daemon only after the old process exits; a manually bumped version never overrides the artifact identity. It must never stop a daemon from another runtime root or erase BYOK credentials, runtime secrets, jobs, artifacts, outputs, or idempotency state. Do not diagnose Dev freshness from `launched=true` alone; require profile status to report a healthy Facade whose artifact matches the gateway.
+
+An operator may instead configure an external facade by setting both `PIPPIT_FACADE_BASE_URL` and `PIPPIT_FACADE_API_KEY`. If either one is configured without the other, do not fall back to the local runtime; report the configuration error. `PIPPIT_FACADE_MANAGEMENT_API_KEY` remains optional in external mode and controls whether the account-management tools are available.
+
+Never ask for, accept, display, or persist a raw Pippit Access Key in a prompt, ordinary environment variable, config manifest, log, or tool argument.
+
+Account management is enabled only when `PIPPIT_FACADE_MANAGEMENT_API_KEY` is configured. This is a separate facade Management API Key, not a Pippit AK and not the runtime Facade API Key. `pippit_add_access_key` returns a short-lived loopback setup URL. Ask the user to open that URL and enter the Pippit AK in its password field; never ask them to paste the AK into chat. The enrollment page sends the secret directly to the facade management plane and the tool results contain only masked account metadata.
+
+External mode also reads:
+
+- `PIPPIT_FACADE_TIMEOUT_MS` (default `43200000`, 12 hours)
+- `PIPPIT_MCP_OUTPUT_ROOT` (default `~/Movies/Pippit` on macOS or `~/Videos/Pippit` elsewhere)
+
+In local mode, every completed image and video output is first saved as an ordinary local file under `~/Movies/Pippit` on macOS or `~/Videos/Pippit` on other platforms. `PIPPIT_MCP_OUTPUT_ROOT` overrides this location. `PIPPIT_BRIDGE_HOME` is only a test/advanced isolation override; when it is set, outputs stay beneath that isolated root. Never suggest placing outputs in a temporary directory, plugin cache, or project checkout.
+
+For Codex/stdio, widgets read persistent local artifacts through standard MCP Apps `resources/read` and reconstruct sandbox-local `blob:` URLs. Images use stable `pippit-image://artifact/...` identities and fall back to the app-only `pippit_read_image` transport when a historical widget's original resource bridge has ended. Videos use bounded chunks and the app-only `pippit_read_video_chunk` fallback. These tools are not visible to the model and enforce permission, size, and symlink checks. Neither an upstream signed URL nor a local filesystem path is assigned directly to a preview. A failed bridge must leave loading within a bounded timeout and show a recoverable error.
+
+## Workflow
+
+1. If no account is configured, call `pippit_add_access_key` with a non-secret account name, then have the user complete its loopback setup page. Use `pippit_list_access_keys` to confirm the masked account is active.
+2. Use `pippit_switch_access_key` to select the account for new jobs. Switching never changes the credential embedded in an existing job id. Before `pippit_delete_access_key`, show the selected masked account and get explicit confirmation; local deletion does not revoke the AK on the Pippit website.
+3. For images, call `pippit_list_image_models` when needed, then call `pippit_generate_image`. Omit `model` to use the default `pippit/seedream-5.0` without `resolution`, or use `pippit/seedream-5.0-pro` with optional `1K`, `2K`, or `4K`. Up to 9 reference images and `n=1..10` are accepted. In Codex/stdio, generation returns an `image_job_id` immediately so the result card can show Infinity Run progress; poll `pippit_get_image` until the task completes. Completed bytes are atomically saved locally, and the card previews that stable artifact with an action to reveal it in Finder or the system file manager. If the user asks for the same image or file again, direct them to the existing card or configured output folder and never regenerate it.
+4. For video, call `pippit_list_video_models` when the model or its supported settings are not already known. Omit `model` to use the default VIP-channel `pippit/seedance-2.0-mini`. The other video models are `pippit/seedance-2.5`, non-VIP `pippit/seedance-2.0` / `pippit/seedance-2.0-mini-lite`, and VIP `pippit/seedance-2.0-vision`.
+5. Call `pippit_generate_video` once. Omit `idempotency_key` for an ordinary submission. Only when the user deliberately requests abnormal-recovery protection, choose and preserve a stable key before the first attempt; reuse that key only after an abnormal interruption and only with the exact same arguments. The tool submits a job and returns immediately; it does not wait for generation to finish.
+6. In the same execution unit as the submission, read the returned opaque job `id` directly from structured tool output and persist that exact string before displaying or polling it. In Codex, use the equivalent of `store("pippit_video_job_id", result.structuredContent.id)` and later pass `load("pippit_video_job_id")` unchanged to `pippit_get_video`. Never transcribe, reconstruct, shorten, decode/re-encode, or manually paste a `pippit_job_v2...` value. Never pass the shorter `generation_id` such as `skill_...` as `job_id`; it is not a polling credential. If the exact job `id` was not preserved, recover it from the original structured tool result or task trace when available. Do not submit a replacement generation merely to recover a lost polling id.
+7. Poll `pippit_get_video` with only the exact persisted job `id` until the job reaches a terminal state. A completed `pippit_get_video` first materializes every output as a regular local MP4, then automatically opens the shared video preview and regeneration widget through the MCP Apps local resource bridge. The widget must not expose an absolute filesystem path; mention the configured output folder only when the user asks where files are saved.
+8. Call `pippit_download_video` only when the user asks for an additional copy with a chosen relative file name/path. The job must be `completed`; use a new relative `output_path` beneath the configured output root. Existing files are never overwritten. Do not use this tool as a prerequisite for normal playback or initial local persistence.
+
+## Native partial regeneration
+
+Use `pippit_edit_video_segment` only with a completed source job and a `time_range` within the source video. Omit `model` to use `pippit/seedance-2.0`, or select any model listed by `pippit_list_video_models`; Seedance 2.0-family ranges must be 4–15 seconds and Seedance 2.5 ranges must be 4–30.2 seconds. Public MCP and ChatGPT arguments use microseconds: `time_range.start_time_us/end_time_us` is the authoritative provider range, while optional `guidance_annotations[].at_time_us`, normalized intrinsic-frame `region`, and `instruction` are soft prompt guidance. The facade uploads the completed source, preserves both `asset_id` and `pippit_asset_id`, and submits both through `partial_edit_videos`; it does not also send the source through ordinary `videos`.
+
+The upstream partial-edit contract does not expose a pixel mask. Describe the result as partial regeneration, not as an in-place byte edit or proof that an exact rectangle mask was enforced.
+
+The regeneration returns another asynchronous job. Apply the same opaque job-id rule: persist the exact structured `id` in the submission execution unit and poll it without transcription or substitution. Its completed result is likewise saved locally first and opens the same preview/regeneration widget. Create an extra copy only under the explicit-copy rule above.
+
+All generation-related tool paths use a 12-hour internal timeout. After `Regenerate video` is clicked, the widget immediately shows loading and requests the standard MCP Apps `inline` display mode so a supporting Codex host returns to the conversation while polling continues. Do not send a follow-up chat message to force this transition, because that could trigger a duplicate model turn.
+
+`frame_images` and `input_references` use HTTP(S) URLs that the facade resolves. A request containing frame images uses first/last-frame generation semantics. Never mix `frame_images` with `input_references` in one request.
+
+Do not claim text, speech, transcription, or audio-generation support. Audio is accepted only as an input reference for a video request.
