@@ -165,7 +165,7 @@ async function removeStaleBootstrapLock(path: string, existing: Awaited<ReturnTy
   if (candidatePath !== undefined) {
     let candidateStats: Stats
     try { candidateStats = await lstat(candidatePath) } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return removeSingleLinkBootstrapLockIfUnchanged(path, existing.stats)
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
       throw error
     }
     assertBootstrapLockStats(candidateStats, "Local runtime bootstrap lock candidate")
@@ -183,7 +183,10 @@ async function removeStaleBootstrapLock(path: string, existing: Awaited<ReturnTy
       return false
     }
     try { await unlink(candidatePath); await syncParentDirectory(candidatePath) } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+      // Another contender already claimed stale-lock recovery. Only that
+      // contender may remove the remaining lock link; retry from fresh state.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+      throw error
     }
   }
   return removeSingleLinkBootstrapLockIfUnchanged(path, existing.stats)
