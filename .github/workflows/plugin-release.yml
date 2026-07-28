@@ -50,7 +50,7 @@ jobs:
           CONTRACTS_VERSION: ${{ steps.package-versions.outputs.contracts }}
         run: |
           set -euo pipefail
-          local_tarball="release/pippit-bridge-contracts-${CONTRACTS_VERSION}.tgz"
+          local_tarball="./release/pippit-bridge-contracts-${CONTRACTS_VERSION}.tgz"
           package_spec="@pippit-bridge/contracts@${CONTRACTS_VERSION}"
           if npm view "$package_spec" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
             mkdir registry-contracts local-contracts registry-contracts-extracted
@@ -80,7 +80,7 @@ jobs:
           tar -xzf "release/pippit-bridge-contracts-${CONTRACTS_VERSION}.tgz" -C local-contracts-verify
           tar -xzf "registry-contracts-verify/pippit-bridge-contracts-${CONTRACTS_VERSION}.tgz" -C registry-contracts-extracted-verify
           diff -ru local-contracts-verify/package registry-contracts-extracted-verify/package
-          npm install --prefix /tmp/pippit-contracts-registry-install --ignore-scripts "registry-contracts-verify/pippit-bridge-contracts-${CONTRACTS_VERSION}.tgz"
+          npm install --prefix /tmp/pippit-contracts-registry-install --ignore-scripts "./registry-contracts-verify/pippit-bridge-contracts-${CONTRACTS_VERSION}.tgz"
           cd /tmp/pippit-contracts-registry-install
           node --input-type=module --eval 'const contracts = await import("@pippit-bridge/contracts"); contracts.credentialIdContract.parse("123e4567-e89b-42d3-a456-426614174000")'
       - name: Publish or verify the exact core dependency
@@ -88,7 +88,7 @@ jobs:
           CORE_VERSION: ${{ steps.package-versions.outputs.core }}
         run: |
           set -euo pipefail
-          local_tarball="release/pippit-bridge-core-${CORE_VERSION}.tgz"
+          local_tarball="./release/pippit-bridge-core-${CORE_VERSION}.tgz"
           package_spec="@pippit-bridge/core@${CORE_VERSION}"
           if npm view "$package_spec" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
             mkdir registry-core local-core registry-core-extracted
@@ -118,11 +118,11 @@ jobs:
           tar -xzf "release/pippit-bridge-core-${CORE_VERSION}.tgz" -C local-core-verify
           tar -xzf "registry-core-verify/pippit-bridge-core-${CORE_VERSION}.tgz" -C registry-core-extracted-verify
           diff -ru local-core-verify/package registry-core-extracted-verify/package
-          npm install --prefix /tmp/pippit-core-registry-install --ignore-scripts "registry-core-verify/pippit-bridge-core-${CORE_VERSION}.tgz"
+          npm install --prefix /tmp/pippit-core-registry-install --ignore-scripts "./registry-core-verify/pippit-bridge-core-${CORE_VERSION}.tgz"
           cd /tmp/pippit-core-registry-install
           node --input-type=module --eval 'const core = await import("@pippit-bridge/core"); if (typeof core.readPrivateFile !== "function") throw new Error("CORE_PRIVATE_FILE_EXPORT_MISSING")'
       - run: npm pack -w @pippit-bridge/mcp-server --pack-destination release
-      - run: npm publish "release/pippit-bridge-mcp-server-${{ inputs.version }}.tgz" --access public --provenance --registry=https://registry.npmjs.org
+      - run: npm publish "./release/pippit-bridge-mcp-server-${{ inputs.version }}.tgz" --access public --provenance --registry=https://registry.npmjs.org
       - run: npm view "@pippit-bridge/mcp-server@${{ inputs.version }}" version dist.integrity dist.tarball --json --registry=https://registry.npmjs.org
       - run: mkdir registry-verify && npm pack "@pippit-bridge/mcp-server@${{ inputs.version }}" --pack-destination registry-verify --registry=https://registry.npmjs.org
       - name: Compare the registry MCP artifact with the published candidate
@@ -131,7 +131,7 @@ jobs:
           tar -xzf "release/pippit-bridge-mcp-server-${{ inputs.version }}.tgz" -C local-mcp-verify
           tar -xzf "registry-verify/pippit-bridge-mcp-server-${{ inputs.version }}.tgz" -C registry-mcp-extracted-verify
           diff -ru local-mcp-verify/package registry-mcp-extracted-verify/package
-      - run: npm install --prefix /tmp/pippit-registry-install --ignore-scripts "registry-verify/pippit-bridge-mcp-server-${{ inputs.version }}.tgz"
+      - run: npm install --prefix /tmp/pippit-registry-install --ignore-scripts "./registry-verify/pippit-bridge-mcp-server-${{ inputs.version }}.tgz"
       - run: node packages/mcp-server-pippit/scripts/smoke-installed-bin.mjs /tmp/pippit-registry-install/node_modules/.bin/pippit-mcp
       - if: ${{ inputs.activate_marketplace }}
         run: node scripts/activate-marketplace.mjs "${{ inputs.version }}"
