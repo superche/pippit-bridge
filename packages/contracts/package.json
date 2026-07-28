@@ -1,9 +1,14 @@
 {
   "name": "@pippit-bridge/contracts",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Runtime and projection contracts shared by Pippit Bridge surfaces",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/superche/pippit-bridge.git",
+    "directory": "packages/contracts"
+  },
   "sideEffects": false,
   "engines": {
     "node": ">=22.0.0"

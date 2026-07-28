@@ -1,9 +1,14 @@
 {
   "name": "@pippit-bridge/core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Shared Pippit model catalog and safe media primitives",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/superche/pippit-bridge.git",
+    "directory": "packages/core"
+  },
   "sideEffects": false,
   "engines": {
     "node": ">=22.0.0"
