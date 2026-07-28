@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Exact unoccupied npm version
+        description: Exact npm version to publish or verify
         required: true
       activate_marketplace:
         description: Open marketplace activation PR after registry verification
@@ -35,8 +35,6 @@ jobs:
         run: |
           echo "contracts=$(node -p "require('./packages/contracts/package.json').version")" >> "$GITHUB_OUTPUT"
           echo "core=$(node -p "require('./packages/core/package.json').version")" >> "$GITHUB_OUTPUT"
-      - name: Refuse an occupied npm version
-        run: if npm view "@pippit-bridge/mcp-server@${{ inputs.version }}" version --registry=https://registry.npmjs.org; then exit 1; fi
       - run: npm run check:public-lockfile
       - run: npm ci
       - run: npm run check:plugin-version && npm run check:plugin-contract && npm run check && npm run check:release-artifact && npm run check:dev-gateway
@@ -122,9 +120,33 @@ jobs:
           cd /tmp/pippit-core-registry-install
           node --input-type=module --eval 'const core = await import("@pippit-bridge/core"); if (typeof core.readPrivateFile !== "function") throw new Error("CORE_PRIVATE_FILE_EXPORT_MISSING")'
       - run: npm pack -w @pippit-bridge/mcp-server --pack-destination release
-      - run: npm publish "./release/pippit-bridge-mcp-server-${{ inputs.version }}.tgz" --access public --provenance --registry=https://registry.npmjs.org
-      - run: npm view "@pippit-bridge/mcp-server@${{ inputs.version }}" version dist.integrity dist.tarball --json --registry=https://registry.npmjs.org
-      - run: mkdir registry-verify && npm pack "@pippit-bridge/mcp-server@${{ inputs.version }}" --pack-destination registry-verify --registry=https://registry.npmjs.org
+      - name: Publish or verify the exact MCP artifact
+        run: |
+          set -euo pipefail
+          local_tarball="./release/pippit-bridge-mcp-server-${{ inputs.version }}.tgz"
+          package_spec="@pippit-bridge/mcp-server@${{ inputs.version }}"
+          if npm view "$package_spec" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+            mkdir registry-mcp-existing local-mcp-existing registry-mcp-existing-extracted
+            npm pack "$package_spec" --pack-destination registry-mcp-existing --registry=https://registry.npmjs.org
+            tar -xzf "$local_tarball" -C local-mcp-existing
+            tar -xzf "registry-mcp-existing/pippit-bridge-mcp-server-${{ inputs.version }}.tgz" -C registry-mcp-existing-extracted
+            diff -ru local-mcp-existing/package registry-mcp-existing-extracted/package
+          else
+            npm publish "$local_tarball" --access public --provenance --registry=https://registry.npmjs.org
+          fi
+      - name: Re-download the MCP artifact from the official registry
+        run: |
+          set -euo pipefail
+          package_spec="@pippit-bridge/mcp-server@${{ inputs.version }}"
+          for attempt in 1 2 3 4 5 6; do
+            if npm view "$package_spec" version dist.integrity dist.tarball --json --registry=https://registry.npmjs.org; then
+              break
+            fi
+            if [ "$attempt" = 6 ]; then exit 1; fi
+            sleep 10
+          done
+          mkdir registry-verify
+          npm pack "$package_spec" --pack-destination registry-verify --registry=https://registry.npmjs.org
       - name: Compare the registry MCP artifact with the published candidate
         run: |
           mkdir local-mcp-verify registry-mcp-extracted-verify
