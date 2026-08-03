@@ -3,6 +3,7 @@ import {
   PIPPIT_PARTIAL_EDIT_USE_SOURCE_SEGMENT_DURATION_SEC,
   PIPPIT_RUN_STATES,
   type PippitClientConfig,
+  type PippitDiagnosticSink,
   type PippitFailReason,
   type PippitFailReasonObject,
   type PippitFetch,
@@ -191,24 +192,26 @@ export function validateSubmitRequest(value: PippitSubmitRunRequest, operation: 
   ) throw new PippitApiError({ code: "INVALID_INPUT", operation })
 
   const params = value.video_part_tool_param
-  const isPartialEdit = params.partial_edit_videos !== undefined
+  const isNativePartialEdit = params.partial_edit_videos !== undefined
   if (
     !isNonEmptyString(params.model)
     || !isNonEmptyString(params.prompt)
     || typeof params.duration_sec !== "number"
     || !Number.isFinite(params.duration_sec)
     || (
-      isPartialEdit
+      isNativePartialEdit
         ? params.duration_sec !== PIPPIT_PARTIAL_EDIT_USE_SOURCE_SEGMENT_DURATION_SEC
         : params.duration_sec <= 0
     )
+    || !isOptionalNonEmptyString(params.language)
     || !isOptionalNonEmptyString(params.ratio)
     || !isOptionalNonEmptyString(params.resolution)
     || (params.generate_type !== undefined && params.generate_type !== 0 && params.generate_type !== 1)
     || (params.seed !== undefined && !Number.isSafeInteger(params.seed))
+    || (params.task_type !== undefined && params.task_type !== "reference")
   ) throw new PippitApiError({ code: "INVALID_INPUT", operation })
 
-  for (const key of ["images", "videos", "audios"] as const) {
+  for (const key of ["images", "imitation_videos", "videos", "audios"] as const) {
     const references = params[key]
     if (references !== undefined && (!Array.isArray(references) || !references.every(isMediaReference))) {
       throw new PippitApiError({ code: "INVALID_INPUT", operation })
@@ -220,7 +223,7 @@ export function validateSubmitRequest(value: PippitSubmitRunRequest, operation: 
       !Array.isArray(params.partial_edit_videos)
       || params.partial_edit_videos.length !== 1
       || !params.partial_edit_videos.every(isPartialEditVideoReference)
-      || params.videos !== undefined
+      || (params.videos !== undefined && params.videos.length !== 0)
     )
   ) throw new PippitApiError({ code: "INVALID_INPUT", operation })
 }
@@ -237,6 +240,7 @@ export function stringifyJson(value: unknown, operation: PippitOperation): strin
 
 export function validateConfig(config: PippitClientConfig): {
   baseUrl: string
+  diagnostics?: PippitDiagnosticSink
   fetchImpl: PippitFetch
   timeoutMs: number
 } {
@@ -260,5 +264,13 @@ export function validateConfig(config: PippitClientConfig): {
   url.hash = ""
   const fetchImpl = config.fetchImpl ?? globalThis.fetch
   if (typeof fetchImpl !== "function") throw new PippitApiError({ code: "INVALID_INPUT", operation })
-  return { baseUrl: url.toString().replace(/\/+$/, ""), fetchImpl, timeoutMs }
+  if (config.diagnostics !== undefined && typeof config.diagnostics !== "function") {
+    throw new PippitApiError({ code: "INVALID_INPUT", operation })
+  }
+  return {
+    baseUrl: url.toString().replace(/\/+$/, ""),
+    ...(config.diagnostics === undefined ? {} : { diagnostics: config.diagnostics }),
+    fetchImpl,
+    timeoutMs,
+  }
 }

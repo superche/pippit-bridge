@@ -48,12 +48,12 @@ function config(): ChatGptAppConfig {
 }
 
 describe("Pippit ChatGPT MCP App", () => {
-  it("defaults to Seedream 5.0 and Seedance 2.0 Mini and rejects removed models", () => {
+  it("defaults generation to Seedance 2.5 and editing to Seedance 2.0 Vision", () => {
     expect(chatGptImageInputSchema.parse({ prompt: "paint" })).toMatchObject({
       model: "pippit/seedream-5.0",
     })
     expect(chatGptGenerateInputSchema.parse({ idempotency_key: "job", prompt: "animate" })).toMatchObject({
-      model: "pippit/seedance-2.0-mini",
+      model: "pippit/seedance-2.5",
     })
     expect(chatGptEditInputSchema.parse({
       guidance_annotations: [],
@@ -61,7 +61,7 @@ describe("Pippit ChatGPT MCP App", () => {
       prompt: "change",
       source_job_id: "job",
       time_range: { end_time_us: 4_000_000, start_time_us: 0 },
-    })).toMatchObject({ model: "pippit/seedance-2.0" })
+    })).toMatchObject({ model: "pippit/seedance-2.0-vision" })
     expect(chatGptEditInputSchema.safeParse({
       guidance_annotations: [],
       idempotency_key: "edit-25",
@@ -80,7 +80,7 @@ describe("Pippit ChatGPT MCP App", () => {
     }).success).toBe(false)
     expect(chatGptGenerateInputSchema.safeParse({
       idempotency_key: "job",
-      model: "pippit/seedance-2.0-fast",
+      model: "pippit/seedance-2.0",
       prompt: "animate",
     }).success).toBe(false)
   })

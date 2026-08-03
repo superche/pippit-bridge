@@ -343,6 +343,7 @@
       display: grid;
       justify-items: center;
       gap: 24px;
+      width: min(680px, 100%);
     }
     .error-word {
       display: flex;
@@ -372,6 +373,62 @@
     .terminal-view.is-entering .error-dot.is-active {
       animation: error-dot-entry 560ms steps(2, end) both;
       animation-delay: var(--error-dot-delay);
+    }
+    .terminal-message {
+      max-width: 640px;
+      margin: 0;
+      color: currentColor;
+      font-size: 14px;
+      line-height: 1.55;
+      opacity: .82;
+      overflow-wrap: anywhere;
+    }
+    .terminal-diagnostics {
+      display: grid;
+      width: min(640px, 100%);
+      margin: 0;
+      border: 1px solid rgb(127 127 127 / 28%);
+      border-radius: 10px;
+      background: rgb(127 127 127 / 7%);
+      text-align: left;
+    }
+    .terminal-diagnostics div {
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr);
+      gap: 12px;
+      padding: 9px 12px;
+      border-bottom: 1px solid rgb(127 127 127 / 18%);
+    }
+    .terminal-diagnostics div:last-child { border-bottom: 0; }
+    .terminal-diagnostics dt {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      opacity: .55;
+      text-transform: uppercase;
+    }
+    .terminal-diagnostics dd {
+      min-width: 0;
+      margin: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      overflow-wrap: anywhere;
+    }
+    .runtime-version {
+      position: fixed;
+      z-index: 20;
+      right: 10px;
+      bottom: 8px;
+      border: 1px solid rgb(127 127 127 / 24%);
+      border-radius: 999px;
+      padding: 3px 8px;
+      background: rgb(127 127 127 / 10%);
+      color: currentColor;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 10px;
+      line-height: 1.4;
+      opacity: .72;
+      pointer-events: none;
     }
     @keyframes error-dot-entry {
       0%, 22% { opacity: .07; transform: scale(.72); }
@@ -682,6 +739,12 @@
           <span class="error-matrix" data-pattern="01110/10001/10001/10001/10001/10001/01110" aria-hidden="true"></span>
           <span class="error-matrix" data-pattern="11110/10001/10001/11110/10100/10010/10001" aria-hidden="true"></span>
         </h1>
+        <p id="terminal-message" class="terminal-message">Pippit could not complete this request.</p>
+        <dl class="terminal-diagnostics">
+          <div><dt>Code</dt><dd id="terminal-code">unknown</dd></div>
+          <div><dt>Log ID</dt><dd id="terminal-log-id">unavailable</dd></div>
+          <div><dt>Runtime</dt><dd id="terminal-runtime">unavailable</dd></div>
+        </dl>
       </div>
     </section>
 
@@ -747,6 +810,7 @@
         </footer>
       </details>
     </section>
+    <output id="runtime-version" class="runtime-version" aria-label="Pippit internal runtime version" hidden></output>
   </main>
   <script>
     (function () {
@@ -773,14 +837,13 @@
 };
       var resolvePartialEditModel = function resolvePartialEditModel(model) {
     switch (model) {
-        case "pippit/seedance-2.5":
-        case "pippit/seedance-2.0-mini":
-        case "pippit/seedance-2.0":
-        case "pippit/seedance-2.0-mini-lite":
         case "pippit/seedance-2.0-vision":
+        case "pippit/seedance-2.0-fast":
+        case "pippit/seedance-2.0-mini":
+        case "pippit/seedance-2.0-mini-lite":
             return model;
         default:
-            return "pippit/seedance-2.0";
+            return "pippit/seedance-2.0-vision";
     }
 };
       var partialEditMaxSegmentMs = function partialEditMaxSegmentMs(model) {
@@ -1452,6 +1515,11 @@
       var loadingViewElement = document.getElementById("loading-view");
       var infinityLoaderElement = document.getElementById("infinity-loader");
       var terminalViewElement = document.getElementById("terminal-view");
+      var terminalMessageElement = document.getElementById("terminal-message");
+      var terminalCodeElement = document.getElementById("terminal-code");
+      var terminalLogIdElement = document.getElementById("terminal-log-id");
+      var terminalRuntimeElement = document.getElementById("terminal-runtime");
+      var runtimeVersionElement = document.getElementById("runtime-version");
       var editorElement = document.getElementById("editor");
       var stageElement = document.getElementById("video-stage");
       var videoElement = document.getElementById("video");
@@ -2436,6 +2504,15 @@
           latestRestoreTimer = undefined;
         }
         var meta = result._meta && typeof result._meta === "object" ? result._meta : {};
+        var runtimeMetadata = meta["pippit/runtime"];
+        var runtimeStamp = runtimeMetadata && typeof runtimeMetadata === "object"
+          && typeof runtimeMetadata.stamp === "string"
+          ? runtimeMetadata.stamp
+          : undefined;
+        if (runtimeStamp) {
+          runtimeVersionElement.textContent = runtimeStamp;
+          runtimeVersionElement.hidden = false;
+        }
         var media = Array.isArray(meta["pippit/media"]) ? meta["pippit/media"] : [];
         var nextModel = resolveWidgetModel(activeModel, job.model);
         var nextStatus = typeof job.status === "string" ? job.status : "pending";
@@ -2458,6 +2535,16 @@
           showLoading(activeStatus);
           if (presentation.schedulePoll) schedulePoll(pollDelayMs);
         } else if (presentation.view === "terminal") {
+          terminalMessageElement.textContent = typeof job.error === "string" && job.error.trim() !== ""
+            ? job.error
+            : "Pippit could not complete this request.";
+          terminalCodeElement.textContent = nextStatus === "failed"
+            ? "generation_failed"
+            : nextStatus;
+          terminalLogIdElement.textContent = "unavailable";
+          terminalRuntimeElement.textContent = runtimeStamp
+            || runtimeVersionElement.textContent
+            || "unavailable";
           showTerminal();
         } else if (presentation.view === "editor" && preview) {
           setPreview(job, preview);
@@ -2560,11 +2647,51 @@
 
       function renderBootstrapResult(result) {
         if (!result || typeof result !== "object") return;
+        var runtimeMetadata = result._meta && typeof result._meta === "object"
+          ? result._meta["pippit/runtime"]
+          : undefined;
+        var runtimeStamp = runtimeMetadata && typeof runtimeMetadata === "object"
+          && typeof runtimeMetadata.stamp === "string"
+          ? runtimeMetadata.stamp
+          : undefined;
+        var structuredError = result.structuredContent
+          && typeof result.structuredContent === "object"
+          && result.structuredContent.error
+          && typeof result.structuredContent.error === "object"
+          ? result.structuredContent.error
+          : undefined;
+        if (!runtimeStamp && structuredError && typeof structuredError.internal_version === "string") {
+          runtimeStamp = structuredError.internal_version;
+        }
+        if (runtimeStamp) {
+          runtimeVersionElement.textContent = runtimeStamp;
+          runtimeVersionElement.hidden = false;
+        }
+        if (result.isError || structuredError) {
+          latestResolutionComplete = true;
+          terminalMessageElement.textContent = structuredError && typeof structuredError.message === "string"
+            ? structuredError.message
+            : toolErrorText(result);
+          terminalCodeElement.textContent = structuredError && typeof structuredError.code === "string"
+            ? structuredError.code
+            : "unknown";
+          terminalLogIdElement.textContent = structuredError
+            && typeof structuredError.upstream_log_id === "string"
+            ? structuredError.upstream_log_id
+            : "unavailable";
+          terminalRuntimeElement.textContent = runtimeStamp || "unavailable";
+          showTerminal();
+          return;
+        }
         if (
           result.structuredContent &&
           result.structuredContent.pippit_dev_preview === "error"
         ) {
           latestResolutionComplete = true;
+          terminalMessageElement.textContent = "Development error preview.";
+          terminalCodeElement.textContent = "dev_preview";
+          terminalLogIdElement.textContent = "not applicable";
+          terminalRuntimeElement.textContent = runtimeStamp || "unavailable";
           showTerminal();
           return;
         }

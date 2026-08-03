@@ -27,7 +27,7 @@ describe("PippitFacadeClient", () => {
       return new Response(JSON.stringify(job), { status: 202 })
     })
     const client = new PippitFacadeClient({ apiKey: "facade-key", baseUrl: "https://bridge.example.test", fetchImpl })
-    await expect(client.generateVideo({ model: "pippit/seedance-2.0", prompt: "A comet" })).resolves.toMatchObject(job)
+    await expect(client.generateVideo({ model: "pippit/seedance-2.0-vision", prompt: "A comet" })).resolves.toMatchObject(job)
   })
 
   it("lists image models and parses OpenRouter-compatible generated image data", async () => {

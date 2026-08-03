@@ -105,7 +105,7 @@ describe("MemoryByokStore", () => {
     const store = new MemoryByokStore()
     const credential = await store.create({ key: "ak-old", provider: "pippit" })
     const [beforeRotation] = await store.resolveCandidates({
-      model: "pippit/seedance-2.0",
+      model: "pippit/seedance-2.0-vision",
       workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
     })
     expect(beforeRotation?.accessKey).toBe("ak-old")
@@ -113,7 +113,7 @@ describe("MemoryByokStore", () => {
 
     await store.update(credential.id, { key: "ak-new" })
     const [afterRotation] = await store.resolveCandidates({
-      model: "pippit/seedance-2.0",
+      model: "pippit/seedance-2.0-vision",
       workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
     })
     expect(afterRotation?.accessKey).toBe("ak-new")
@@ -129,7 +129,7 @@ describe("MemoryByokStore", () => {
     const callerHash = "a".repeat(64)
     const primary = await store.create({
       allowed_api_key_hashes: [callerHash],
-      allowed_models: ["pippit/seedance-2.0"],
+      allowed_models: ["pippit/seedance-2.0-vision"],
       allowed_user_ids: ["user-1"],
       key: "ak-primary",
       name: "primary",
@@ -137,7 +137,7 @@ describe("MemoryByokStore", () => {
     })
     const fallback = await store.create({
       allowed_api_key_hashes: [callerHash],
-      allowed_models: ["pippit/seedance-2.0"],
+      allowed_models: ["pippit/seedance-2.0-vision"],
       allowed_user_ids: ["user-1"],
       is_fallback: true,
       key: "ak-fallback",
@@ -154,7 +154,7 @@ describe("MemoryByokStore", () => {
 
     const resolved = await store.resolveCandidates({
       apiKeyHash: callerHash,
-      model: "pippit/seedance-2.0",
+      model: "pippit/seedance-2.0-vision",
       userId: "user-1",
       workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
     })
@@ -163,7 +163,7 @@ describe("MemoryByokStore", () => {
     const explicitlySelected = await store.resolveCandidates({
       apiKeyHash: callerHash,
       credentialId: fallback.id,
-      model: "pippit/seedance-2.0",
+      model: "pippit/seedance-2.0-vision",
       userId: "user-1",
       workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
     })
@@ -172,7 +172,7 @@ describe("MemoryByokStore", () => {
       await store.resolveCandidates({
         apiKeyHash: "b".repeat(64),
         credentialId: primary.id,
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.0-vision",
         userId: "user-1",
         workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
       }),
@@ -206,7 +206,7 @@ describe("MemoryByokStore", () => {
       (
         await store.resolveCandidates({
           apiKeyHash: firstCallerHash,
-          model: "pippit/seedance-2.0",
+          model: "pippit/seedance-2.0-vision",
           workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
         })
       ).map((candidate) => candidate.credential.id),
@@ -215,7 +215,7 @@ describe("MemoryByokStore", () => {
       (
         await store.resolveCandidates({
           apiKeyHash: secondCallerHash,
-          model: "pippit/seedance-2.0",
+          model: "pippit/seedance-2.0-vision",
           workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
         })
       ).map((candidate) => candidate.credential.id),
@@ -224,7 +224,7 @@ describe("MemoryByokStore", () => {
       (
         await store.resolveCandidates({
           apiKeyHash: unselectedCallerHash,
-          model: "pippit/seedance-2.0",
+          model: "pippit/seedance-2.0-vision",
           workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
         })
       ).map((candidate) => candidate.credential.id),
@@ -233,7 +233,7 @@ describe("MemoryByokStore", () => {
     const explicitlySelected = await store.resolveCandidates({
       apiKeyHash: firstCallerHash,
       credentialId: second.id,
-      model: "pippit/seedance-2.0",
+      model: "pippit/seedance-2.0-vision",
       workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
     })
     expect(explicitlySelected.map((candidate) => candidate.credential.id)).toEqual([second.id])
@@ -242,7 +242,7 @@ describe("MemoryByokStore", () => {
     expect(
       await store.resolveCandidates({
         apiKeyHash: firstCallerHash,
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.0-vision",
         workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
       }),
     ).toEqual([])
@@ -290,7 +290,7 @@ describe("MemoryByokStore", () => {
       code: "CREDENTIAL_LIMIT_EXCEEDED",
     })
     const [resolved] = await store.resolveCandidates({
-      model: "pippit/seedance-2.0",
+      model: "pippit/seedance-2.0-vision",
       workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
     })
     expect(resolved?.accessKey).toBe("ak-version-99")
@@ -327,7 +327,7 @@ describe("FileByokStore", () => {
       facade_api_key_hash: callerHash,
     })
     const [resolved] = await reopened.resolveCandidates({
-      model: "pippit/seedance-2.0",
+      model: "pippit/seedance-2.0-vision",
       workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
     })
     expect(resolved?.accessKey).toBe("ak-file-secret-sentinel")
@@ -348,7 +348,7 @@ describe("FileByokStore", () => {
     expect(
       (
         await reopened.resolveCandidates({
-          model: "pippit/seedance-2.0",
+          model: "pippit/seedance-2.0-vision",
           workspaceId: DEFAULT_BYOK_WORKSPACE_ID,
         })
       ).map((candidate) => candidate.accessKey),

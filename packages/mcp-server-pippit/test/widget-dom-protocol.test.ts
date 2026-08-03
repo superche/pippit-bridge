@@ -173,6 +173,42 @@ function launchWidgetProtocolHarness(
 }
 
 describe("Widget v15 DOM protocol", () => {
+  it("renders actionable upstream diagnostics and the exact runtime stamp", async () => {
+    const harness = launchWidgetProtocolHarness(message => (
+      message.method === "ui/initialize"
+        ? { hostCapabilities: { serverResources: true, serverTools: true }, hostContext: {} }
+        : {}
+    ))
+    try {
+      await vi.waitFor(() => expect(harness.posted).toContainEqual(expect.objectContaining({
+        method: "ui/notifications/initialized",
+      })))
+      harness.notify("ui/notifications/tool-result", {
+        _meta: { "pippit/runtime": { stamp: "gaaaaaaaaaa/wbbbbbbbbbb/ffffffffff" } },
+        isError: true,
+        structuredContent: {
+          error: {
+            code: "HTTP_ERROR",
+            message: "Pippit returned HTTP 502.",
+            upstream_log_id: "20260730174415A1B2C3D4E5F6071829AB",
+          },
+        },
+      })
+
+      expect(harness.elements.get("terminal-view")?.hidden).toBe(false)
+      expect(harness.elements.get("terminal-message")?.textContent).toBe("Pippit returned HTTP 502.")
+      expect(harness.elements.get("terminal-code")?.textContent).toBe("HTTP_ERROR")
+      expect(harness.elements.get("terminal-log-id")?.textContent).toBe("20260730174415A1B2C3D4E5F6071829AB")
+      expect(harness.elements.get("terminal-runtime")?.textContent).toBe("gaaaaaaaaaa/wbbbbbbbbbb/ffffffffff")
+      expect(harness.elements.get("runtime-version")).toMatchObject({
+        hidden: false,
+        textContent: "gaaaaaaaaaa/wbbbbbbbbbb/ffffffffff",
+      })
+    } finally {
+      harness.teardown()
+    }
+  })
+
   it("initializes over the standard protocol, renders the dev terminal state, and acknowledges teardown", async () => {
     const ids = [...PIPPIT_WIDGET_HTML.matchAll(/\bid="([^"]+)"/gu)].map(match => match[1]!)
     const elements = new Map(ids.map(id => [id, new FakeElement()]))
@@ -407,7 +443,7 @@ describe("Widget v15 DOM protocol", () => {
               instruction: "Turn the whole scene into a watercolor painting",
               region: { height: 1, width: 1, x: 0, y: 0 },
             }],
-            model: "pippit/seedance-2.0",
+          model: "pippit/seedance-2.0-vision",
             source_index: 0,
             source_job_id: "job-source",
             time_range: { end_time_us: 10_000_000, start_time_us: 0 },
@@ -604,7 +640,7 @@ describe("Widget v15 DOM protocol", () => {
               instruction: "Replace the cup with a glass vase",
               region: { height: 0.5, width: 0.5, x: 0.25, y: 0.25 },
             }],
-            model: "pippit/seedance-2.0",
+          model: "pippit/seedance-2.0-vision",
             source_index: 0,
             source_job_id: "job-source",
             time_range: { end_time_us: 10_000_000, start_time_us: 0 },

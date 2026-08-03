@@ -7,7 +7,7 @@ describe("job token", () => {
     created_at: 1_700_000_000_000,
     credential_id: "11111111-1111-4111-8111-111111111111",
     credential_version_id: "22222222-2222-4222-8222-222222222222",
-    model: "pippit/seedance-2.0",
+    model: "pippit/seedance-2.0-vision",
     run_id: "run-1",
     thread_id: "thread-1",
     workspace_id: "33333333-3333-4333-8333-333333333333",

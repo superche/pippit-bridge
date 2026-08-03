@@ -43,7 +43,7 @@ export PIPPIT_FACADE_API_KEY='<facade-api-key>'
 | `pippit_switch_access_key` | 切换同一 Facade API Key identity 的新任务 active 账号 | stdio MCP、Codex plugin |
 | `pippit_delete_access_key` | 显式确认后删除 facade 加密 store 中的账号 | stdio MCP、Codex plugin |
 
-图片生成只覆盖 Seedream 5.0（默认）/ 5.0 Pro。视频生成覆盖 Seedance 2.5、非 VIP 通道的 Seedance 2.0 / Seedance 2.0 Mini Lite，以及 VIP 通道的 Seedance 2.0 Vision / Seedance 2.0 Mini（普通生成默认）。片段重拍固定使用 Seedance 2.5。参考图片也可用于图片或视频生成，参考视频/音频仅用于视频。本包没有宣告通用文本、语音生成或转录工具。
+图片生成只覆盖 Seedream 5.0（默认）/ 5.0 Pro。视频生成覆盖 Seedance 2.5（普通生成默认）、非 VIP 通道的 Seedance 2.0 / Seedance 2.0 Mini Lite，以及 VIP 通道的 Seedance 2.0 Vision / Seedance 2.0 Mini。视频编辑默认使用 Seedance 2.0 Mini；受支持的 Seedance 2.0 系列源模型会继续沿用。参考图片也可用于图片或视频生成，参考视频/音频仅用于视频。本包没有宣告通用文本、语音生成或转录工具。
 
 `idempotency_key` 是视频 MCP/OpenCode plugin 的可选异常恢复字段，不属于 Facade/OpenRouter API。图片接口同步返回，不暴露该恢复字段。视频缺省时每次调用均独立提交；显式提供时，MCP 或 OpenCode 才在自己的私有账本中合并同 key 同请求、检测冲突并跨重启恢复。详见 [持久化幂等](./idempotency.md)。
 
@@ -97,11 +97,11 @@ setup token 高熵、短时、单次消费，响应使用 `Cache-Control: no-sto
 
 MCP 的 list/delete 会把 runtime Facade API Key 的 SHA-256 只在 server-to-server management 请求中作为 caller scope；facade 在服务端过滤并原子校验删除权限。其他 Facade API Key 专属的账号不会出现在列表中，猜测其 credential ID 删除也只返回 404。未携带 caller scope 的原始 `/api/v1/byok` Management API 仍保留部署管理员的全局语义。
 
-### 原生片段重拍
+### 视频编辑
 
-`pippit_edit_video_segment` 保留稳定工具名，但公共 MCP、ChatGPT App 与 Facade 合同均使用原生片段重拍语义：只接受已完成的 `source_job_id`，支持公共视频模型目录中的 Seedance 2.0/2.5 模型并复用 facade 的 job token 权限边界；未指定模型时默认 `pippit/seedance-2.0`。`time_range.start_time_us/end_time_us` 是权威 provider 时间范围：Seedance 2.0 系列必须为 4–15 秒，Seedance 2.5 必须为 4–30.2 秒。完整源视频上传后同时保留 EverPhoto `asset_id` 与资产库 `pippit_asset_id`，两者一起进入 `partial_edit_videos`，且不会同时进入普通 `videos`。返回值是标准异步 video job，继续用 `pippit_get_video` 轮询。
+`pippit_edit_video_segment` 保留稳定工具名，只接受已完成的 `source_job_id`，并复用 facade 的 job token 权限边界。编辑提交前会把完成结果重新走参考视频上传链路，以取得彼此关联但不可互换的 EverPhoto `asset_id` 与 Pippit `pippit_asset_id`；不能直接复用生成任务 artifact 中可能不具备 EverPhoto 来源关系的 ID。结果 Widget 与未指定模型的直接调用默认使用 `pippit/seedance-2.0-vision`（上游枚举 `seedance2.0_vision`）；受支持的 Seedance 2.0 系列源模型会继续沿用。Seedance 2.0 系列将完整源视频作为普通 `videos` 参考，并使用所选区间计算出的正数时长重新生成，因此时间范围与空间标注属于提示词引导；显式选择 Seedance 2.5 时才使用原生 `partial_edit_videos`。Seedance 2.0 系列范围必须为 4–15 秒，Seedance 2.5 必须为 4–30.2 秒。返回值是标准异步 video job，继续用 `pippit_get_video` 轮询。
 
-`guidance_annotations[].at_time_us` 必须落在 `time_range` 内；其归一化 `region` 与 `instruction` 只编译为提示词引导，因为当前上游合同没有 pixel-mask 字段。可以称为“片段重拍”或“局部重拍”，但不能声称是原地字节修改或存在像素级 hard mask。
+`guidance_annotations[].at_time_us` 必须落在 `time_range` 内；其归一化 `region` 与 `instruction` 只编译为提示词引导，因为当前上游合同没有 pixel-mask 字段。可以称为“视频编辑”或“重生成”，但不能声称是原地字节修改或存在像素级 hard mask。
 
 ## 2. ChatGPT App
 

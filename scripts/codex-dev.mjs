@@ -455,5 +455,15 @@ async function run() {
 const command = process.argv[2]
 if (command === "bootstrap") await bootstrap()
 else if (command === "status") process.stdout.write(await readFile(statePath, "utf8").catch(() => "{\"phase\":\"not-started\"}\n"))
+else if (command === "logs") {
+  const diagnosticPath = resolve(dataRoot, "runtime", "diagnostics", "upstream.ndjson")
+  const lines = (await readFile(diagnosticPath, "utf8").catch(error => {
+    if (error?.code === "ENOENT") return ""
+    throw error
+  })).trim().split("\n").filter(Boolean)
+  process.stdout.write(lines.length === 0
+    ? `No upstream diagnostics have been recorded at ${diagnosticPath}.\n`
+    : `${lines.slice(-50).join("\n")}\n`)
+}
 else if (command === "run") await run()
-else throw new Error("Use bootstrap, status, or run.")
+else throw new Error("Use bootstrap, logs, status, or run.")

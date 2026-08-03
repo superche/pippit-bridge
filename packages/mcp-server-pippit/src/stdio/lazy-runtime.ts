@@ -6,6 +6,7 @@ import {
   openPippitMcpIdempotencyStore,
   resolvePippitLocalRuntimePaths,
   resolvePippitRuntimeEnvironment,
+  type PippitResolvedRuntimeEnvironment,
 } from "../local-runtime.ts"
 import {
   facadeClientOptions,
@@ -17,6 +18,7 @@ import {
   PIPPIT_MANAGEMENT_TOOL_DEFINITIONS,
   PIPPIT_RUNTIME_TOOL_DEFINITIONS,
   type PippitMcpCallToolResult,
+  type PippitRuntimeIdentity,
   type PippitToolRuntime,
 } from "../tools.ts"
 import type { PippitWidgetMediaBackend } from "../widget-media.ts"
@@ -50,11 +52,44 @@ function runtimeUnavailable(error: unknown): PippitMcpCallToolResult {
   }
 }
 
-function createConfiguredRuntime(env: NodeJS.ProcessEnv, idempotencyStore: IdempotencyStore): ConfiguredRuntime {
+function sha256(value: string | undefined): string | undefined {
+  const normalized = value?.trim()
+  return normalized !== undefined && /^[a-f0-9]{64}$/u.test(normalized) ? normalized : undefined
+}
+
+function runtimeIdentity(
+  resolved: PippitResolvedRuntimeEnvironment,
+): PippitRuntimeIdentity | undefined {
+  const gatewayArtifactSha256 = sha256(resolved.environment.PIPPIT_DEV_HOST_ARTIFACT_HASH)
+  const workerArtifactSha256 = sha256(resolved.environment.PIPPIT_DEV_WORKER_IMPLEMENTATION_HASH)
+  const facadeArtifactSha256 = sha256(resolved.local?.daemon?.artifactHash)
+  const workerGeneration = resolved.environment.PIPPIT_DEV_WORKER_GENERATION_ID?.trim() || undefined
+  if (gatewayArtifactSha256 === undefined && workerArtifactSha256 === undefined && facadeArtifactSha256 === undefined) {
+    return undefined
+  }
+  return {
+    ...(facadeArtifactSha256 === undefined ? {} : { facadeArtifactSha256 }),
+    ...(gatewayArtifactSha256 === undefined ? {} : { gatewayArtifactSha256 }),
+    stamp: [
+      `g${gatewayArtifactSha256?.slice(0, 10) ?? "external"}`,
+      `w${workerArtifactSha256?.slice(0, 10) ?? "direct"}`,
+      `f${facadeArtifactSha256?.slice(0, 10) ?? "external"}`,
+    ].join("/"),
+    ...(workerArtifactSha256 === undefined ? {} : { workerArtifactSha256 }),
+    ...(workerGeneration === undefined ? {} : { workerGeneration }),
+  }
+}
+
+function createConfiguredRuntime(
+  resolved: PippitResolvedRuntimeEnvironment,
+  idempotencyStore: IdempotencyStore,
+): ConfiguredRuntime {
+  const env = resolved.environment
   const configured = parsePippitMcpOptions(env)
   const managementOptions = facadeManagementClientOptions(configured)
   const client = new PippitFacadeClient(facadeClientOptions(configured))
   const lineageScope = createHash("sha256").update(configured.facadeApiKey, "utf8").digest("hex")
+  const identity = runtimeIdentity(resolved)
   return {
     client,
     lineageScope,
@@ -68,6 +103,7 @@ function createConfiguredRuntime(env: NodeJS.ProcessEnv, idempotencyStore: Idemp
       idempotencyScope: lineageScope,
       idempotencyStore,
       outputRoot: configured.outputRoot,
+      ...(identity === undefined ? {} : { runtimeIdentity: identity }),
     }),
   }
 }
@@ -91,7 +127,7 @@ export function createLazyPippitToolRuntime(env: NodeJS.ProcessEnv): LazyPippitT
   const initialize = (): Promise<ConfiguredRuntime> => {
     configuredPromise ??= resolvePippitRuntimeEnvironment(env)
       .then(async resolved => createConfiguredRuntime(
-        resolved.environment,
+        resolved,
         await openPippitMcpIdempotencyStore(env),
       ))
       .then(configured => {

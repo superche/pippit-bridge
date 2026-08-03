@@ -84,15 +84,15 @@ export const OPENAPI_VIDEO_SCHEMAS = {
         type: "array",
       },
       model: {
-        default: "pippit/seedance-2.0",
+        default: "pippit/seedance-2.0-vision",
         description:
-          "Native partial regeneration model. Seedance 2.0-family models support 4–15 second ranges; Seedance 2.5 supports 4–30.2 second ranges.",
+          "Video edit model. Seedance 2.0-family models use reference-guided regeneration for 4–15 second ranges; Seedance 2.5 uses native partial regeneration for 4–30.2 second ranges.",
         enum: [
           "pippit/seedance-2.5",
-          "pippit/seedance-2.0-mini",
-          "pippit/seedance-2.0",
-          "pippit/seedance-2.0-mini-lite",
           "pippit/seedance-2.0-vision",
+          "pippit/seedance-2.0-fast",
+          "pippit/seedance-2.0-mini",
+          "pippit/seedance-2.0-mini-lite",
         ],
         type: "string",
       },
@@ -198,13 +198,13 @@ export const OPENAPI_VIDEO_SCHEMAS = {
         type: "array",
       },
       model: {
-        default: "pippit/seedance-2.0-mini",
+        default: "pippit/seedance-2.5",
         enum: [
           "pippit/seedance-2.5",
-          "pippit/seedance-2.0-mini",
-          "pippit/seedance-2.0",
-          "pippit/seedance-2.0-mini-lite",
           "pippit/seedance-2.0-vision",
+          "pippit/seedance-2.0-fast",
+          "pippit/seedance-2.0-mini",
+          "pippit/seedance-2.0-mini-lite",
         ],
         type: "string",
       },

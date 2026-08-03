@@ -1,4 +1,3 @@
-import { PIPPIT_PARTIAL_EDIT_USE_SOURCE_SEGMENT_DURATION_SEC } from "@pippit-bridge/sdk"
 import type { AuthenticatedApiKey } from "../../auth.js"
 import { ApiError } from "../../errors.js"
 import {
@@ -10,6 +9,9 @@ import type { QueriedJob } from "./job-query.js"
 import type { VideoSubmissionRequest } from "./video-generation.js"
 
 const MAX_COMPILED_EDIT_PROMPT_LENGTH = 20_000
+const NATIVE_PARTIAL_EDIT_MODEL = "pippit/seedance-2.5"
+
+type VideoEditSubmissionMode = "native-partial" | "reference-guided"
 
 function formatVideoEditSeconds(timeUs: number): string {
   const fixed = (timeUs / 1_000_000).toFixed(2)
@@ -17,7 +19,17 @@ function formatVideoEditSeconds(timeUs: number): string {
   return fixed.replace(/0$/u, "")
 }
 
-export function compileVideoEditPrompt(request: VideoEditRequest): string {
+function videoEditDurationSeconds(request: VideoEditRequest): number {
+  const durationUs = request.time_range.end_time_us - request.time_range.start_time_us
+  return Math.max(4, Math.round(durationUs / 1_000_000))
+}
+
+export function compileVideoEditPrompt(
+  request: VideoEditRequest,
+  mode: VideoEditSubmissionMode = request.model === NATIVE_PARTIAL_EDIT_MODEL
+    ? "native-partial"
+    : "reference-guided",
+): string {
   const annotationGuidance = request.guidance_annotations.flatMap((annotation, index) => {
     const region = annotation.region
     const target = region.x === 0 && region.y === 0 && region.width === 1 && region.height === 1
@@ -32,9 +44,17 @@ export function compileVideoEditPrompt(request: VideoEditRequest): string {
   const endSeconds = formatVideoEditSeconds(request.time_range.end_time_us)
   const prompt = [
     `对【@视频1】进行局部修改, 修改区间:\n${startSeconds}s - ${endSeconds}s, 修改内容：`,
+    ...(mode === "reference-guided"
+      ? [
+          "The complete source video is attached as the ordinary video reference.",
+          "Apply the requested visible change during the selected time range and preserve unrelated content as much as possible.",
+        ]
+      : []),
     ...(request.prompt === undefined ? [] : [request.prompt]),
     ...annotationGuidance,
-    "The provider time_range is authoritative for partial regeneration.",
+    mode === "native-partial"
+      ? "The provider time_range is authoritative for partial regeneration."
+      : "The selected time range is generation guidance for reference-guided regeneration.",
     "Treat normalized intrinsic-frame rectangles as prompt guidance, not hard masks; preserve unrelated content outside the guided area as much as possible.",
     "Structured Bridge partial-edit contract:",
     JSON.stringify({
@@ -98,13 +118,30 @@ export function createVideoEditService(input: {
   return async (caller, request, signal) => {
     const source = await input.queryJob(caller, request.source_job_id, signal)
     const sourceUrl = editSourceVideoUrl(source.result, request.source_index)
+    const provider = {
+      options: {
+        ...(request.provider?.options ?? {}),
+        pippit: {
+          ...(request.provider?.options?.pippit ?? {}),
+          byok_id: source.payload.credential_id,
+        },
+      },
+    }
+    const mode: VideoEditSubmissionMode = request.model === NATIVE_PARTIAL_EDIT_MODEL
+      ? "native-partial"
+      : "reference-guided"
     const body: VideoSubmissionRequest = {
-      duration: PIPPIT_PARTIAL_EDIT_USE_SOURCE_SEGMENT_DURATION_SEC,
-      input_references: [{ type: "video_url", video_url: { url: sourceUrl } }],
+      // /skill/submit_run accepts edit references only when their Pippit asset
+      // records can hydrate an EverPhoto source. A generated artifact may have
+      // both IDs in get_thread while still not being upload-backed, so
+      // re-enter the ordinary reference upload path and use the fresh linked
+      // cloud asset_id + pippit_asset_id returned by upload_file.
+      input_references: [{ type: "video_url" as const, video_url: { url: sourceUrl } }],
+      ...(mode === "reference-guided" ? { duration: videoEditDurationSeconds(request) } : {}),
       model: request.model,
-      partialEdit: { timeRange: request.time_range },
-      prompt: compileVideoEditPrompt(request),
-      ...(request.provider === undefined ? {} : { provider: request.provider }),
+      ...(mode === "native-partial" ? { partialEdit: { timeRange: request.time_range } } : {}),
+      prompt: compileVideoEditPrompt(request, mode),
+      provider,
       ...(request.resolution === undefined ? {} : { resolution: request.resolution }),
       ...(request.seed === undefined ? {} : { seed: request.seed }),
     }

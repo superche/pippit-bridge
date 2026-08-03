@@ -259,13 +259,21 @@ async function readDevRuntimeBinding(dataRoot = resolveDevDataRoot()) {
   if (
     typeof pointer.daemonArtifactHash !== "string"
     || !/^[a-f0-9]{64}$/u.test(pointer.daemonArtifactHash)
+    || typeof pointer.hostArtifactHash !== "string"
+    || !/^[a-f0-9]{64}$/u.test(pointer.hostArtifactHash)
   ) {
     throw new Error("DEV_FACADE_ARTIFACT_IDENTITY_INVALID")
+  }
+  const workerArtifactHash = status.activeImplementationHash ?? status.baseImplementationHash
+  if (typeof workerArtifactHash !== "string" || !/^[a-f0-9]{64}$/u.test(workerArtifactHash)) {
+    throw new Error("DEV_WORKER_ARTIFACT_IDENTITY_INVALID")
   }
   return {
     daemonArtifactHash: pointer.daemonArtifactHash,
     daemonModuleUrl: pathToFileURL(resolve(generationRoot, "dist/plugin-stdio.mjs")).href,
+    hostArtifactHash: pointer.hostArtifactHash,
     runtimeRoot,
+    workerArtifactHash,
   }
 }
 
@@ -276,9 +284,21 @@ async function loadLocalRuntimeController() {
 }
 
 export function bindFacadeStatus(status, binding) {
+  const internalVersion = (
+    typeof binding.hostArtifactHash === "string"
+    && typeof binding.workerArtifactHash === "string"
+    && typeof status.artifactHash === "string"
+  )
+    ? [
+        `g${binding.hostArtifactHash.slice(0, 10)}`,
+        `w${binding.workerArtifactHash.slice(0, 10)}`,
+        `f${status.artifactHash.slice(0, 10)}`,
+      ].join("/")
+    : undefined
   return {
     ...status,
     gatewayArtifactHash: binding.daemonArtifactHash,
+    ...(internalVersion === undefined ? {} : { internalVersion }),
     matchesGateway: (
       status.healthy === true
       && status.matchesExpectedArtifact === true

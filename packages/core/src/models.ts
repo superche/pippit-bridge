@@ -121,14 +121,14 @@ const common = {
   supported_sizes: null,
 }
 
-export const PIPPIT_DEFAULT_VIDEO_MODEL = "pippit/seedance-2.0-mini"
-export const PIPPIT_PARTIAL_EDIT_VIDEO_MODEL = "pippit/seedance-2.0"
+export const PIPPIT_DEFAULT_VIDEO_MODEL = "pippit/seedance-2.5"
+export const PIPPIT_PARTIAL_EDIT_VIDEO_MODEL = "pippit/seedance-2.0-vision"
 export const PIPPIT_PARTIAL_EDIT_VIDEO_MODELS = [
   "pippit/seedance-2.5",
-  "pippit/seedance-2.0-mini",
-  "pippit/seedance-2.0",
-  "pippit/seedance-2.0-mini-lite",
   "pippit/seedance-2.0-vision",
+  "pippit/seedance-2.0-fast",
+  "pippit/seedance-2.0-mini",
+  "pippit/seedance-2.0-mini-lite",
 ] as const
 
 export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
@@ -144,23 +144,33 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
   },
   {
     ...common,
+    canonical_slug: "pippit/seedance-2.0-vision",
+    description:
+      "Pippit Seedance 2.0 Vision immersive-video model. Supports uploaded image, video, and audio references.",
+    id: "pippit/seedance-2.0-vision",
+    name: "Pippit: Seedance 2.0 Vision",
+    supported_resolutions: ["480p", "720p", "1080p"],
+    upstreamModel: "seedance2.0_vision",
+  },
+  {
+    ...common,
+    canonical_slug: "pippit/seedance-2.0-fast",
+    description:
+      "Pippit Seedance 2.0 Fast Vision immersive-video model. Supports uploaded image, video, and audio references.",
+    id: "pippit/seedance-2.0-fast",
+    name: "Pippit: Seedance 2.0 Fast Vision",
+    supported_resolutions: ["480p", "720p"],
+    upstreamModel: "seedance2.0_fast_vision",
+  },
+  {
+    ...common,
     canonical_slug: "pippit/seedance-2.0-mini",
     description:
-      "Pippit Seedance 2.0 Mini immersive-video model on the VIP channel. Supports uploaded image, video, and audio references.",
+      "Pippit Seedance 2.0 Mini immersive-video model. Supports uploaded image, video, and audio references.",
     id: "pippit/seedance-2.0-mini",
     name: "Pippit: Seedance 2.0 Mini",
     supported_resolutions: ["480p", "720p"],
     upstreamModel: "Seedance_2.0_mini",
-  },
-  {
-    ...common,
-    canonical_slug: "pippit/seedance-2.0",
-    description:
-      "Pippit Seedance 2.0 immersive-video model on the non-VIP channel. Supports uploaded image, video, and audio references.",
-    id: "pippit/seedance-2.0",
-    name: "Pippit: Seedance 2.0",
-    supported_resolutions: ["480p", "720p"],
-    upstreamModel: "seedance2.0_direct",
   },
   {
     ...common,
@@ -171,16 +181,6 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
     name: "Pippit: Seedance 2.0 Mini Lite",
     supported_resolutions: ["480p", "720p"],
     upstreamModel: "Seedance_2.0_mini_lite",
-  },
-  {
-    ...common,
-    canonical_slug: "pippit/seedance-2.0-vision",
-    description:
-      "Pippit Seedance 2.0 Vision immersive-video model on the VIP channel. Supports uploaded image, video, and audio references.",
-    id: "pippit/seedance-2.0-vision",
-    name: "Pippit: Seedance 2.0 Vision",
-    supported_resolutions: ["480p", "720p", "1080p"],
-    upstreamModel: "seedance2.0_vision",
   },
 ]
 

@@ -38,12 +38,12 @@ const frozenV14 = JSON.parse(await readFile(
 }
 
 describe("Widget v15 state machine", () => {
-  it("inherits supported source models and applies model-specific edit limits", () => {
+  it("preserves Seedance 2.0-family sources and defaults other edits to 2.0 Mini", () => {
     expect(resolvePartialEditModel("pippit/seedance-2.0-mini")).toBe("pippit/seedance-2.0-mini")
-    expect(resolvePartialEditModel("pippit/seedance-2.5")).toBe("pippit/seedance-2.5")
-    expect(resolvePartialEditModel("unknown")).toBe("pippit/seedance-2.0")
-    expect(partialEditMaxSegmentMs("pippit/seedance-2.0")).toBe(15_000)
-    expect(partialEditMaxSegmentMs("pippit/seedance-2.5")).toBe(30_200)
+    expect(resolvePartialEditModel("pippit/seedance-2.5")).toBe("pippit/seedance-2.0-vision")
+    expect(resolvePartialEditModel("unknown")).toBe("pippit/seedance-2.0-vision")
+    expect(partialEditMaxSegmentMs("pippit/seedance-2.0-vision")).toBe(15_000)
+    expect(partialEditMaxSegmentMs("pippit/seedance-2.5")).toBe(15_000)
   })
 
   it.each(frozenV14.scenarios)("matches frozen v14 presentation for $status", (scenario) => {

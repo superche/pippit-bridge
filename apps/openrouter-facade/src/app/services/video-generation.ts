@@ -1,4 +1,9 @@
-import type { PippitApi, PippitPartialEditVideoReference, PippitVideoTimeRange } from "@pippit-bridge/sdk"
+import type {
+  PippitApi,
+  PippitMediaReference,
+  PippitPartialEditVideoReference,
+  PippitVideoTimeRange,
+} from "@pippit-bridge/sdk"
 import type { AuthenticatedApiKey } from "../../auth.js"
 import type { ByokStore } from "../../byok/index.js"
 import type { AppConfig } from "../../config.js"
@@ -25,7 +30,7 @@ function defaultVideoResolution(
     return inferredResolution
   }
   return inferredResolution === undefined
-    ? supportedResolutions[0]
+    ? supportedResolutions.includes("720p") ? "720p" : supportedResolutions[0]
     : supportedResolutions.at(-1)
 }
 
@@ -48,6 +53,7 @@ export interface VideoPartialEditSubmission {
 
 export type VideoSubmissionRequest = VideoGenerationRequest & {
   readonly partialEdit?: VideoPartialEditSubmission
+  readonly resolvedVideoReferences?: readonly PippitMediaReference[]
 }
 
 function partialEditVideo(
@@ -114,17 +120,23 @@ export function createVideoGenerationService(input: {
 
     for (const [index, candidate] of candidates.entries()) {
       try {
-        const references = await prepareReferences({
-          accessKey: candidate.accessKey,
-          concurrency: input.config.REFERENCE_UPLOAD_CONCURRENCY,
-          gate: input.referenceGate,
-          loader: input.referenceLoader,
-          maxTotalBytes: input.config.REFERENCE_MAX_TOTAL_BYTES,
-          maxTotalBytesByKind: { audio: input.config.REFERENCE_MAX_AUDIO_BYTES },
-          pippit: input.pippit,
-          request,
-          signal,
-        })
+        const references = request.resolvedVideoReferences === undefined
+          ? await prepareReferences({
+              accessKey: candidate.accessKey,
+              concurrency: input.config.REFERENCE_UPLOAD_CONCURRENCY,
+              gate: input.referenceGate,
+              loader: input.referenceLoader,
+              maxTotalBytes: input.config.REFERENCE_MAX_TOTAL_BYTES,
+              maxTotalBytesByKind: { audio: input.config.REFERENCE_MAX_AUDIO_BYTES },
+              pippit: input.pippit,
+              request,
+              signal,
+            })
+          : {
+              audios: [],
+              images: [],
+              videos: request.resolvedVideoReferences,
+            }
         const geometry = resolveOutputGeometry({
           ...request,
           aspect_ratio: request.aspect_ratio ?? references.inferredAspectRatio ?? "16:9",
@@ -145,13 +157,15 @@ export function createVideoGenerationService(input: {
             ...(providerOptions.thread_id === undefined ? {} : { thread_id: providerOptions.thread_id }),
             video_part_tool_param: {
               ...(references.audios.length === 0 ? {} : { audios: [...references.audios] }),
-              duration_sec: request.duration ?? 5,
+              ...(request.duration === undefined ? {} : { duration_sec: request.duration }),
               ...(references.generateType === undefined ? {} : { generate_type: references.generateType }),
               ...(references.images.length === 0 ? {} : { images: [...references.images] }),
               model: model.upstreamModel,
               ...(partialEdit === undefined ? {} : { partial_edit_videos: [partialEdit] }),
               prompt: request.prompt,
-              ...(geometry.aspectRatio === undefined ? {} : { ratio: geometry.aspectRatio }),
+              ...(partialEdit !== undefined || geometry.aspectRatio === undefined
+                ? {}
+                : { ratio: geometry.aspectRatio }),
               ...(geometry.resolution === undefined ? {} : { resolution: geometry.resolution }),
               ...(request.seed === undefined ? {} : { seed: request.seed }),
               ...(partialEdit !== undefined || references.videos.length === 0

@@ -9,7 +9,7 @@ import {
   type ReferenceLookup,
   type ReferenceTransport,
 } from "@pippit-bridge/core"
-import { PippitClient, type PippitApi } from "@pippit-bridge/sdk"
+import { PippitClient, type PippitApi, type PippitDiagnosticSink } from "@pippit-bridge/sdk"
 import { authenticateFacadeApiKey, authenticateManagementKey } from "../auth.js"
 import { FileByokStore, type ByokStore } from "../byok/index.js"
 import { loadConfig, mergeConfig, parseConfig, type AppConfig } from "../config.js"
@@ -29,6 +29,7 @@ export interface BuildAppOptions {
   readonly config?: Partial<AppConfig>
   readonly contentLookup?: ReferenceLookup
   readonly contentTransport?: ReferenceTransport
+  readonly diagnostics?: PippitDiagnosticSink
   readonly logger?: boolean
   readonly pippit?: PippitApi
   readonly referenceLoader?: ReferenceLoader
@@ -49,6 +50,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   })
   const pippit = options.pippit ?? new PippitClient({
     baseUrl: config.PIPPIT_BASE_URL,
+    ...(options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics }),
     timeoutMs: config.PIPPIT_REQUEST_TIMEOUT_MS,
   })
   const referenceLoader = options.referenceLoader ?? createReferenceLoader({

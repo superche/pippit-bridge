@@ -19,6 +19,7 @@ function createDependencies() {
     }
   })
   const pippit = {
+    getVideoAssets: vi.fn<PippitApi["getVideoAssets"]>(),
     queryVideoResult: vi.fn<PippitApi["queryVideoResult"]>(),
     submitRun: vi.fn<PippitApi["submitRun"]>(),
     uploadFile,
@@ -40,7 +41,7 @@ describe("prepareReferences", () => {
           { type: "video_url", video_url: { url: "https://media.test/video.mp4" } },
           { audio_url: { url: "https://media.test/audio.mp3" }, type: "audio_url" },
         ],
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.0-vision",
         prompt: "test",
       },
     })
@@ -79,7 +80,7 @@ describe("prepareReferences", () => {
         input_references: [
           { type: "video_url", video_url: { url: "https://media.test/ignored.mp4" } },
         ],
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.0-vision",
         prompt: "test",
       },
     })
@@ -104,7 +105,7 @@ describe("prepareReferences", () => {
           { image_url: { url: "https://media.test/same.png" }, type: "image_url" },
           { image_url: { url: "https://media.test/same.png" }, type: "image_url" },
         ],
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.0-vision",
         prompt: "test",
       },
     })
@@ -129,7 +130,7 @@ describe("prepareReferences", () => {
         pippit: dependencies.pippit,
         request: {
           input_references: [{ image_url: { url: "https://media.test/image.png" }, type: "image_url" }],
-          model: "pippit/seedance-2.0",
+          model: "pippit/seedance-2.0-vision",
           prompt: "test",
         },
       }),
@@ -160,7 +161,7 @@ describe("prepareReferences", () => {
             { image_url: { url: "https://media.test/second.png" }, type: "image_url" },
             { image_url: { url: "https://media.test/third.png" }, type: "image_url" },
           ],
-          model: "pippit/seedance-2.0",
+          model: "pippit/seedance-2.0-vision",
           prompt: "test",
         },
       }),
@@ -190,7 +191,7 @@ describe("prepareReferences", () => {
             { image_url: { url: "https://media.test/one.png" }, type: "image_url" },
             { image_url: { url: "https://media.test/two.png" }, type: "image_url" },
           ],
-          model: "pippit/seedance-2.0",
+          model: "pippit/seedance-2.0-vision",
           prompt: "test",
         },
       }),

@@ -53,7 +53,14 @@ export class ChildMcpWorkerGeneration implements DevWorkerGeneration<DevWorkerRe
     readonly migrationEpoch: number
     readonly storageBackwardCompatible: boolean
   }): Promise<{ readonly contract: FrozenDevContract; readonly worker: ChildMcpWorkerGeneration }> {
-    const child = spawn(process.execPath, [input.entryPath], { env: input.env ?? process.env, stdio: ["pipe", "pipe", "pipe"] })
+    const child = spawn(process.execPath, [input.entryPath], {
+      env: {
+        ...(input.env ?? process.env),
+        PIPPIT_DEV_WORKER_GENERATION_ID: input.generationId,
+        PIPPIT_DEV_WORKER_IMPLEMENTATION_HASH: input.implementationHash,
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    })
     const worker = new ChildMcpWorkerGeneration(
       input.contractHash, input.generationId, input.implementationHash, input.migrationEpoch,
       input.storageBackwardCompatible, child,

@@ -7,7 +7,12 @@ import {
   type ReferenceLoader,
   type ReferenceTransport,
 } from "@pippit-bridge/core"
-import { PippitApiError, type PippitApi, type PippitSubmitRunRequest } from "@pippit-bridge/sdk"
+import {
+  PippitApiError,
+  type PippitApi,
+  type PippitSubmitRunRequest,
+  type PippitVideoAsset,
+} from "@pippit-bridge/sdk"
 
 const FACADE_KEY = "facade-test-key"
 const SECOND_FACADE_KEY = "facade-second-key"
@@ -52,12 +57,19 @@ function createHarness(overrides: {
   readonly contentStreamIdleTimeoutMs?: number
   readonly imageUrls?: readonly string[]
   readonly queryState?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+  readonly videoAssets?: readonly PippitVideoAsset[]
   readonly videoUrls?: readonly string[]
 } = {}) {
   const events: string[] = []
   const submittedRequests: PippitSubmitRunRequest[] = []
   let nextAsset = 0
   const pippit = {
+    getVideoAssets: vi.fn<PippitApi["getVideoAssets"]>(async () =>
+      overrides.videoAssets ?? [{
+        asset_id: "everphoto-source-1",
+        pippit_asset_id: "pippit-source-1",
+        url: "https://cdn.test/result.mp4",
+      }]),
     queryVideoResult: vi.fn<PippitApi["queryVideoResult"]>(async () => ({
       imageUrls: [...(overrides.imageUrls ?? [])],
       runState: overrides.queryState ?? 3,
@@ -117,7 +129,7 @@ async function createVideo(app: ReturnType<typeof buildApp>, facadeKey = FACADE_
   return app.inject({
     headers: bearer(facadeKey),
     method: "POST",
-    payload: { model: "pippit/seedance-2.0", prompt: "test" },
+    payload: { model: "pippit/seedance-2.0-vision", prompt: "test" },
     url: "/api/v1/videos",
   })
 }
@@ -128,7 +140,7 @@ describe("release epoch fencing", () => {
     const response = await harness.app.inject({
       headers: { ...bearer(FACADE_KEY), "x-pippit-release-epoch": "0" },
       method: "POST",
-      payload: { model: "pippit/seedance-2.0", prompt: "must not submit" },
+      payload: { model: "pippit/seedance-2.0-vision", prompt: "must not submit" },
       url: "/api/v1/videos",
     })
     expect(response.statusCode).toBe(409)
@@ -273,7 +285,7 @@ describe("OpenRouter BYOK control plane", () => {
       method: "POST",
       payload: {
         allowed_api_key_hashes: [sha256(FACADE_KEY)],
-        allowed_models: ["pippit/seedance-2.0"],
+        allowed_models: ["pippit/seedance-2.0-vision"],
         key: "ak-created-secret",
         name: "production",
         provider: "pippit",
@@ -286,7 +298,7 @@ describe("OpenRouter BYOK control plane", () => {
     expect(created.body).not.toContain("ak-created-secret")
     expect(created.json().data).toMatchObject({
       allowed_api_key_hashes: [sha256(FACADE_KEY)],
-      allowed_models: ["pippit/seedance-2.0"],
+      allowed_models: ["pippit/seedance-2.0-vision"],
       label: "ak-****cret",
       name: "production",
       provider: "pippit",
@@ -569,7 +581,7 @@ describe("OpenRouter BYOK control plane", () => {
       headers: bearer(FACADE_KEY),
       method: "POST",
       payload: {
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.0-vision",
         prompt: "explicit credential wins",
         provider: { options: { pippit: { byok_id: firstId } } },
       },
@@ -630,13 +642,13 @@ describe("OpenRouter video facade", () => {
       "time_range",
     ])
     expect(response.json().components.schemas.VideoEditRequest.properties.model.default)
-      .toBe("pippit/seedance-2.0")
+      .toBe("pippit/seedance-2.0-vision")
     expect(response.json().components.schemas.ImageGenerationRequest).toMatchObject({
       properties: { model: { default: "pippit/seedream-5.0" } },
       required: ["prompt"],
     })
     expect(response.json().components.schemas.VideoGenerationRequest).toMatchObject({
-      properties: { model: { default: "pippit/seedance-2.0-mini" } },
+      properties: { model: { default: "pippit/seedance-2.5" } },
       required: ["prompt"],
     })
   })
@@ -649,7 +661,7 @@ describe("OpenRouter video facade", () => {
       method: "POST",
       payload: {
         input_references: [{ image_url: { url: "https://media.test/image.png" }, type: "image_url" }],
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.0-vision",
         prompt: "test",
       },
       url: "/api/v1/videos",
@@ -673,15 +685,15 @@ describe("OpenRouter video facade", () => {
     expect(response.statusCode).toBe(200)
     expect(response.json().data.map((model: { id: string }) => model.id)).toEqual([
       "pippit/seedance-2.5",
-      "pippit/seedance-2.0-mini",
-      "pippit/seedance-2.0",
-      "pippit/seedance-2.0-mini-lite",
       "pippit/seedance-2.0-vision",
+      "pippit/seedance-2.0-fast",
+      "pippit/seedance-2.0-mini",
+      "pippit/seedance-2.0-mini-lite",
     ])
     expect(response.json().data[0]).not.toHaveProperty("upstreamModel")
   })
 
-  it("defaults an omitted video model to Seedance 2.0 Mini", async () => {
+  it("defaults an omitted video model to Seedance 2.5", async () => {
     const harness = createHarness()
     const response = await harness.app.inject({
       headers: bearer(FACADE_KEY),
@@ -691,10 +703,25 @@ describe("OpenRouter video facade", () => {
     })
 
     expect(response.statusCode).toBe(202)
-    expect(response.json().model).toBe("pippit/seedance-2.0-mini")
+    expect(response.json().model).toBe("pippit/seedance-2.5")
     expect(harness.submittedRequests.at(-1)).toMatchObject({
-      video_part_tool_param: { model: "Seedance_2.0_mini" },
+      video_part_tool_param: {
+        model: "Seedance_2.5",
+        ratio: "16:9",
+        resolution: "720p",
+      },
     })
+    const submitted = harness.submittedRequests.at(-1)
+    if (submitted === undefined || !("video_part_tool_param" in submitted)) {
+      throw new Error("Expected a video submission")
+    }
+    expect(submitted.video_part_tool_param).not.toHaveProperty("audios")
+    expect(submitted.video_part_tool_param).not.toHaveProperty("duration_sec")
+    expect(submitted.video_part_tool_param).not.toHaveProperty("images")
+    expect(submitted.video_part_tool_param).not.toHaveProperty("imitation_videos")
+    expect(submitted.video_part_tool_param).not.toHaveProperty("language")
+    expect(submitted.video_part_tool_param).not.toHaveProperty("task_type")
+    expect(submitted.video_part_tool_param).not.toHaveProperty("videos")
   })
 
   it("rejects a removed video model before upstream submission", async () => {
@@ -702,7 +729,7 @@ describe("OpenRouter video facade", () => {
     const response = await harness.app.inject({
       headers: bearer(FACADE_KEY),
       method: "POST",
-      payload: { model: "pippit/seedance-2.0-fast", prompt: "Removed model" },
+      payload: { model: "pippit/seedance-2.0", prompt: "Removed model" },
       url: "/api/v1/videos",
     })
 
@@ -715,7 +742,7 @@ describe("OpenRouter video facade", () => {
     const request = {
       headers: { ...bearer(FACADE_KEY), "idempotency-key": "not-a-facade-contract" },
       method: "POST" as const,
-      payload: { model: "pippit/seedance-2.0", prompt: "two intentional submissions" },
+      payload: { model: "pippit/seedance-2.0-vision", prompt: "two intentional submissions" },
       url: "/api/v1/videos",
     }
 
@@ -737,7 +764,7 @@ describe("OpenRouter video facade", () => {
           { type: "video_url", video_url: { url: "https://media.test/video.mp4" } },
           { audio_url: { url: "https://media.test/audio.mp3" }, type: "audio_url" },
         ],
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.0-vision",
         prompt: "make a video",
         provider: { options: { pippit: { thread_id: "existing-thread" } } },
         resolution: "720p",
@@ -763,7 +790,7 @@ describe("OpenRouter video facade", () => {
           audios: [{ asset_id: "everphoto-asset-3", pippit_asset_id: "pippit-asset-3" }],
           duration_sec: 10,
           images: [{ asset_id: "everphoto-asset-1", pippit_asset_id: "pippit-asset-1" }],
-          model: "seedance2.0_direct",
+          model: "seedance2.0_vision",
           prompt: "make a video",
           ratio: "9:16",
           resolution: "720p",
@@ -778,7 +805,7 @@ describe("OpenRouter video facade", () => {
     ])
     expect(response.json()).toMatchObject({
       generation_id: "run-1",
-      model: "pippit/seedance-2.0",
+      model: "pippit/seedance-2.0-vision",
       status: "pending",
       usage: { is_byok: true },
     })
@@ -799,6 +826,7 @@ describe("OpenRouter video facade", () => {
             region: { height: 0.4, width: 0.3, x: 0.1, y: 0.2 },
           },
         ],
+        model: "pippit/seedance-2.5",
         prompt: "Keep the original camera motion",
         resolution: "720p",
         source_job_id: source.json().id,
@@ -808,20 +836,25 @@ describe("OpenRouter video facade", () => {
     })
 
     expect(response.statusCode).toBe(202)
-    expect(harness.loader.load.mock.calls[0]?.slice(0, 2)).toEqual([
+    expect(harness.pippit.getVideoAssets).not.toHaveBeenCalled()
+    expect(harness.loader.load).toHaveBeenCalledWith(
       "https://cdn.test/result.mp4",
       "video",
-    ])
+      expect.any(AbortSignal),
+    )
     expect(harness.pippit.uploadFile).toHaveBeenCalledTimes(1)
-    expect(harness.pippit.uploadFile.mock.calls[0]?.[0].accessKey).toBe(PIPPIT_ACCESS_KEY)
     const submitted = harness.submittedRequests.at(-1)
     if (submitted === undefined || !("video_part_tool_param" in submitted)) {
       throw new Error("Expected a video submission")
     }
-    expect(submitted.video_part_tool_param.duration_sec).toBe(-1)
-    expect(submitted.video_part_tool_param.model).toBe("seedance2.0_direct")
-    expect(submitted.video_part_tool_param.ratio).toBe("16:9")
-    expect(submitted.video_part_tool_param.videos).toBeUndefined()
+    expect(submitted.video_part_tool_param.model).toBe("Seedance_2.5")
+    expect(submitted.video_part_tool_param).not.toHaveProperty("audios")
+    expect(submitted.video_part_tool_param).not.toHaveProperty("duration_sec")
+    expect(submitted.video_part_tool_param).not.toHaveProperty("images")
+    expect(submitted.video_part_tool_param).not.toHaveProperty("imitation_videos")
+    expect(submitted.video_part_tool_param).not.toHaveProperty("language")
+    expect(submitted.video_part_tool_param).not.toHaveProperty("ratio")
+    expect(submitted.video_part_tool_param).not.toHaveProperty("videos")
     expect(submitted.video_part_tool_param.partial_edit_videos).toEqual([{
       asset_id: "everphoto-asset-1",
       pippit_asset_id: "pippit-asset-1",
@@ -850,6 +883,53 @@ describe("OpenRouter video facade", () => {
       instruction: "Keep the original camera motion",
       time_range: { end_time_us: 5_600_000, start_time_us: 1_200_000 },
     })
+  })
+
+  it("defaults video edits to Seedance 2.0 Vision reference-guided regeneration", async () => {
+    const harness = createHarness()
+    const source = await createVideo(harness.app)
+    const response = await harness.app.inject({
+      headers: bearer(FACADE_KEY),
+      method: "POST",
+      payload: {
+        guidance_annotations: [],
+        prompt: "Turn the cat white and preserve the camera motion",
+        source_job_id: source.json().id,
+        time_range: { end_time_us: 11_200_000, start_time_us: 1_200_000 },
+      },
+      url: "/api/v1/videos/edits",
+    })
+
+    expect(response.statusCode).toBe(202)
+    expect(response.json().model).toBe("pippit/seedance-2.0-vision")
+    expect(harness.pippit.getVideoAssets).not.toHaveBeenCalled()
+    expect(harness.loader.load).toHaveBeenCalledWith(
+      "https://cdn.test/result.mp4",
+      "video",
+      expect.any(AbortSignal),
+    )
+    expect(harness.pippit.uploadFile).toHaveBeenCalledTimes(1)
+    const submitted = harness.submittedRequests.at(-1)
+    if (submitted === undefined || !("video_part_tool_param" in submitted)) {
+      throw new Error("Expected a video submission")
+    }
+    expect(submitted.video_part_tool_param).toMatchObject({
+      duration_sec: 10,
+      model: "seedance2.0_vision",
+      ratio: "16:9",
+      resolution: "720p",
+      videos: [{
+        asset_id: "everphoto-asset-1",
+        pippit_asset_id: "pippit-asset-1",
+        security_check_scene: ["pippit_seedance2_0_user_input_video"],
+      }],
+    })
+    expect(submitted.video_part_tool_param).not.toHaveProperty("partial_edit_videos")
+    expect(submitted.message).toContain("The complete source video is attached as the ordinary video reference.")
+    expect(submitted.message).toContain(
+      "The selected time range is generation guidance for reference-guided regeneration.",
+    )
+    expect(submitted.message).not.toContain("The provider time_range is authoritative")
   })
 
   it("infers an omitted edit resolution from the intrinsic source video", async () => {
@@ -882,16 +962,14 @@ describe("OpenRouter video facade", () => {
     if (submitted === undefined || !("video_part_tool_param" in submitted)) {
       throw new Error("Expected a video submission")
     }
-    expect(submitted.video_part_tool_param).toMatchObject({
-      ratio: "9:16",
-      resolution: "720p",
-    })
+    expect(submitted.video_part_tool_param).toMatchObject({ resolution: "720p" })
+    expect(submitted.video_part_tool_param).not.toHaveProperty("ratio")
     expect(submitted.message).toContain("Guidance annotation 1 at 0 us targets the full intrinsic video frame.")
     expect(submitted.message).toContain("Required visible change: Restyle the full frame")
   })
 
   it("rejects partial editing when upload hydration lacks the cloud asset id", async () => {
-    const harness = createHarness()
+    const harness = createHarness({ videoAssets: [] })
     const source = await createVideo(harness.app)
     harness.pippit.uploadFile.mockResolvedValueOnce({
       assetId: "pippit-only",
@@ -902,7 +980,7 @@ describe("OpenRouter video facade", () => {
       headers: bearer(FACADE_KEY),
       method: "POST",
       payload: {
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.5",
         prompt: "edit",
         source_job_id: source.json().id,
         time_range: { end_time_us: 4_000_000, start_time_us: 0 },
@@ -928,7 +1006,7 @@ describe("OpenRouter video facade", () => {
       { ...common, time_range: { end_time_us: 0, start_time_us: 0 } },
       {
         ...common,
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.0-vision",
         time_range: { end_time_us: 15_000_001, start_time_us: 0 },
       },
       { ...common, time_range: { end_time_us: 30_200_001, start_time_us: 0 } },
@@ -1146,7 +1224,7 @@ describe("OpenRouter video facade", () => {
       method: "POST",
       payload: {
         input_references: [{ image_url: { url: "https://media.test/image.png" }, type: "image_url" }],
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.0-vision",
         prompt: "test fallback",
       },
       url: "/api/v1/videos",
@@ -1191,7 +1269,7 @@ describe("OpenRouter video facade", () => {
       headers: bearer(FACADE_KEY),
       method: "POST",
       payload: {
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.0-vision",
         prompt: "continue",
         provider: { options: { pippit: { thread_id: "existing-thread" } } },
       },
@@ -1288,7 +1366,7 @@ describe("OpenRouter video facade", () => {
     const unsupported = await harness.app.inject({
       headers: bearer(FACADE_KEY),
       method: "POST",
-      payload: { generate_audio: false, model: "pippit/seedance-2.0", prompt: "test" },
+      payload: { generate_audio: false, model: "pippit/seedance-2.0-vision", prompt: "test" },
       url: "/api/v1/videos",
     })
     expect(unsupported.statusCode).toBe(400)
@@ -1300,7 +1378,7 @@ describe("OpenRouter video facade", () => {
       method: "POST",
       payload: {
         input_references: [{ image_url: { url: "http://127.0.0.1/private.png" }, type: "image_url" }],
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.0-vision",
         prompt: "test",
       },
       url: "/api/v1/videos",

@@ -1,5 +1,6 @@
 export type PippitOperation =
   | 'client'
+  | 'get_thread'
   | 'upload_file'
   | 'submit_run'
   | 'query_generate_video_result';

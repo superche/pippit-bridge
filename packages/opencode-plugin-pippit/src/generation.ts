@@ -333,6 +333,11 @@ export class PippitVideoService {
     validateGenerateInput(input)
     const model = validateModel(input)
     const references = await prepareReferences(input, this.pippit, this.remoteLoader)
+    const isSeedance25 = model.upstreamModel === "Seedance_2.5"
+    const defaultResolution = model.supported_resolutions?.includes("720p")
+      ? "720p"
+      : model.supported_resolutions?.[0]
+    const resolution = input.resolution ?? defaultResolution
     await input.beforeSubmit?.()
     const submitted = await this.pippit.submitRun({
       accessKey: input.accessKey,
@@ -340,16 +345,23 @@ export class PippitVideoService {
         asset_ids: [...references.assetIds],
         message: input.prompt.trim(),
         video_part_tool_param: {
-          ...(references.audios.length === 0 ? {} : { audios: [...references.audios] }),
+          ...(isSeedance25
+            ? { audios: [...references.audios] }
+            : references.audios.length === 0 ? {} : { audios: [...references.audios] }),
           duration_sec: input.duration ?? PIPPIT_DEFAULT_VIDEO_DURATION,
           ...(references.generateType === undefined ? {} : { generate_type: references.generateType }),
-          ...(references.images.length === 0 ? {} : { images: [...references.images] }),
+          ...(isSeedance25
+            ? { images: [...references.images] }
+            : references.images.length === 0 ? {} : { images: [...references.images] }),
+          ...(isSeedance25 ? { imitation_videos: [], language: "zh" } : {}),
           model: model.upstreamModel,
           prompt: input.prompt.trim(),
-          ...(input.aspectRatio === undefined ? {} : { ratio: input.aspectRatio }),
-          ...(input.resolution === undefined ? {} : { resolution: input.resolution }),
+          ratio: input.aspectRatio ?? "16:9",
+          ...(resolution === undefined ? {} : { resolution }),
           ...(input.seed === undefined ? {} : { seed: input.seed }),
-          ...(references.videos.length === 0 ? {} : { videos: [...references.videos] }),
+          ...(isSeedance25
+            ? { task_type: "reference", videos: [...references.videos] }
+            : references.videos.length === 0 ? {} : { videos: [...references.videos] }),
         },
       },
       ...(input.signal === undefined ? {} : { signal: input.signal }),

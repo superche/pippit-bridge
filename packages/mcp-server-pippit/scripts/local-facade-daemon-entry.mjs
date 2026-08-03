@@ -1,5 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto"
-import { readFile, realpath } from "node:fs/promises"
+import { appendFile, mkdir, readFile, realpath, rename, stat } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -46,6 +46,36 @@ const daemonIdentity = {
 const byokStorePath = resolve(dataRoot, "byok", "credentials.json")
 await removeStalePippitByokLockForDaemon(`${byokStorePath}.lock`)
 const instanceId = randomUUID()
+const diagnosticDirectory = resolve(dataRoot, "diagnostics")
+const diagnosticPath = resolve(diagnosticDirectory, "upstream.ndjson")
+const rotatedDiagnosticPath = resolve(diagnosticDirectory, "upstream.1.ndjson")
+const MAX_DIAGNOSTIC_BYTES = 5 * 1024 * 1024
+await mkdir(diagnosticDirectory, { mode: 0o700, recursive: true })
+let diagnosticWrite = Promise.resolve()
+function writeDiagnostic(event) {
+  diagnosticWrite = diagnosticWrite.then(async () => {
+    const size = await stat(diagnosticPath).then(value => value.size).catch(error => {
+      if (error?.code === "ENOENT") return 0
+      throw error
+    })
+    if (size >= MAX_DIAGNOSTIC_BYTES) {
+      await rename(diagnosticPath, rotatedDiagnosticPath).catch(async error => {
+        if (error?.code !== "ENOENT") throw error
+      })
+    }
+    await appendFile(
+      diagnosticPath,
+      `${JSON.stringify({
+        ...event,
+        facade_artifact_sha256: daemonIdentity.artifactHash,
+        facade_instance_id: instanceId,
+        facade_pid: process.pid,
+      })}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    )
+  }).catch(() => undefined)
+  return diagnosticWrite
+}
 const app = buildApp({
   config: {
     BYOK_ENCRYPTION_KEY_HEX: secrets.byok_encryption_key_hex,
@@ -58,6 +88,7 @@ const app = buildApp({
     JOB_SIGNING_KEY_HEX: secrets.job_signing_key_hex,
     PORT: 30_000,
   },
+  diagnostics: writeDiagnostic,
   logger: false,
 })
 
@@ -90,6 +121,7 @@ async function shutdown() {
   if (shuttingDown) return
   shuttingDown = true
   await app.close().catch(() => undefined)
+  await diagnosticWrite
   await removePippitLocalRuntimeReadyDescriptor(readyPath, process.pid)
 }
 
