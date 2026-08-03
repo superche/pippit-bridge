@@ -7,7 +7,6 @@ export const providerOptionsSchema = z.record(z.string(), z.record(z.string(), z
 export const PIPPIT_VIDEO_MODEL_IDS = [
   "pippit/seedance-2.5",
   "pippit/seedance-2.0-vision",
-  "pippit/seedance-2.0-fast",
   "pippit/seedance-2.0-mini",
   "pippit/seedance-2.0-mini-lite",
 ] as const

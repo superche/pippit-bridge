@@ -38,7 +38,6 @@ export const CHATGPT_GENERATE_INPUT_SHAPE = {
   model: z.enum([
     "pippit/seedance-2.5",
     "pippit/seedance-2.0-vision",
-    "pippit/seedance-2.0-fast",
     "pippit/seedance-2.0-mini",
     "pippit/seedance-2.0-mini-lite",
   ]).default("pippit/seedance-2.5"),

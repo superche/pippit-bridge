@@ -90,7 +90,6 @@ export const OPENAPI_VIDEO_SCHEMAS = {
         enum: [
           "pippit/seedance-2.5",
           "pippit/seedance-2.0-vision",
-          "pippit/seedance-2.0-fast",
           "pippit/seedance-2.0-mini",
           "pippit/seedance-2.0-mini-lite",
         ],
@@ -202,7 +201,6 @@ export const OPENAPI_VIDEO_SCHEMAS = {
         enum: [
           "pippit/seedance-2.5",
           "pippit/seedance-2.0-vision",
-          "pippit/seedance-2.0-fast",
           "pippit/seedance-2.0-mini",
           "pippit/seedance-2.0-mini-lite",
         ],

@@ -126,7 +126,6 @@ export const PIPPIT_PARTIAL_EDIT_VIDEO_MODEL = "pippit/seedance-2.0-vision"
 export const PIPPIT_PARTIAL_EDIT_VIDEO_MODELS = [
   "pippit/seedance-2.5",
   "pippit/seedance-2.0-vision",
-  "pippit/seedance-2.0-fast",
   "pippit/seedance-2.0-mini",
   "pippit/seedance-2.0-mini-lite",
 ] as const
@@ -151,16 +150,6 @@ export const VIDEO_MODELS: readonly VideoModelDefinition[] = [
     name: "Pippit: Seedance 2.0 Vision",
     supported_resolutions: ["480p", "720p", "1080p"],
     upstreamModel: "seedance2.0_vision",
-  },
-  {
-    ...common,
-    canonical_slug: "pippit/seedance-2.0-fast",
-    description:
-      "Pippit Seedance 2.0 Fast Vision immersive-video model. Supports uploaded image, video, and audio references.",
-    id: "pippit/seedance-2.0-fast",
-    name: "Pippit: Seedance 2.0 Fast Vision",
-    supported_resolutions: ["480p", "720p"],
-    upstreamModel: "seedance2.0_fast_vision",
   },
   {
     ...common,

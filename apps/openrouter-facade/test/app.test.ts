@@ -686,7 +686,6 @@ describe("OpenRouter video facade", () => {
     expect(response.json().data.map((model: { id: string }) => model.id)).toEqual([
       "pippit/seedance-2.5",
       "pippit/seedance-2.0-vision",
-      "pippit/seedance-2.0-fast",
       "pippit/seedance-2.0-mini",
       "pippit/seedance-2.0-mini-lite",
     ])

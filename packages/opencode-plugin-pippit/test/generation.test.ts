@@ -177,7 +177,7 @@ describe("PippitVideoService", () => {
     await expect(
       service.generate({
         accessKey: "ak-secret",
-        model: "pippit/seedance-2.0-fast",
+        model: "pippit/seedance-2.5",
         prompt: "A product reveal",
         resolution: "1080p",
         rootDirectory: process.cwd(),

@@ -20,13 +20,13 @@ describe("video mapping", () => {
 
   it("rejects exact size because Pippit only guarantees ratio and resolution", () => {
     expect(() =>
-      resolveOutputGeometry({ size: "1280x720" }, resolveVideoModel("pippit/seedance-2.0-fast")),
+      resolveOutputGeometry({ size: "1280x720" }, resolveVideoModel("pippit/seedance-2.5")),
     ).toThrowError(expect.objectContaining({ code: "unsupported_parameter", param: "size" }))
   })
 
   it("rejects 1080p for every model except Seedance 2.0 Vision", () => {
     expect(() =>
-      resolveOutputGeometry({ resolution: "1080p" }, resolveVideoModel("pippit/seedance-2.0-fast")),
+      resolveOutputGeometry({ resolution: "1080p" }, resolveVideoModel("pippit/seedance-2.5")),
     ).toThrowError(expect.objectContaining({ code: "unsupported_parameter", param: "resolution" }))
 
     expect(resolveOutputGeometry({ resolution: "1080p" }, resolveVideoModel("pippit/seedance-2.0-vision"))).toEqual({

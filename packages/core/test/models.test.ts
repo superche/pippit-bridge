@@ -21,7 +21,6 @@ describe("Pippit video model catalog", () => {
     expect(VIDEO_MODELS.map((model) => [model.id, model.upstreamModel])).toEqual([
       ["pippit/seedance-2.5", "Seedance_2.5"],
       ["pippit/seedance-2.0-vision", "seedance2.0_vision"],
-      ["pippit/seedance-2.0-fast", "seedance2.0_fast_vision"],
       ["pippit/seedance-2.0-mini", "Seedance_2.0_mini"],
       ["pippit/seedance-2.0-mini-lite", "Seedance_2.0_mini_lite"],
     ])
@@ -35,6 +34,7 @@ describe("Pippit video model catalog", () => {
 
   it("rejects removed models and uses a transport-neutral unknown-model error", () => {
     expect(() => resolveVideoModel("pippit/seedance-2.0")).toThrow(UnknownVideoModelError)
+    expect(() => resolveVideoModel("pippit/seedance-2.0-fast")).toThrow(UnknownVideoModelError)
     expect(() => resolveVideoModel("seedance2.0_direct")).toThrow(UnknownVideoModelError)
     expect(() => resolveVideoModel("pippit/not-a-model")).toThrow(UnknownVideoModelError)
   })
