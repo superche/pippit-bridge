@@ -60,13 +60,13 @@ describe("Pippit tool runtime", () => {
     expect(runtime.listTools().map((tool) => tool.name)).toEqual(PIPPIT_RUNTIME_TOOL_NAMES)
     expect(PIPPIT_TOOL_DEFINITIONS_BY_NAME.pippit_generate_video.inputSchema.required).not.toContain("idempotency_key")
     expect(PIPPIT_TOOL_DEFINITIONS_BY_NAME.pippit_generate_video.inputSchema).toMatchObject({
-      properties: { model: { default: "pippit/seedance-2.0-mini" } },
+      properties: { model: { default: "pippit/seedance-2.5" } },
     })
     expect(PIPPIT_TOOL_DEFINITIONS_BY_NAME.pippit_generate_image.inputSchema).toMatchObject({
       properties: { model: { default: "pippit/seedream-5.0" } },
     })
     expect(PIPPIT_TOOL_DEFINITIONS_BY_NAME.pippit_edit_video_segment.inputSchema).toMatchObject({
-      properties: { model: { default: "pippit/seedance-2.0" } },
+      properties: { model: { default: "pippit/seedance-2.0-vision" } },
     })
     expect(PIPPIT_TOOL_DEFINITIONS_BY_NAME.pippit_edit_video_segment.inputSchema.required).not.toContain("idempotency_key")
     expect(getPippitToolDefinition("pippit_add_access_key").inputSchema).toMatchObject({
@@ -100,14 +100,14 @@ describe("Pippit tool runtime", () => {
     })
 
     expect(generateImage).toHaveBeenCalledWith(expect.objectContaining({ model: "pippit/seedream-5.0" }))
-    expect(generateVideo).toHaveBeenCalledWith(expect.objectContaining({ model: "pippit/seedance-2.0-mini" }))
-    expect(editVideo).toHaveBeenCalledWith(expect.objectContaining({ model: "pippit/seedance-2.0" }))
+    expect(generateVideo).toHaveBeenCalledWith(expect.objectContaining({ model: "pippit/seedance-2.5" }))
+    expect(editVideo).toHaveBeenCalledWith(expect.objectContaining({ model: "pippit/seedance-2.0-vision" }))
   })
 
   it("deduplicates exact submissions and rejects key reuse with another payload", async () => {
     const generateVideo = vi.fn(async () => ({ id: "job-1", polling_url: "/poll", status: "pending" as const }))
     const runtime = createPippitToolRuntime({ client: backend({ generateVideo }), outputRoot: "/tmp/pippit-test" })
-    const first = { idempotency_key: "stable-key", model: "pippit/seedance-2.0", prompt: "A comet" }
+    const first = { idempotency_key: "stable-key", model: "pippit/seedance-2.0-vision", prompt: "A comet" }
     await runtime.callTool("pippit_generate_video", first)
     await runtime.callTool("pippit_generate_video", first)
     expect(generateVideo).toHaveBeenCalledTimes(1)
@@ -118,7 +118,7 @@ describe("Pippit tool runtime", () => {
   it("does not require a recovery key or deduplicate ordinary repeated submissions", async () => {
     const generateVideo = vi.fn(async () => ({ id: "job-1", polling_url: "/poll", status: "pending" as const }))
     const runtime = createPippitToolRuntime({ client: backend({ generateVideo }), outputRoot: "/tmp/pippit-test" })
-    const request = { model: "pippit/seedance-2.0", prompt: "Generate this again intentionally" }
+    const request = { model: "pippit/seedance-2.0-vision", prompt: "Generate this again intentionally" }
 
     await runtime.callTool("pippit_generate_video", request)
     await runtime.callTool("pippit_generate_video", request)
@@ -179,7 +179,7 @@ describe("Pippit tool runtime", () => {
     const client = backend({ generateVideo })
     const idempotencyStore = new MemoryIdempotencyStore({ hmacKey: Buffer.alloc(32, 4) })
     const options = { client, idempotencyScope: "facade-identity", idempotencyStore, outputRoot: "/tmp/pippit-test" }
-    const request = { idempotency_key: "recover-this-call", model: "pippit/seedance-2.0", prompt: "Recover me" }
+    const request = { idempotency_key: "recover-this-call", model: "pippit/seedance-2.0-vision", prompt: "Recover me" }
 
     await createPippitToolRuntime(options).callTool("pippit_generate_video", request)
     await createPippitToolRuntime(options).callTool("pippit_generate_video", request)
@@ -218,7 +218,18 @@ describe("Pippit tool runtime", () => {
       time_range: { end_time_us: 5_000_000, start_time_us: 0 },
     }
 
-    await createPippitToolRuntime(options).callTool("pippit_edit_video_segment", request)
+    const failed = await createPippitToolRuntime(options).callTool("pippit_edit_video_segment", request)
+    expect(failed.structuredContent).toEqual({
+      error: {
+        code: "HTTP_ERROR",
+        message: "Pippit facade rejected edit_video_segment with HTTP 502.",
+        operation: "edit_video_segment",
+        status: 502,
+        upstream_code: "VIDEO.MODEL-42",
+        upstream_log_id: "20260722163045A1B2C3D4E5F6071829AB",
+        upstream_operation: "submit_run",
+      },
+    })
     const replay = await createPippitToolRuntime(options).callTool("pippit_edit_video_segment", request)
 
     expect(replay.content).toEqual([{
@@ -228,13 +239,61 @@ describe("Pippit tool runtime", () => {
     expect(editVideo).toHaveBeenCalledTimes(1)
   })
 
+  it("attaches the composite runtime identity to success and visible failure results", async () => {
+    const runtimeIdentity = {
+      facadeArtifactSha256: "f".repeat(64),
+      gatewayArtifactSha256: "a".repeat(64),
+      stamp: "gaaaaaaaaaa/wbbbbbbbbbb/ffffffffff",
+      workerArtifactSha256: "b".repeat(64),
+      workerGeneration: "generation-1",
+    }
+    const failedBackend = backend({
+      generateVideo: async () => {
+        throw new PippitFacadeError({
+          code: "HTTP_ERROR",
+          message: "Pippit returned HTTP 502.",
+          operation: "generate_video",
+          status: 502,
+          upstreamLogId: "20260730174415A1B2C3D4E5F6071829AB",
+        })
+      },
+    })
+    const success = await createPippitToolRuntime({
+      client: backend(),
+      outputRoot: "/tmp/pippit-test",
+      runtimeIdentity,
+    }).callTool("pippit_list_video_models", {})
+    const failed = await createPippitToolRuntime({
+      client: failedBackend,
+      outputRoot: "/tmp/pippit-test",
+      runtimeIdentity,
+    }).callTool("pippit_generate_video", { prompt: "test" })
+
+    expect(success._meta?.["pippit/runtime"]).toMatchObject({
+      facade_artifact_sha256: "f".repeat(64),
+      gateway_artifact_sha256: "a".repeat(64),
+      stamp: runtimeIdentity.stamp,
+      worker_artifact_sha256: "b".repeat(64),
+      worker_generation: "generation-1",
+    })
+    expect(failed.content[0]).toMatchObject({
+      text: expect.stringContaining(`Internal version: ${runtimeIdentity.stamp}`),
+    })
+    expect(failed.structuredContent).toMatchObject({
+      error: {
+        internal_version: runtimeIdentity.stamp,
+        upstream_log_id: "20260730174415A1B2C3D4E5F6071829AB",
+      },
+    })
+  })
+
   it("rejects mixed frame and general references", async () => {
     const runtime = createPippitToolRuntime({ client: backend(), outputRoot: "/tmp/pippit-test" })
     const result = await runtime.callTool("pippit_generate_video", {
       frame_images: [{ frame_type: "first_frame", image_url: { url: "https://example.test/first.png" }, type: "image_url" }],
       idempotency_key: "key",
       input_references: [{ image_url: { url: "https://example.test/ref.png" }, type: "image_url" }],
-      model: "pippit/seedance-2.0",
+      model: "pippit/seedance-2.0-vision",
       prompt: "Move",
     })
     expect(result.isError).toBe(true)

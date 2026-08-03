@@ -16,6 +16,12 @@ export const WIDGET_MARKUP = String.raw`<body>
           <span class="error-matrix" data-pattern="01110/10001/10001/10001/10001/10001/01110" aria-hidden="true"></span>
           <span class="error-matrix" data-pattern="11110/10001/10001/11110/10100/10010/10001" aria-hidden="true"></span>
         </h1>
+        <p id="terminal-message" class="terminal-message">Pippit could not complete this request.</p>
+        <dl class="terminal-diagnostics">
+          <div><dt>Code</dt><dd id="terminal-code">unknown</dd></div>
+          <div><dt>Log ID</dt><dd id="terminal-log-id">unavailable</dd></div>
+          <div><dt>Runtime</dt><dd id="terminal-runtime">unavailable</dd></div>
+        </dl>
       </div>
     </section>
 
@@ -81,4 +87,5 @@ export const WIDGET_MARKUP = String.raw`<body>
         </footer>
       </details>
     </section>
+    <output id="runtime-version" class="runtime-version" aria-label="Pippit internal runtime version" hidden></output>
   </main>`

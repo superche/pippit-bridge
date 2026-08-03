@@ -67,7 +67,7 @@ describe("MCP contract/runtime corpus", () => {
       ["pippit_list_image_models", {}, { extra: true }],
       ["pippit_generate_image", { model: "pippit/seedream-5.0", prompt: "paint" }, { model: "pippit/seedream-5.0", prompt: "paint", resolution: "2K" }],
       ["pippit_list_video_models", {}, { extra: true }],
-      ["pippit_generate_video", { model: "pippit/seedance-2.0", prompt: "go" }, { model: "x", prompt: "go", extra: true }],
+      ["pippit_generate_video", { model: "pippit/seedance-2.0-vision", prompt: "go" }, { model: "x", prompt: "go", extra: true }],
       ["pippit_get_video", { job_id: "job" }, { job_id: "" }],
       ["pippit_download_video", { job_id: "job", output_path: "clip.mp4" }, { job_id: "job", output_path: "../clip.mp4" }],
       ["pippit_edit_video_segment", {

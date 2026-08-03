@@ -13,6 +13,7 @@ function createHarness() {
     })),
   }
   const pippit: PippitApi = {
+    getVideoAssets: vi.fn<PippitApi["getVideoAssets"]>(async () => []),
     uploadFile: vi.fn<PippitApi["uploadFile"]>(async () => {
       nextAsset += 1
       return {
@@ -55,7 +56,7 @@ describe("PippitVideoService", () => {
       accessKey: "ak-secret",
       aspectRatio: "9:16",
       duration: 10,
-      model: "pippit/seedance-2.0",
+      model: "pippit/seedance-2.0-vision",
       maxWaitSeconds: PIPPIT_MAX_WAIT_SECONDS,
       prompt: "A product reveal",
       references: [
@@ -70,7 +71,7 @@ describe("PippitVideoService", () => {
     })
 
     expect(result).toMatchObject({
-      model: "pippit/seedance-2.0",
+      model: "pippit/seedance-2.0-vision",
       runId: "run-1",
       status: "pending",
       threadId: "thread-1",
@@ -84,7 +85,7 @@ describe("PippitVideoService", () => {
           audios: [{ asset_id: "everphoto-asset-3", pippit_asset_id: "pippit-asset-3" }],
           duration_sec: 10,
           images: [{ asset_id: "everphoto-asset-1", pippit_asset_id: "pippit-asset-1" }],
-          model: "seedance2.0_direct",
+          model: "seedance2.0_vision",
           prompt: "A product reveal",
           ratio: "9:16",
           resolution: "720p",
@@ -176,7 +177,7 @@ describe("PippitVideoService", () => {
     await expect(
       service.generate({
         accessKey: "ak-secret",
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.5",
         prompt: "A product reveal",
         resolution: "1080p",
         rootDirectory: process.cwd(),

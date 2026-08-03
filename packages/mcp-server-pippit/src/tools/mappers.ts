@@ -8,7 +8,7 @@ import type {
   PippitVideoGenerateRequest,
 } from "../contracts.ts"
 import { PippitFacadeError } from "../client.ts"
-import type { PippitMcpCallToolResult } from "./contract.ts"
+import type { PippitMcpCallToolResult, PippitRuntimeIdentity } from "./contract.ts"
 import { isRecord, ToolInputError } from "./inputs.ts"
 
 export function facadeRequest(input: PippitGenerateVideoToolInput): PippitVideoGenerateRequest {
@@ -119,5 +119,64 @@ export function safeError(error: unknown): PippitMcpCallToolResult {
     : isRecord(error) && error.code === "EEXIST"
       ? "Output file already exists; choose a new output_path."
       : "Pippit tool could not complete the operation."
-  return { content: [{ text: message.slice(0, 2_000), type: "text" }], isError: true }
+  const safeMessage = message.slice(0, 2_000)
+  return {
+    content: [{ text: safeMessage, type: "text" }],
+    isError: true,
+    ...(error instanceof PippitFacadeError
+      ? {
+          structuredContent: {
+            error: {
+              code: error.code,
+              message: safeMessage,
+              operation: error.operation,
+              ...(error.status === undefined ? {} : { status: error.status }),
+              ...(error.upstreamCode === undefined ? {} : { upstream_code: error.upstreamCode }),
+              ...(error.upstreamLogId === undefined ? {} : { upstream_log_id: error.upstreamLogId }),
+              ...(error.upstreamOperation === undefined ? {} : { upstream_operation: error.upstreamOperation }),
+            },
+          },
+        }
+      : {}),
+  }
+}
+
+export function withRuntimeIdentity(
+  result: PippitMcpCallToolResult,
+  identity: PippitRuntimeIdentity | undefined,
+): PippitMcpCallToolResult {
+  if (identity === undefined) return result
+  const runtimeMetadata = {
+    ...(identity.facadeArtifactSha256 === undefined ? {} : { facade_artifact_sha256: identity.facadeArtifactSha256 }),
+    ...(identity.gatewayArtifactSha256 === undefined ? {} : { gateway_artifact_sha256: identity.gatewayArtifactSha256 }),
+    stamp: identity.stamp,
+    ...(identity.workerArtifactSha256 === undefined ? {} : { worker_artifact_sha256: identity.workerArtifactSha256 }),
+    ...(identity.workerGeneration === undefined ? {} : { worker_generation: identity.workerGeneration }),
+  }
+  const structuredContent = result.structuredContent
+  const error = structuredContent?.error
+  return {
+    ...result,
+    _meta: {
+      ...result._meta,
+      "pippit/runtime": runtimeMetadata,
+    },
+    ...(result.isError
+      ? {
+          content: result.content.map((item, index) => (
+            index === 0 && item.type === "text"
+              ? { ...item, text: `${item.text}\nInternal version: ${identity.stamp}` }
+              : item
+          )),
+          ...(typeof error === "object" && error !== null
+            ? {
+                structuredContent: {
+                  ...structuredContent,
+                  error: { ...error, internal_version: identity.stamp },
+                },
+              }
+            : {}),
+        }
+      : {}),
+  }
 }

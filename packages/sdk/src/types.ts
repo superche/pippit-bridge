@@ -12,12 +12,19 @@ export interface UploadedFileInput {
   mediaType: string;
 }
 
-/**
- * Media references accepted by the video-part tool. Callers should prefer the
- * pippit_asset_id returned by uploadFile over transient URLs.
- */
+/** Media references accepted by the video-part tool. */
 export interface PippitMediaReference {
+  /**
+   * EverPhoto/cloud-media asset ID consumed by the video engine.
+   * This is a different identifier from pippit_asset_id and the values are not
+   * interchangeable.
+   */
   asset_id?: string;
+  /**
+   * Pippit asset-library ID used for ownership and material hydration.
+   * This is a different identifier from asset_id and the values are not
+   * interchangeable.
+   */
   pippit_asset_id: string;
   url?: string;
   security_check_scene?: string[];
@@ -35,21 +42,34 @@ export interface PippitPartialEditVideoReference extends PippitMediaReference {
 
 export interface PippitVideoPartToolParam {
   model: string;
-  duration_sec: number;
+  /**
+   * Requested output duration. Native partial edits are normalized by the SDK
+   * to the provider's source-segment sentinel.
+   */
+  duration_sec?: number;
   prompt: string;
+  language?: string;
   ratio?: string;
   resolution?: string;
   generate_type?: 0 | 1;
   seed?: number;
   images?: PippitMediaReference[];
+  imitation_videos?: PippitMediaReference[];
   videos?: PippitMediaReference[];
   audios?: PippitMediaReference[];
   partial_edit_videos?: PippitPartialEditVideoReference[];
+  /** Advanced override; ordinary Seedance 2.5 requests default to reference. */
+  task_type?: "reference";
 }
 
 /** The documented request body, excluding the fixed agent_name field. */
 export interface PippitVideoSubmitRunRequest {
   message: string;
+  /**
+   * Pippit asset-library IDs used by /skill/submit_run to hydrate referenced
+   * media. The SDK derives these from media pippit_asset_id values; they are
+   * distinct from EverPhoto/cloud-media asset_id values.
+   */
   asset_ids: string[];
   video_part_tool_param: PippitVideoPartToolParam;
   thread_id?: string;
@@ -80,11 +100,20 @@ export interface PippitRun {
 }
 
 export interface PippitUploadResult {
-  /** @deprecated Use pippit_asset_id. Retained for SDK compatibility. */
+  /**
+   * @deprecated Alias of pippit_asset_id retained for SDK compatibility. This
+   * is not the EverPhoto/cloud-media asset_id.
+   */
   assetId: string;
-  /** EverPhoto/cloud asset identity consumed by native partial editing. */
+  /**
+   * EverPhoto/cloud-media asset ID consumed by the video engine. Distinct from
+   * pippit_asset_id.
+   */
   asset_id?: string;
-  /** Pippit asset-library identity used for ownership and asset hydration. */
+  /**
+   * Pippit asset-library ID used for ownership and material hydration. Distinct
+   * from asset_id.
+   */
   pippit_asset_id: string;
 }
 
@@ -113,6 +142,11 @@ export interface PippitVideoResult {
   failReason?: PippitFailReason;
 }
 
+export interface PippitVideoAsset extends PippitMediaReference {
+  asset_id: string;
+  url: string;
+}
+
 export type PippitGenerationResult = PippitVideoResult
 
 export interface PippitRequestOptions {
@@ -133,7 +167,13 @@ export interface QueryVideoResultInput extends PippitRequestOptions {
   runId: string;
 }
 
+export interface GetVideoAssetsInput extends PippitRequestOptions {
+  threadId: string;
+  runId: string;
+}
+
 export interface PippitApi {
+  getVideoAssets(input: GetVideoAssetsInput): Promise<readonly PippitVideoAsset[]>;
   uploadFile(input: UploadFileInput): Promise<PippitUploadResult>;
   submitRun(input: SubmitRunInput): Promise<PippitSubmitRunResult>;
   queryVideoResult(input: QueryVideoResultInput): Promise<PippitVideoResult>;
@@ -141,8 +181,26 @@ export interface PippitApi {
 
 export type PippitFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
+export interface PippitDiagnosticEvent {
+  readonly duration_ms?: number;
+  readonly event: 'upstream_request_started' | 'upstream_response_received' | 'upstream_request_failed';
+  readonly http_status?: number;
+  readonly operation: 'get_thread' | 'upload_file' | 'submit_run' | 'query_generate_video_result';
+  readonly params?: Readonly<Record<string, boolean | number | string>>;
+  readonly path: string;
+  readonly request_id: string;
+  readonly timestamp: string;
+  readonly upstream_code?: string | number;
+  readonly upstream_log_id?: string;
+  readonly upstream_message?: string;
+  readonly error_code?: string;
+}
+
+export type PippitDiagnosticSink = (event: PippitDiagnosticEvent) => Promise<void> | void;
+
 export interface PippitClientConfig {
   baseUrl?: string;
+  diagnostics?: PippitDiagnosticSink;
   fetchImpl?: PippitFetch;
   timeoutMs?: number;
 }

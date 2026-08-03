@@ -100,6 +100,15 @@ export interface PippitToolRuntimeOptions {
   readonly managementClient?: PippitFacadeManagementBackend
   readonly maxDownloadBytes?: number
   readonly outputRoot?: string
+  readonly runtimeIdentity?: PippitRuntimeIdentity
+}
+
+export interface PippitRuntimeIdentity {
+  readonly facadeArtifactSha256?: string
+  readonly gatewayArtifactSha256?: string
+  readonly stamp: string
+  readonly workerArtifactSha256?: string
+  readonly workerGeneration?: string
 }
 
 export interface PippitToolRuntime {

@@ -99,14 +99,12 @@ export function resolveWidgetModel(
 
 export function resolvePartialEditModel(model: unknown): string {
   switch (model) {
-    case "pippit/seedance-2.5":
-    case "pippit/seedance-2.0-mini":
-    case "pippit/seedance-2.0":
-    case "pippit/seedance-2.0-mini-lite":
     case "pippit/seedance-2.0-vision":
+    case "pippit/seedance-2.0-mini":
+    case "pippit/seedance-2.0-mini-lite":
       return model
     default:
-      return "pippit/seedance-2.0"
+      return "pippit/seedance-2.0-vision"
   }
 }
 

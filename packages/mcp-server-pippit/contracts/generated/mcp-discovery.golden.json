@@ -22,7 +22,7 @@
       "uri": "ui://widget/pippit-image-result-v4.html"
     },
     {
-      "sha256": "ce95e92aba59a360a36e171af37cb97976b40537ee6eed460c4a089f17c64f6d",
+      "sha256": "d46d8d8144774d347e93170ed0cb1efb0692e63758afd49a7fa1e114a8223cf5",
       "uri": "ui://widget/pippit-video-job-v15.html"
     }
   ],
@@ -78,6 +78,6 @@
       "pippit_reveal_image",
       "pippit_switch_access_key"
     ],
-    "sha256": "5e705d175f9d88fba9f28e7028c7945e2a2f63969c85fd9cb945653a4cb63269"
+    "sha256": "d239efb3f74284342b8a43e4cb265e48ced193f85b98c0fac111b7848802e26d"
   }
 }

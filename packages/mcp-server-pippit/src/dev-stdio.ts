@@ -172,6 +172,7 @@ async function run(): Promise<void> {
           ...process.env,
           PIPPIT_BRIDGE_HOME: runtimeRoot,
           PIPPIT_DEV_CAPABILITY: pointer.capability,
+          PIPPIT_DEV_HOST_ARTIFACT_HASH: pointer.hostArtifactHash,
         },
         generationId: desiredGeneration,
         implementationHash: candidateManifest.workerArtifactHash,

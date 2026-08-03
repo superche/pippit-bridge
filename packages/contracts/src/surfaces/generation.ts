@@ -6,14 +6,13 @@ export const providerOptionsSchema = z.record(z.string(), z.record(z.string(), z
 
 export const PIPPIT_VIDEO_MODEL_IDS = [
   "pippit/seedance-2.5",
-  "pippit/seedance-2.0-mini",
-  "pippit/seedance-2.0",
-  "pippit/seedance-2.0-mini-lite",
   "pippit/seedance-2.0-vision",
+  "pippit/seedance-2.0-mini",
+  "pippit/seedance-2.0-mini-lite",
 ] as const
-export const PIPPIT_DEFAULT_VIDEO_MODEL_ID = "pippit/seedance-2.0-mini"
+export const PIPPIT_DEFAULT_VIDEO_MODEL_ID = "pippit/seedance-2.5"
 export const PIPPIT_PARTIAL_EDIT_VIDEO_MODEL_IDS = PIPPIT_VIDEO_MODEL_IDS
-export const PIPPIT_DEFAULT_PARTIAL_EDIT_VIDEO_MODEL_ID = "pippit/seedance-2.0"
+export const PIPPIT_DEFAULT_PARTIAL_EDIT_VIDEO_MODEL_ID = "pippit/seedance-2.0-vision"
 export const PIPPIT_PARTIAL_EDIT_MIN_DURATION_US = 4_000_000
 export const PIPPIT_PARTIAL_EDIT_2_0_MAX_DURATION_US = 15_000_000
 export const PIPPIT_PARTIAL_EDIT_2_5_MAX_DURATION_US = 30_200_000

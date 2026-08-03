@@ -16,6 +16,24 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function expectNoPpeHeaders(init: RequestInit | undefined): void {
+  const headers = new Headers(init?.headers);
+  expect(headers.has('x-tt-env')).toBe(false);
+  expect(headers.has('x-use-ppe')).toBe(false);
+}
+
+function readSeedance25SkillRequest(init: RequestInit | undefined): {
+  body: Record<string, unknown>
+  params: Record<string, unknown>
+} {
+  const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+  expect(body.agent_name).toBe(PIPPIT_VIDEO_AGENT_NAME)
+  return {
+    body,
+    params: body.video_part_tool_param as Record<string, unknown>,
+  }
+}
+
 describe('PippitClient', () => {
   it('uses a 12-hour default request timeout', () => {
     expect(PIPPIT_DEFAULT_TIMEOUT_MS).toBe(43_200_000);
@@ -27,6 +45,7 @@ describe('PippitClient', () => {
       expect(headers.get('accept')).toBe('application/json');
       expect(headers.get('authorization')).toBe('Bearer ak-upload');
       expect(headers.has('content-type')).toBe(false);
+      expectNoPpeHeaders(init);
       expect(init?.method).toBe('POST');
       expect(init?.redirect).toBe('error');
 
@@ -63,24 +82,80 @@ describe('PippitClient', () => {
     );
   });
 
+  it('resolves generated video asset identities from the skill thread artifact', async () => {
+    const fetchImpl = vi.fn<PippitFetch>(async (url, init) => {
+      expect(url).toBe('https://xyq.jianying.com/api/biz/v1/skill/get_thread');
+      expectNoPpeHeaders(init);
+      expect(JSON.parse(String(init?.body))).toEqual({
+        limit: 1,
+        run_id: 'run-source',
+        scopes: ['run_list.entry_list'],
+        thread_id: 'thread-source',
+      });
+      return jsonResponse({
+        ret: '0',
+        data: {
+          thread: {
+            run_list: [{
+              run_id: 'run-source',
+              entry_list: [
+                { message: { content: [{ data: 'ignored', sub_type: 'text/plain' }] } },
+                {
+                  artifact: {
+                    content: [{
+                      data: JSON.stringify({
+                        video: {
+                          asset_id: 'everphoto-source',
+                          url: 'https://cdn.test/source.mp4',
+                        },
+                      }),
+                      pippit_asset_id: 'pippit-source',
+                      sub_type: 'biz/x_data_video',
+                    }],
+                  },
+                },
+              ],
+            }],
+          },
+        },
+      });
+    });
+    const client = new PippitClient({ fetchImpl });
+
+    await expect(client.getVideoAssets({
+      accessKey: 'ak-source',
+      runId: 'run-source',
+      threadId: 'thread-source',
+    })).resolves.toEqual([{
+      asset_id: 'everphoto-source',
+      pippit_asset_id: 'pippit-source',
+      url: 'https://cdn.test/source.mp4',
+    }]);
+  });
+
   it('submits the documented video-part request with the fixed agent name', async () => {
     const fetchImpl = vi.fn<PippitFetch>(async (url, init) => {
       expect(url).toBe('https://upstream.test/api/biz/v1/skill/submit_run');
-      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer ak-submit');
-      expect(new Headers(init?.headers).get('content-type')).toBe('application/json');
-      expect(JSON.parse(String(init?.body))).toEqual({
-        message: 'make a short film',
-        asset_ids: ['asset-image'],
-        video_part_tool_param: {
-          model: 'seedance-2',
-          duration_sec: 5,
-          prompt: 'a cat in the rain',
-          ratio: '16:9',
-          seed: 42,
-          images: [{ pippit_asset_id: 'asset-image' }],
-        },
-        thread_id: 'requested-thread',
-        agent_name: PIPPIT_VIDEO_AGENT_NAME,
+      const headers = new Headers(init?.headers)
+      expect(headers.get('authorization')).toBe('Bearer ak-submit');
+      expect(headers.get('content-type')).toBe('application/json');
+      expectNoPpeHeaders(init);
+      const { body, params } = readSeedance25SkillRequest(init)
+      expect(body.thread_id).toBe('requested-thread')
+      expect(body.asset_ids).toEqual(['asset-image'])
+      expect(params).toEqual({
+        audios: [],
+        duration_sec: 10,
+        images: [{ pippit_asset_id: 'asset-image' }],
+        imitation_videos: [],
+        language: 'zh',
+        model: 'Seedance_2.5',
+        prompt: 'a cat in the rain',
+        ratio: '16:9',
+        resolution: '720p',
+        seed: 42,
+        task_type: 'reference',
+        videos: [],
       });
       return jsonResponse({
         ret: 0,
@@ -99,12 +174,12 @@ describe('PippitClient', () => {
           message: 'make a short film',
           asset_ids: ['asset-image'],
           video_part_tool_param: {
-            model: 'seedance-2',
-            duration_sec: 5,
+            images: [{ pippit_asset_id: 'asset-image' }],
+            model: 'Seedance_2.5',
             prompt: 'a cat in the rain',
             ratio: '16:9',
+            resolution: '720p',
             seed: 42,
-            images: [{ pippit_asset_id: 'asset-image' }],
           },
           thread_id: 'requested-thread',
         },
@@ -115,18 +190,110 @@ describe('PippitClient', () => {
     });
   });
 
-  it('submits one native partial-edit video with an exact microsecond range', async () => {
+  it('adds the provider security scene to ordinary video references', async () => {
     const fetchImpl = vi.fn<PippitFetch>(async (_url, init) => {
-      expect(JSON.parse(String(init?.body))).toMatchObject({
+      const { body, params } = readSeedance25SkillRequest(init)
+      expect(body.asset_ids).toEqual(['pippit-source'])
+      expect(params).toMatchObject({
+        duration_sec: 10,
+        model: 'seedance2.0_vision',
+        videos: [{
+          asset_id: 'everphoto-source',
+          pippit_asset_id: 'pippit-source',
+          security_check_scene: ['pippit_seedance2_0_user_input_video'],
+        }],
+      })
+      expect(params).not.toHaveProperty('partial_edit_videos')
+      return jsonResponse({
+        ret: 0,
+        data: { run: { run_id: 'run-edit-20', thread_id: 'thread-edit-20', state: 1 } },
+      })
+    })
+    const client = new PippitClient({ fetchImpl })
+
+    await expect(client.submitRun({
+      accessKey: 'ak-edit-20',
+      request: {
+        asset_ids: [],
+        message: 'reference-guided edit',
         video_part_tool_param: {
-          duration_sec: -1,
-          partial_edit_videos: [{
-            asset_id: 'everphoto-1',
-            pippit_asset_id: 'pippit-1',
-            time_range: { end_time_us: 5_600_000, start_time_us: 1_200_000 },
+          duration_sec: 10,
+          model: 'seedance2.0_vision',
+          prompt: 'reference-guided edit',
+          ratio: '16:9',
+          videos: [{
+            asset_id: 'everphoto-source',
+            pippit_asset_id: 'pippit-source',
           }],
         },
+      },
+    })).resolves.toMatchObject({ run: { runId: 'run-edit-20' } })
+  })
+
+  it('adds the successful Seedance 2.5 curl fields while preserving the required skill ratio', async () => {
+    const fetchImpl = vi.fn<PippitFetch>(async (_url, init) => {
+      const { params } = readSeedance25SkillRequest(init)
+      expect(params).toMatchObject({
+        audios: [],
+        duration_sec: 10,
+        images: [],
+        imitation_videos: [],
+        language: 'zh',
+        model: 'Seedance_2.5',
+        prompt: 'ordinary generation',
+        resolution: '720p',
+        task_type: 'reference',
+        videos: [],
       })
+      expect(params.ratio).toBe('16:9')
+      expect(params.seed).toEqual(expect.any(Number))
+      expect(params.seed).toBeGreaterThanOrEqual(0)
+      expect(params.seed).toBeLessThan(2 ** 32)
+      return jsonResponse({
+        ret: 0,
+        data: { run: { run_id: 'run-25', thread_id: 'thread-25', state: 1 } },
+      })
+    })
+    const client = new PippitClient({ fetchImpl })
+
+    await expect(client.submitRun({
+      accessKey: 'ak-seedance-25',
+      request: {
+        asset_ids: [],
+        message: 'ordinary generation',
+        video_part_tool_param: {
+          duration_sec: 10,
+          model: 'Seedance_2.5',
+          prompt: 'ordinary generation',
+          ratio: '16:9',
+          resolution: '720p',
+        },
+      },
+    })).resolves.toMatchObject({ run: { runId: 'run-25' } })
+  })
+
+  it('submits one native partial-edit video with an exact microsecond range', async () => {
+    const fetchImpl = vi.fn<PippitFetch>(async (url, init) => {
+      expect(url).toBe('https://xyq.jianying.com/api/biz/v1/skill/submit_run')
+      const { body, params } = readSeedance25SkillRequest(init)
+      expect(body.asset_ids).toEqual(['pippit-1'])
+      expect(params).toMatchObject({
+        audios: [],
+        duration_sec: -1,
+        images: [],
+        imitation_videos: [],
+        language: 'zh',
+        partial_edit_videos: [{
+          asset_id: 'everphoto-1',
+          pippit_asset_id: 'pippit-1',
+          security_check_scene: ['pippit_seedance2_0_user_input_video'],
+          time_range: { end_time_us: 5_600_000, start_time_us: 1_200_000 },
+        }],
+        ratio: 'adaptive',
+        seed: expect.any(Number),
+        videos: [],
+      })
+      expect(params).not.toHaveProperty('task_type')
       return jsonResponse({
         ret: 0,
         data: { run: { run_id: 'run-edit', thread_id: 'thread-edit', state: 1 } },
@@ -140,7 +307,6 @@ describe('PippitClient', () => {
         asset_ids: [],
         message: 'partial edit',
         video_part_tool_param: {
-          duration_sec: -1,
           model: 'Seedance_2.5',
           partial_edit_videos: [{
             asset_id: 'everphoto-1',
@@ -153,8 +319,19 @@ describe('PippitClient', () => {
     })).resolves.toMatchObject({ run: { runId: 'run-edit' } })
   })
 
-  it('requires the source-segment duration sentinel only for native partial edits', async () => {
-    const fetchImpl = vi.fn<PippitFetch>()
+  it('normalizes the source-segment sentinel only for native partial edits', async () => {
+    const fetchImpl = vi.fn<PippitFetch>(async (_url, init) => {
+      const { params } = readSeedance25SkillRequest(init)
+      expect(params).toMatchObject({
+        duration_sec: -1,
+        ratio: 'adaptive',
+        videos: [],
+      })
+      return jsonResponse({
+        ret: 0,
+        data: { run: { run_id: 'run-edit', thread_id: 'thread-edit', state: 1 } },
+      })
+    })
     const client = new PippitClient({ fetchImpl })
 
     await expect(client.submitRun({
@@ -173,7 +350,7 @@ describe('PippitClient', () => {
           prompt: 'partial edit',
         },
       },
-    })).rejects.toMatchObject({ code: 'INVALID_INPUT', operation: 'submit_run' })
+    })).resolves.toMatchObject({ run: { runId: 'run-edit' } })
 
     await expect(client.submitRun({
       accessKey: 'ak-generate',
@@ -206,7 +383,42 @@ describe('PippitClient', () => {
       },
     })).rejects.toMatchObject({ code: 'INVALID_INPUT', operation: 'submit_run' })
 
-    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not add Seedance 2.5 protocol fields to other video models', async () => {
+    const fetchImpl = vi.fn<PippitFetch>(async (_url, init) => {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        agent_name: PIPPIT_VIDEO_AGENT_NAME,
+        asset_ids: [],
+        message: 'legacy video',
+        video_part_tool_param: {
+          duration_sec: 8,
+          model: 'Seedance_2.0_mini',
+          prompt: 'legacy video',
+          resolution: '720p',
+        },
+      })
+      return jsonResponse({
+        ret: 0,
+        data: { run: { run_id: 'run-legacy', thread_id: 'thread-legacy', state: 1 } },
+      })
+    })
+    const client = new PippitClient({ fetchImpl })
+
+    await expect(client.submitRun({
+      accessKey: 'ak-legacy',
+      request: {
+        asset_ids: [],
+        message: 'legacy video',
+        video_part_tool_param: {
+          duration_sec: 8,
+          model: 'Seedance_2.0_mini',
+          prompt: 'legacy video',
+          resolution: '720p',
+        },
+      },
+    })).resolves.toMatchObject({ run: { runId: 'run-legacy' } })
   })
 
   it('submits Seedream image runs with the Nest agent and model-specific resolution rules', async () => {
@@ -256,6 +468,7 @@ describe('PippitClient', () => {
       expect(url).toBe(
         'https://xyq.jianying.com/api/biz/v1/agent/query_generate_video_result',
       );
+      expectNoPpeHeaders(init);
       expect(JSON.parse(String(init?.body))).toEqual({
         thread_id: 'thread-1',
         run_id: 'run-1',
@@ -447,6 +660,96 @@ describe('PippitClient', () => {
     }).catch((caught: unknown) => caught)
     expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', upstreamCode: 2 })
     expect((error as PippitApiError).logId).toBeUndefined()
+  })
+
+  it('emits redacted Seedance request diagnostics with upstream correlation fields', async () => {
+    const events: unknown[] = []
+    const logId = '20260730174415A1B2C3D4E5F6071829AB'
+    const client = new PippitClient({
+      diagnostics: event => { events.push(event) },
+      fetchImpl: async () => new Response(JSON.stringify({
+        data: { run: { run_id: 'run-1', state: 0, thread_id: 'thread-1' } },
+        ret: 0,
+      }), {
+        headers: { 'content-type': 'application/json', 'x-tt-logid': logId },
+        status: 200,
+      }),
+    })
+
+    await client.submitRun({
+      accessKey: 'ak-must-never-appear',
+      request: {
+        asset_ids: [],
+        message: 'prompt-must-never-appear',
+        video_part_tool_param: {
+          duration_sec: 8,
+          model: 'Seedance_2.5',
+          prompt: 'prompt-must-never-appear',
+          ratio: '16:9',
+          resolution: '720p',
+        },
+      },
+    })
+
+    expect(events).toHaveLength(2)
+    expect(events).toEqual([
+      expect.objectContaining({
+        event: 'upstream_request_started',
+        operation: 'submit_run',
+        params: expect.objectContaining({
+          duration_sec: 8,
+          model: 'Seedance_2.5',
+          prompt_length: 24,
+          ratio: '16:9',
+          resolution: '720p',
+          seed_present: true,
+        }),
+        path: '/api/biz/v1/skill/submit_run',
+      }),
+      expect.objectContaining({
+        event: 'upstream_response_received',
+        http_status: 200,
+        upstream_code: 0,
+        upstream_log_id: logId,
+      }),
+    ])
+    expect(JSON.stringify(events)).not.toContain('ak-must-never-appear')
+    expect(JSON.stringify(events)).not.toContain('prompt-must-never-appear')
+  })
+
+  it('emits a bounded redacted upstream business message for diagnosis', async () => {
+    const events: unknown[] = []
+    const client = new PippitClient({
+      diagnostics: event => { events.push(event) },
+      fetchImpl: async () => jsonResponse({
+        data: {},
+        errmsg: 'missing ratio; ak-secret and prompt-secret must not escape',
+        ret: '2',
+      }),
+    })
+
+    await expect(client.submitRun({
+      accessKey: 'ak-secret',
+      request: {
+        asset_ids: [],
+        message: 'prompt-secret',
+        video_part_tool_param: {
+          model: 'Seedance_2.5',
+          prompt: 'prompt-secret',
+          ratio: '16:9',
+          resolution: '720p',
+        },
+      },
+    })).rejects.toMatchObject({ code: 'UPSTREAM_ERROR', upstreamCode: '2' })
+
+    expect(events).toHaveLength(2)
+    expect(events[1]).toEqual(expect.objectContaining({
+      event: 'upstream_response_received',
+      upstream_code: '2',
+      upstream_message: 'missing ratio; <redacted> and <redacted> must not escape',
+    }))
+    expect(JSON.stringify(events)).not.toContain('ak-secret')
+    expect(JSON.stringify(events)).not.toContain('prompt-secret')
   })
 
   it('times out even when an injected fetch implementation ignores abort', async () => {

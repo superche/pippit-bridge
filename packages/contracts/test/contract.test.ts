@@ -45,7 +45,7 @@ describe("RuntimeContract", () => {
       prompt: "paint",
     })).toMatchObject({ model: "pippit/seedream-5.0", n: 1 })
     expect(generateVideoToolInputContract.parse({ prompt: "go" }))
-      .toMatchObject({ model: "pippit/seedance-2.0-mini" })
+      .toMatchObject({ model: "pippit/seedance-2.5" })
     expect(editVideoToolInputContract.parse({
       guidance_annotations: [{
         at_time_us: 1_000_000,
@@ -54,14 +54,14 @@ describe("RuntimeContract", () => {
       }],
       source_job_id: "job",
       time_range: { end_time_us: 4_000_000, start_time_us: 0 },
-    })).toMatchObject({ model: "pippit/seedance-2.0", source_index: 0 })
+    })).toMatchObject({ model: "pippit/seedance-2.0-vision", source_index: 0 })
     expect(downloadVideoToolInputContract.parse({ job_id: "job", output_path: "clips/result.mp4" }))
       .toMatchObject({ index: 0 })
   })
 
   it("runs the same acceptance and rejection corpus across every MCP contract", () => {
     const corpus = [
-      [generateVideoToolInputContract, { model: "pippit/seedance-2.0", prompt: "go" }, { model: "x", prompt: "go", extra: true }],
+      [generateVideoToolInputContract, { model: "pippit/seedance-2.0-vision", prompt: "go" }, { model: "x", prompt: "go", extra: true }],
       [generateImageToolInputContract, { model: "pippit/seedream-5.0-pro", prompt: "go", resolution: "2K" }, { model: "pippit/seedream-5.0", prompt: "go", resolution: "2K" }],
       [getVideoToolInputContract, { job_id: "job" }, { job_id: "" }],
       [downloadVideoToolInputContract, { job_id: "job", output_path: "clip.mp4" }, { job_id: "job", output_path: "../clip.mp4" }],
@@ -71,7 +71,7 @@ describe("RuntimeContract", () => {
           instruction: "change",
           region: { height: 0.2, width: 0.2, x: 0, y: 0 },
         }],
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.0-vision",
         source_job_id: "job",
         time_range: { end_time_us: 4_000_000, start_time_us: 0 },
       }, {
@@ -93,12 +93,12 @@ describe("RuntimeContract", () => {
 
   it("rejects models outside the governed generation catalog", () => {
     expect(() => generateVideoToolInputContract.parse({
-      model: "pippit/seedance-2.0-fast",
+      model: "pippit/seedance-2.0",
       prompt: "go",
     })).toThrow()
     expect(() => editVideoToolInputContract.parse({
       guidance_annotations: [],
-      model: "pippit/seedance-2.0-fast",
+      model: "pippit/seedance-2.0",
       prompt: "edit",
       source_job_id: "job",
       time_range: { end_time_us: 4_000_000, start_time_us: 0 },
@@ -118,7 +118,7 @@ describe("RuntimeContract", () => {
     }
     expect(() => editVideoToolInputContract.parse({
       ...input,
-      model: "pippit/seedance-2.0",
+      model: "pippit/seedance-2.0-vision",
     })).not.toThrow()
     expect(() => editVideoToolInputContract.parse({
       ...input,
@@ -137,7 +137,7 @@ describe("RuntimeContract", () => {
     })).toThrow()
     expect(() => editVideoToolInputContract.parse({
       ...input,
-      model: "pippit/seedance-2.0",
+      model: "pippit/seedance-2.0-vision",
       time_range: { end_time_us: 3_999_999, start_time_us: 0 },
     })).toThrow()
   })

@@ -279,6 +279,15 @@ export const WIDGET_SCRIPT_EDITOR = String.raw`          function done() {
           latestRestoreTimer = undefined;
         }
         var meta = result._meta && typeof result._meta === "object" ? result._meta : {};
+        var runtimeMetadata = meta["pippit/runtime"];
+        var runtimeStamp = runtimeMetadata && typeof runtimeMetadata === "object"
+          && typeof runtimeMetadata.stamp === "string"
+          ? runtimeMetadata.stamp
+          : undefined;
+        if (runtimeStamp) {
+          runtimeVersionElement.textContent = runtimeStamp;
+          runtimeVersionElement.hidden = false;
+        }
         var media = Array.isArray(meta["pippit/media"]) ? meta["pippit/media"] : [];
         var nextModel = resolveWidgetModel(activeModel, job.model);
         var nextStatus = typeof job.status === "string" ? job.status : "pending";
@@ -301,6 +310,16 @@ export const WIDGET_SCRIPT_EDITOR = String.raw`          function done() {
           showLoading(activeStatus);
           if (presentation.schedulePoll) schedulePoll(pollDelayMs);
         } else if (presentation.view === "terminal") {
+          terminalMessageElement.textContent = typeof job.error === "string" && job.error.trim() !== ""
+            ? job.error
+            : "Pippit could not complete this request.";
+          terminalCodeElement.textContent = nextStatus === "failed"
+            ? "generation_failed"
+            : nextStatus;
+          terminalLogIdElement.textContent = "unavailable";
+          terminalRuntimeElement.textContent = runtimeStamp
+            || runtimeVersionElement.textContent
+            || "unavailable";
           showTerminal();
         } else if (presentation.view === "editor" && preview) {
           setPreview(job, preview);

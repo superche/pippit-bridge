@@ -35,11 +35,51 @@ export const WIDGET_SCRIPT_CONTROLLER = String.raw`          resolveLatestBootst
 
       function renderBootstrapResult(result) {
         if (!result || typeof result !== "object") return;
+        var runtimeMetadata = result._meta && typeof result._meta === "object"
+          ? result._meta["pippit/runtime"]
+          : undefined;
+        var runtimeStamp = runtimeMetadata && typeof runtimeMetadata === "object"
+          && typeof runtimeMetadata.stamp === "string"
+          ? runtimeMetadata.stamp
+          : undefined;
+        var structuredError = result.structuredContent
+          && typeof result.structuredContent === "object"
+          && result.structuredContent.error
+          && typeof result.structuredContent.error === "object"
+          ? result.structuredContent.error
+          : undefined;
+        if (!runtimeStamp && structuredError && typeof structuredError.internal_version === "string") {
+          runtimeStamp = structuredError.internal_version;
+        }
+        if (runtimeStamp) {
+          runtimeVersionElement.textContent = runtimeStamp;
+          runtimeVersionElement.hidden = false;
+        }
+        if (result.isError || structuredError) {
+          latestResolutionComplete = true;
+          terminalMessageElement.textContent = structuredError && typeof structuredError.message === "string"
+            ? structuredError.message
+            : toolErrorText(result);
+          terminalCodeElement.textContent = structuredError && typeof structuredError.code === "string"
+            ? structuredError.code
+            : "unknown";
+          terminalLogIdElement.textContent = structuredError
+            && typeof structuredError.upstream_log_id === "string"
+            ? structuredError.upstream_log_id
+            : "unavailable";
+          terminalRuntimeElement.textContent = runtimeStamp || "unavailable";
+          showTerminal();
+          return;
+        }
         if (
           result.structuredContent &&
           result.structuredContent.pippit_dev_preview === "error"
         ) {
           latestResolutionComplete = true;
+          terminalMessageElement.textContent = "Development error preview.";
+          terminalCodeElement.textContent = "dev_preview";
+          terminalLogIdElement.textContent = "not applicable";
+          terminalRuntimeElement.textContent = runtimeStamp || "unavailable";
           showTerminal();
           return;
         }

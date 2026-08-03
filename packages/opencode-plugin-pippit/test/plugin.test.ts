@@ -238,7 +238,7 @@ describe("Pippit OpenCode plugin", () => {
     const account = await accounts.addAccount("工作", "ak-billing-safe-secret")
     vi.spyOn(accounts, "bindRun").mockRejectedValueOnce(new Error("disk full"))
     const generate = vi.fn(async () => ({
-      model: "pippit/seedance-2.0",
+      model: "pippit/seedance-2.0-vision",
       runId: "run-paid-once",
       status: "pending" as const,
       threadId: "thread-paid-once",
@@ -260,7 +260,7 @@ describe("Pippit OpenCode plugin", () => {
     const result = await execute(
       {
         max_wait_seconds: 43_200,
-        model: "pippit/seedance-2.0",
+        model: "pippit/seedance-2.0-vision",
         prompt: "只提交一次",
         wait_for_completion: false,
       },
@@ -286,7 +286,7 @@ describe("Pippit OpenCode plugin", () => {
     const accounts = new PippitAccountManager(new MemoryPippitAccountStore())
     await accounts.addAccount("工作", "ak-idempotency-test")
     const generate = vi.fn(async () => ({
-      model: "pippit/seedance-2.0",
+      model: "pippit/seedance-2.0-vision",
       runId: "run-idempotent",
       status: "pending" as const,
       threadId: "thread-idempotent",

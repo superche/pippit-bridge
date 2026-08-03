@@ -47,6 +47,7 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
       display: grid;
       justify-items: center;
       gap: 24px;
+      width: min(680px, 100%);
     }
     .error-word {
       display: flex;
@@ -76,6 +77,62 @@ export const WIDGET_STYLES_EDITOR = String.raw`      display: grid;
     .terminal-view.is-entering .error-dot.is-active {
       animation: error-dot-entry 560ms steps(2, end) both;
       animation-delay: var(--error-dot-delay);
+    }
+    .terminal-message {
+      max-width: 640px;
+      margin: 0;
+      color: currentColor;
+      font-size: 14px;
+      line-height: 1.55;
+      opacity: .82;
+      overflow-wrap: anywhere;
+    }
+    .terminal-diagnostics {
+      display: grid;
+      width: min(640px, 100%);
+      margin: 0;
+      border: 1px solid rgb(127 127 127 / 28%);
+      border-radius: 10px;
+      background: rgb(127 127 127 / 7%);
+      text-align: left;
+    }
+    .terminal-diagnostics div {
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr);
+      gap: 12px;
+      padding: 9px 12px;
+      border-bottom: 1px solid rgb(127 127 127 / 18%);
+    }
+    .terminal-diagnostics div:last-child { border-bottom: 0; }
+    .terminal-diagnostics dt {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      opacity: .55;
+      text-transform: uppercase;
+    }
+    .terminal-diagnostics dd {
+      min-width: 0;
+      margin: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      overflow-wrap: anywhere;
+    }
+    .runtime-version {
+      position: fixed;
+      z-index: 20;
+      right: 10px;
+      bottom: 8px;
+      border: 1px solid rgb(127 127 127 / 24%);
+      border-radius: 999px;
+      padding: 3px 8px;
+      background: rgb(127 127 127 / 10%);
+      color: currentColor;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 10px;
+      line-height: 1.4;
+      opacity: .72;
+      pointer-events: none;
     }
     @keyframes error-dot-entry {
       0%, 22% { opacity: .07; transform: scale(.72); }

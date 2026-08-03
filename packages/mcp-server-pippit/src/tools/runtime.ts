@@ -28,6 +28,7 @@ import {
   imageResult,
   safeError,
   structuredResult,
+  withRuntimeIdentity,
 } from "./mappers.ts"
 import { PIPPIT_MANAGEMENT_TOOL_DEFINITIONS, PIPPIT_RUNTIME_TOOL_DEFINITIONS } from "./registry.ts"
 
@@ -164,22 +165,31 @@ export function createPippitToolRuntime(options: PippitToolRuntimeOptions): Pipp
       try {
         if (name === "pippit_list_image_models") {
           parseEmptyToolInput(argumentsValue)
-          return structuredResult(await options.client.listImageModels())
+          return withRuntimeIdentity(structuredResult(await options.client.listImageModels()), options.runtimeIdentity)
         }
         if (name === "pippit_generate_image") {
-          return imageResult(await options.client.generateImage(facadeImageRequest(parseGenerateImageInput(argumentsValue))))
+          return withRuntimeIdentity(
+            imageResult(await options.client.generateImage(facadeImageRequest(parseGenerateImageInput(argumentsValue)))),
+            options.runtimeIdentity,
+          )
         }
         if (name === "pippit_list_video_models") {
           parseEmptyToolInput(argumentsValue)
-          return structuredResult(await options.client.listVideoModels())
+          return withRuntimeIdentity(structuredResult(await options.client.listVideoModels()), options.runtimeIdentity)
         }
         if (name === "pippit_generate_video") {
           const parsed = parseGenerateInput(argumentsValue)
           const request = facadeRequest(parsed)
-          return structuredResult(await submit(parsed.idempotency_key, "generate", request, () => options.client.generateVideo(request)))
+          return withRuntimeIdentity(
+            structuredResult(await submit(parsed.idempotency_key, "generate", request, () => options.client.generateVideo(request))),
+            options.runtimeIdentity,
+          )
         }
         if (name === "pippit_get_video") {
-          return structuredResult(await options.client.getVideo(parseGetInput(argumentsValue).job_id))
+          return withRuntimeIdentity(
+            structuredResult(await options.client.getVideo(parseGetInput(argumentsValue).job_id)),
+            options.runtimeIdentity,
+          )
         }
         if (name === "pippit_download_video") {
           const parsed = parseDownloadInput(argumentsValue)
@@ -197,31 +207,43 @@ export function createPippitToolRuntime(options: PippitToolRuntimeOptions): Pipp
             media_type: written.mediaType,
             path: parsed.output_path,
           }
-          return structuredResult(result)
+          return withRuntimeIdentity(structuredResult(result), options.runtimeIdentity)
         }
         if (name === "pippit_edit_video_segment") {
           const parsed = parseEditInput(argumentsValue)
           const request = facadeEditRequest(parsed)
-          return structuredResult(await submit(parsed.idempotency_key, "edit", request, () => options.client.editVideo(request)))
+          return withRuntimeIdentity(
+            structuredResult(await submit(parsed.idempotency_key, "edit", request, () => options.client.editVideo(request))),
+            options.runtimeIdentity,
+          )
         }
         if (options.managementClient !== undefined && enrollmentServer !== undefined) {
           if (name === "pippit_list_access_keys") {
             parseEmptyToolInput(argumentsValue)
-            return structuredResult(await options.managementClient.listAccessKeys())
+            return withRuntimeIdentity(structuredResult(await options.managementClient.listAccessKeys()), options.runtimeIdentity)
           }
           if (name === "pippit_add_access_key") {
-            return structuredResult(await enrollmentServer.createEnrollment(parseAddAccessKeyInput(argumentsValue).account_name))
+            return withRuntimeIdentity(
+              structuredResult(await enrollmentServer.createEnrollment(parseAddAccessKeyInput(argumentsValue).account_name)),
+              options.runtimeIdentity,
+            )
           }
           if (name === "pippit_switch_access_key") {
-            return structuredResult(await options.managementClient.switchAccessKey(parseSwitchAccessKeyInput(argumentsValue).credential_id))
+            return withRuntimeIdentity(
+              structuredResult(await options.managementClient.switchAccessKey(parseSwitchAccessKeyInput(argumentsValue).credential_id)),
+              options.runtimeIdentity,
+            )
           }
           if (name === "pippit_delete_access_key") {
-            return structuredResult(await options.managementClient.deleteAccessKey(parseDeleteAccessKeyInput(argumentsValue).credential_id))
+            return withRuntimeIdentity(
+              structuredResult(await options.managementClient.deleteAccessKey(parseDeleteAccessKeyInput(argumentsValue).credential_id)),
+              options.runtimeIdentity,
+            )
           }
         }
         throw new ToolInputError(`Unknown Pippit tool ${name}.`)
       } catch (error) {
-        return safeError(error)
+        return withRuntimeIdentity(safeError(error), options.runtimeIdentity)
       }
     },
     async close() {

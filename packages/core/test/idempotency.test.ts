@@ -20,7 +20,7 @@ async function storePath(): Promise<string> {
 const input = {
   key: "stable-user-key",
   operation: "video_generation",
-  request: { model: "pippit/seedance-2.0", prompt: "private prompt" },
+  request: { model: "pippit/seedance-2.0-vision", prompt: "private prompt" },
   scope: "private-facade-identity",
 } as const
 
